@@ -26,6 +26,8 @@ def main():
     poll.register(sys.stdin, select.POLLIN)
     buf = ""
     print("HELLO SPY-BOT")
+    for address in driver.missing:
+        print("ERR carte PCA9685 0x%02x absente : ses servos sont ignores" % address)
     last = time.ticks_ms()
     try:
         while True:

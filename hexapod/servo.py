@@ -79,7 +79,16 @@ class PCA9685Driver:
             from machine import I2C, Pin
 
             i2c = I2C(0, sda=Pin(sda), scl=Pin(scl), freq=400000)
-        self.boards = [PCA9685(i2c, a) for a in addresses]
+        # Une carte absente ne bloque pas le démarrage : ses servos sont
+        # ignorés et `missing` la signale au PC.
+        self.boards = []
+        self.missing = []
+        for a in addresses:
+            try:
+                self.boards.append(PCA9685(i2c, a))
+            except OSError:
+                self.boards.append(None)
+                self.missing.append(a)
         self.center_us = center_us
         self.us_per_deg = us_per_deg
         self.min_us = min_us
@@ -88,9 +97,12 @@ class PCA9685Driver:
     def set_angle(self, board, channel, deg):
         us = self.center_us + (deg - 90.0) * self.us_per_deg
         us = max(self.min_us, min(self.max_us, us))
-        self.boards[board].set_pulse_us(channel, us)
+        if self.boards[board]:
+            self.boards[board].set_pulse_us(channel, us)
 
     def relax(self):
         for board in self.boards:
+            if not board:
+                continue
             for channel in range(16):
                 board.off(channel)

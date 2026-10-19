@@ -1,6 +1,7 @@
 import math
 import unittest
 
+from hexapod.servo import PCA9685Driver
 from hexapod import BodyPose, GaitCommand, Hexapod, default_config
 from hexapod.body_ik import leg_to_body_frame
 from hexapod.leg_ik import leg_fk
@@ -84,3 +85,31 @@ class PostureLimitsTest(unittest.TestCase):
                     raw = 90.0 + joint.direction * (math.degrees(value) - joint.zero_deg)
                     self.assertGreater(raw, joint.min_deg + 3, (height, leg.name))
                     self.assertLess(raw, joint.max_deg - 3, (height, leg.name))
+
+
+class MissingBoardTest(unittest.TestCase):
+    """Une PCA9685 absente du bus ne doit pas empêcher le robot de démarrer."""
+
+    def test_missing_board_is_skipped(self):
+        class FakeI2C:
+            def __init__(self):
+                self.writes = []
+
+            def writeto_mem(self, address, reg, data):
+                if address != 0x40:
+                    raise OSError(19)
+                self.writes.append((address, reg))
+
+            def readfrom_mem(self, address, reg, n):
+                return bytes(n)
+
+        import time
+        if not hasattr(time, "sleep_us"):
+            time.sleep_us = lambda us: None
+        i2c = FakeI2C()
+        driver = PCA9685Driver(i2c)
+        self.assertEqual(driver.missing, [0x41])
+        driver.set_angle(1, 5, 90.0)  # carte absente : ignoré
+        driver.set_angle(0, 5, 90.0)
+        driver.relax()
+        self.assertTrue(all(a == 0x40 for a, _ in i2c.writes))
