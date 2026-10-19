@@ -161,53 +161,40 @@ export class RobotView {
     this.robot.add(body);
     const info = { leg: null, link: -1, role: "frame" };
     const t = 3 * k;
-    const zPlate = 13 * k;
+    // Les servos de coxa sont pris entre les deux plaques du corps, leur axe sur
+    // la fixation de chaque patte : le contour des plaques passe autour des axes.
+    const zTop = 8 * k;
+    const zBottom = -16 * k - t;
     const order = ["RF", "RM", "RR", "LR", "LM", "LF"].map((n) => geom.legs.findIndex((l) => l.name === n));
+    const mounts = order.map((i) => new THREE.Vector2(geom.legs[i].x, geom.legs[i].y));
+    const grow = (p, d) => p.clone().multiplyScalar(1 + d / p.length());
 
-    for (const z of [zPlate, -zPlate - t]) {
-      // Bras en croix du centre vers chaque axe de coxa.
-      for (const leg of geom.legs) {
-        const len = Math.hypot(leg.x, leg.y);
-        const w = 5.5 * k;
-        const arm = new THREE.Shape();
-        arm.moveTo(0, -w);
-        arm.lineTo(len, -w * 1.4);
-        arm.absarc(len, 0, w * 1.4, -Math.PI / 2, Math.PI / 2, false);
-        arm.lineTo(0, w);
-        arm.closePath();
-        arm.holes.push(new THREE.Path().absarc(len, 0, 2 * k, 0, Math.PI * 2, true));
-        if (len > 40 * k) arm.holes.push(rectPath(len * 0.4, -w * 0.45, len - 14 * k, w * 0.45));
-        const m = this._add(body, extrude(arm, t), info);
-        m.rotation.z = Math.atan2(leg.y, leg.x);
-        m.position.z = z;
-      }
-      // Plaque centrale ajourée.
-      const pts = order.map((i) => new THREE.Vector2(geom.legs[i].body_x, geom.legs[i].body_y));
-      const plate = new THREE.Shape(pts);
-      plate.holes.push(new THREE.Path(pts.map((p) => p.clone().multiplyScalar(0.45)).reverse()));
+    for (const z of [zTop, zBottom]) {
+      const plate = new THREE.Shape(mounts.map((p) => grow(p, 12 * k)));
+      // Évidements triangulaires entre le centre et chaque paire de fixations.
+      mounts.forEach((p, i) => {
+        const q = mounts[(i + 1) % mounts.length];
+        const a = grow(p, -32 * k);
+        const b = grow(q, -32 * k);
+        const c = a.clone().add(b).multiplyScalar(0.3);
+        if (a.distanceTo(b) > 16 * k) plate.holes.push(new THREE.Path([c, b, a]));
+      });
+      mounts.forEach((p) => plate.holes.push(new THREE.Path().absarc(p.x, p.y, 2 * k, 0, Math.PI * 2, true)));
       const m = this._add(body, extrude(plate, t), info);
       m.position.z = z;
     }
 
-    // Parois latérales entre les fixations avant et arrière.
-    const corner = geom.legs.find((l) => l.name === "LF");
-    const wallLen = 2 * corner.body_x - 10 * k;
-    for (const side of [1, -1]) {
-      const h = zPlate;
-      const wall = new THREE.Shape();
-      wall.moveTo(-wallLen / 2, -h).lineTo(wallLen / 2, -h).lineTo(wallLen / 2, h).lineTo(-wallLen / 2, h).closePath();
-      for (let i = 0; i < 3; i++) {
-        const x0 = -wallLen / 2 + (i + 0.5) * (wallLen / 3);
-        const r = Math.min(8 * k, wallLen / 8);
-        wall.holes.push(new THREE.Path().moveTo(x0 - r, 0).lineTo(x0, -h * 0.6).lineTo(x0 + r, 0).lineTo(x0, h * 0.6).closePath());
-      }
-      const m = this._add(body, sidePlate(wall, t), info);
-      m.position.y = side * (corner.body_y - 4 * k) + (side > 0 ? t : 0);
+    // Entretoises entre les plaques, à côté de chaque servo de coxa.
+    for (const p of mounts) {
+      const post = this._add(body, new THREE.Mesh(new THREE.CylinderGeometry(2.5 * k, 2.5 * k, zTop - zBottom - t, 12), this.mats.frame), info);
+      const q = grow(p, -30 * k);
+      post.rotation.x = Math.PI / 2;
+      post.position.set(q.x, q.y, (zTop + zBottom + t) / 2);
     }
 
     // Batterie (LiPo 2S) au centre, sous le châssis.
     const battery = this._add(body, new THREE.Mesh(new THREE.BoxGeometry(48 * k, 26 * k, 14 * k), this.mats.servoDark));
-    battery.position.z = -zPlate - t - 7 * k;
+    battery.position.z = zBottom - 7 * k;
   }
 
   _buildLeg(geom, g, k) {
@@ -236,20 +223,34 @@ export class RobotView {
     const Y = new THREE.Vector3(0, 1, 0);
     const Z = new THREE.Vector3(0, 0, 1);
 
-    // --- cuisse (lien coxa) : servo de coxa vertical entre deux plaques, chape vers le fémur
-    this._servo(coxaJ, g.name, 0, Z, X, new THREE.Vector3(0, 0, 11 * k), k, 0);
-    for (const z of [12 * k, -17 * k - t]) {
-      const s = roundedSlot(-8 * k, geom.coxa - 6 * k, 9 * k);
+    // --- servo de coxa fixé dans le corps, boîtier vers l'intérieur ; la cuisse
+    // serre le palonnier au-dessus et l'axe libre en dessous, puis porte la chape du fémur.
+    this._servo(root, g.name, 0, Z, X.clone().negate(), new THREE.Vector3(0, 0, 11 * k), k, 0);
+    for (const z of [15 * k, -22 * k - t]) {
+      const c = geom.coxa;
+      const s = new THREE.Shape();
+      s.moveTo(0, 9 * k);
+      s.absarc(0, 0, 9 * k, Math.PI / 2, Math.PI * 1.5, false);
+      s.lineTo(c - 18 * k, -9 * k);
+      s.lineTo(c - 8 * k, -20 * k);
+      s.lineTo(c - 4 * k, -20 * k);
+      s.lineTo(c - 4 * k, 20 * k);
+      s.lineTo(c - 8 * k, 20 * k);
+      s.lineTo(c - 18 * k, 9 * k);
+      s.closePath();
       s.holes.push(new THREE.Path().absarc(0, 0, 2 * k, 0, Math.PI * 2, true));
       const m = this._add(coxaJ, extrude(s, t), info(0));
       m.position.z = z;
     }
     for (const side of [1, -1]) {
       const yoke = new THREE.Shape();
-      yoke.moveTo(geom.coxa - 16 * k, -10 * k);
+      // Flanc de la chape, du dessus au dessous de la cuisse, rond autour de l'axe du fémur.
+      yoke.moveTo(geom.coxa - 8 * k, -22 * k - t);
+      yoke.lineTo(geom.coxa - 2 * k, -22 * k - t);
       yoke.lineTo(geom.coxa, -10 * k);
       yoke.absarc(geom.coxa, 0, 10 * k, -Math.PI / 2, Math.PI / 2, false);
-      yoke.lineTo(geom.coxa - 16 * k, 10 * k);
+      yoke.lineTo(geom.coxa - 2 * k, 15 * k + t);
+      yoke.lineTo(geom.coxa - 8 * k, 15 * k + t);
       yoke.closePath();
       yoke.holes.push(new THREE.Path().absarc(geom.coxa, 0, 2.5 * k, 0, Math.PI * 2, true));
       const m = this._add(coxaJ, sidePlate(yoke, t), info(0));
