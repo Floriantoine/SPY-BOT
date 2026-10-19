@@ -1,3 +1,4 @@
+import { Animator, PRESETS } from "./anim.js";
 import { Joystick } from "./joystick.js";
 import { RobotView } from "./scene.js";
 
@@ -7,6 +8,7 @@ const $$ = (s) => document.querySelectorAll(s);
 const MODES = {
   test: "Test servo",
   off: "Relâché",
+  wake: "Démarrage…",
   sit: "Assis",
   standing: "Se lève…",
   stand: "Debout",
@@ -25,6 +27,7 @@ const state = {
 };
 
 const view = new RobotView($("#view"));
+const animator = new Animator();
 window.spybot = { view, state }; // pour déboguer depuis la console
 
 // ---------------------------------------------------------------- liaison
@@ -79,6 +82,7 @@ events.onmessage = (e) => {
     state.angles = [0, 1, 2, 3, 4, 5].map((i) => v.slice(3 * i, 3 * i + 3));
     return;
   }
+  if (line === "OK PONG") return gotPong();
   log(line, kind === "ERR" ? "err" : "");
   if (kind === "GEOM") {
     const geom = JSON.parse(rest);
@@ -92,6 +96,10 @@ events.onmessage = (e) => {
     const [what, ...name] = rest.split(" ");
     setConnected(what === "connected", name.join(" "));
     if (what === "error") toast("Liaison perdue : " + name.join(" "), "err");
+    if (what === "reconnecting") {
+      toast("Liaison perdue, reconnexion automatique…", "err");
+      showLatency("reconnexion…", "bad");
+    }
   } else if (kind === "ERR") {
     toast(rest, "err");
   } else if (kind === "OK") {
@@ -107,8 +115,32 @@ events.onmessage = (e) => {
 };
 events.onerror = () => setConnected(false);
 
+// Santé de la liaison : un PING toutes les 2 s, temps de réponse affiché.
+let pingSentAt = 0;
+let pongAt = 0;
+function showLatency(text, cls = "") {
+  const el = $("#latency");
+  el.textContent = text;
+  el.className = "latency " + cls;
+}
+function gotPong() {
+  pongAt = performance.now();
+  const ms = Math.round(pongAt - pingSentAt);
+  showLatency(`${ms} ms`, ms > 150 ? "slow" : "good");
+}
+setInterval(() => {
+  if (!state.connected) return;
+  const now = performance.now();
+  if (pingSentAt > pongAt && now - pingSentAt > 3000) showLatency("pas de réponse", "bad");
+  if (pingSentAt <= pongAt || now - pingSentAt > 3000) {
+    pingSentAt = now;
+    send("PING", true);
+  }
+}, 2000);
+
 function setConnected(connected, name = "") {
   state.connected = connected;
+  if (!connected) showLatency("");
   if (!connected) setMode(null);
   $("#link-dot").classList.toggle("on", connected);
   const btn = $("#connect");
@@ -273,26 +305,63 @@ function bindSlider(input, format) {
   return update;
 }
 
-bindSlider($("#speed"), (v) => `${v} mm/s`);
-bindSlider($("#turn"), (v) => `${v} °/s`);
-bindSlider($("#period"), (v) => `${v.toFixed(1)} s`);
-bindSlider($("#step"), (v) => `${v} mm`);
+const sliders = {
+  speed: bindSlider($("#speed"), (v) => `${v} mm/s`),
+  turn: bindSlider($("#turn"), (v) => `${v} °/s`),
+  period: bindSlider($("#period"), (v) => `${v.toFixed(1)} s`),
+  step: bindSlider($("#step"), (v) => `${v} mm`),
+};
 const sendGait = throttle(() => send(`GAIT ${$("#period").value} ${$("#step").value}`, true), 150);
 $("#period").addEventListener("input", sendGait);
 $("#step").addEventListener("input", sendGait);
 
+// Préréglages de vitesse : règlent d'un coup vitesse, rotation et démarche.
+const PRESET_VALUES = {
+  slow: { speed: 40, turn: 15, period: 1.4, step: 20 },
+  normal: { speed: 80, turn: 30, period: 1.0, step: 25 },
+  fast: { speed: 140, turn: 50, period: 0.6, step: 30 },
+};
+function markPreset() {
+  for (const b of $$("#presets button")) {
+    const v = PRESET_VALUES[b.dataset.preset];
+    b.classList.toggle("active", Object.keys(v).every((k) => Number($("#" + k).value) === v[k]));
+  }
+}
+for (const b of $$("#presets button")) {
+  b.onclick = () => {
+    for (const [k, v] of Object.entries(PRESET_VALUES[b.dataset.preset])) {
+      $("#" + k).value = v;
+      sliders[k]();
+    }
+    if (state.connected) sendGait();
+    markPreset();
+  };
+}
+for (const k of Object.keys(sliders)) $("#" + k).addEventListener("input", markPreset);
+markPreset();
+
 const poseInputs = [...$$("input.pose")].sort((a, b) => a.dataset.i - b.dataset.i);
 const sendPose = throttle(() => send("POSE " + poseInputs.map((i) => i.value).join(" "), true), 60);
 const poseUpdaters = poseInputs.map((input) => {
-  input.addEventListener("input", sendPose);
+  input.addEventListener("input", () => {
+    animator.stop();
+    renderAnimState();
+    sendPose();
+  });
   return bindSlider(input, (v) => (Number(input.dataset.i) < 3 ? `${v} mm` : `${v}°`));
 });
-$("#pose-reset").onclick = () => {
+const currentPose = () => poseInputs.map((i) => Number(i.value));
+function setPose(values) {
   poseInputs.forEach((input, i) => {
-    input.value = 0;
+    input.value = Math.round(values[i] * 10) / 10;
     poseUpdaters[i]();
   });
-  sendPose();
+  if (state.connected) sendPose();
+}
+$("#pose-reset").onclick = () => {
+  animator.stop();
+  renderAnimState();
+  setPose([0, 0, 0, 0, 0, 0]);
 };
 
 // Onglets.
@@ -460,6 +529,212 @@ function renderSelection() {
 // Compatibilité avec le reste du fichier.
 const renderTrims = renderSelection;
 
+// Sauvegarde des trims dans un fichier, pour les retrouver après un reflash.
+$("#cal-export").onclick = () => {
+  const data = { robot: "SPY-BOT", saved: new Date().toISOString(), trims: state.calib };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `spybot-calibration-${data.saved.slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$("#cal-import").onclick = () => $("#cal-file").click();
+$("#cal-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  let trims;
+  try {
+    const data = JSON.parse(await file.text());
+    trims = data.trims || data;
+    const ok = Object.entries(trims).every(([leg, v]) => LEG_NAMES_FR[leg] && Array.isArray(v) && v.length === 3 && v.every(Number.isFinite));
+    if (!ok) throw new Error();
+  } catch {
+    toast("Fichier de calibration illisible", "err");
+    return;
+  }
+  const lines = [];
+  for (const [leg, values] of Object.entries(trims)) {
+    values.forEach((v, j) => lines.push(`TRIM ${leg} ${JOINTS[j]} ${v}`));
+  }
+  await send(lines.join("\n"), true);
+  state.calib = trims;
+  renderSelection();
+  toast("Calibration importée : clique sur Enregistrer pour la garder dans l'ESP32", "ok");
+};
+
+// ------------------------------------------------------------- servos en butée
+
+// Même calcul que hexapod/servo.py : un servo est en butée quand l'angle
+// demandé dépasse ses limites (le robot le bloque alors à la limite).
+function limitedServos() {
+  const out = new Set();
+  if (!state.geom || !state.angles || !state.connected || state.mode === "off") return out;
+  state.geom.legs.forEach((leg, i) => {
+    if (!leg.joints) return;
+    leg.joints.forEach(([zero, dir, min, max], j) => {
+      const deg = 90 + dir * ((state.angles[i][j] * 180) / Math.PI - zero) + trimOf(leg.name, j);
+      if (deg <= min + 0.5 || deg >= max - 0.5) out.add(`${leg.name}:${j}`);
+    });
+  });
+  return out;
+}
+let limitKey = "";
+let limitToastAt = -1e9;
+function updateLimits() {
+  const limits = limitedServos();
+  view.limits = limits;
+  const key = [...limits].sort().join(",");
+  const now = performance.now();
+  if (key && key !== limitKey && now - limitToastAt > 4000) {
+    limitToastAt = now;
+    const names = [...limits].map((k) => {
+      const [leg, j] = k.split(":");
+      return `${LEG_NAMES_FR[leg]} · ${JOINT_LABELS[JOINTS[j]]}`;
+    });
+    toast(`En butée : ${names.slice(0, 3).join(", ")}${names.length > 3 ? "…" : ""}`, "err");
+  }
+  limitKey = key;
+}
+
+// -------------------------------------------------------------- animations
+
+const ANIM_STORE = "spybot.animations";
+function loadAnims() {
+  try {
+    return JSON.parse(localStorage.getItem(ANIM_STORE)) || [];
+  } catch {
+    return [];
+  }
+}
+function storeAnims(list) {
+  try {
+    localStorage.setItem(ANIM_STORE, JSON.stringify(list));
+  } catch {
+    toast("Impossible d'enregistrer sur ce navigateur", "err");
+  }
+}
+
+let draft = [];
+let playingName = null;
+
+function startAnimation(name, frames) {
+  animator.play(frames, currentPose(), { loop: $("#anim-loop").checked });
+  playingName = name;
+  renderAnimState();
+}
+
+function playAnimation() {
+  if (!animator.playing) return;
+  const pose = animator.pose();
+  if (pose) setPose(pose);
+  if (!animator.playing) {
+    playingName = null;
+    renderAnimState();
+  }
+}
+
+function renderAnimState() {
+  if (!animator.playing) playingName = null;
+  $("#anim-stop").disabled = !animator.playing;
+  for (const b of $$("#anim-list .anim")) b.classList.toggle("active", b.dataset.name === playingName);
+}
+
+function renderAnimList() {
+  const box = $("#anim-list");
+  box.innerHTML = "";
+  const mine = loadAnims();
+  const add = (anim, saved) => {
+    const item = document.createElement("div");
+    item.className = "anim";
+    item.dataset.name = anim.name;
+    const play = document.createElement("button");
+    play.className = "anim-play";
+    play.innerHTML = `<svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg><span></span>`;
+    play.querySelector("span").textContent = anim.name;
+    play.onclick = () => startAnimation(anim.name, anim.frames);
+    item.append(play);
+    if (saved) {
+      const edit = document.createElement("button");
+      edit.className = "anim-edit";
+      edit.title = "Modifier";
+      edit.textContent = "✎";
+      edit.onclick = () => {
+        draft = anim.frames.map((f) => ({ pose: f.pose.slice(), t: f.t }));
+        $("#anim-name").value = anim.name;
+        renderDraft();
+      };
+      const del = document.createElement("button");
+      del.className = "anim-edit";
+      del.title = "Supprimer";
+      del.textContent = "×";
+      del.onclick = () => {
+        storeAnims(loadAnims().filter((a) => a.name !== anim.name));
+        renderAnimList();
+      };
+      item.append(edit, del);
+    }
+    box.append(item);
+  };
+  PRESETS.forEach((a) => add(a, false));
+  mine.forEach((a) => add(a, true));
+  renderAnimState();
+}
+
+const POSE_LABELS = ["av", "côté", "haut", "roul.", "tang.", "lacet"];
+function renderDraft() {
+  const list = $("#keyframes");
+  list.innerHTML = "";
+  draft.forEach((frame, i) => {
+    const li = document.createElement("li");
+    const desc = frame.pose
+      .map((v, j) => (Math.abs(v) >= 0.5 ? `${POSE_LABELS[j]} ${v > 0 ? "+" : ""}${Math.round(v)}` : null))
+      .filter(Boolean)
+      .join(" · ") || "corps au centre";
+    li.innerHTML = `<button class="kf-pose" title="Voir cette pose"></button>
+      <label><input type="number" min="0.1" max="5" step="0.1"> s</label>
+      <button class="kf-del" title="Retirer">×</button>`;
+    li.querySelector(".kf-pose").textContent = desc;
+    li.querySelector(".kf-pose").onclick = () => setPose(frame.pose);
+    const t = li.querySelector("input");
+    t.value = frame.t;
+    t.onchange = () => (frame.t = Math.max(0.1, Math.min(5, Number(t.value) || 0.6)));
+    li.querySelector(".kf-del").onclick = () => {
+      draft.splice(i, 1);
+      renderDraft();
+    };
+    list.append(li);
+  });
+  $("#keyframes-empty").hidden = draft.length > 0;
+}
+
+$("#kf-add").onclick = () => {
+  draft.push({ pose: currentPose(), t: 0.6 });
+  renderDraft();
+};
+$("#anim-preview").onclick = () => {
+  if (draft.length) startAnimation(null, draft);
+  else toast("Ajoute au moins une pose", "err");
+};
+$("#anim-save").onclick = () => {
+  if (!draft.length) return toast("Ajoute au moins une pose", "err");
+  const mine = loadAnims();
+  const name = $("#anim-name").value.trim() || `Animation ${mine.length + 1}`;
+  const frames = draft.map((f) => ({ pose: f.pose.slice(), t: f.t }));
+  storeAnims([...mine.filter((a) => a.name !== name), { name, frames }]);
+  renderAnimList();
+  toast(`« ${name} » enregistrée`, "ok");
+};
+$("#anim-stop").onclick = () => {
+  animator.stop();
+  renderAnimState();
+};
+$("#anim-loop").onchange = () => (animator.loop = $("#anim-loop").checked);
+
+renderAnimList();
+renderDraft();
+
 // ---------------------------------------------------------- journal, toasts
 
 function log(line, cls = "") {
@@ -489,6 +764,35 @@ $("#console").onsubmit = (e) => {
 
 // ------------------------------------------------------------------- 3D
 
+// Traces des pieds au sol.
+$("#traces").onclick = () => {
+  view.showTraces = !view.showTraces;
+  $("#traces").classList.toggle("on", view.showTraces);
+};
+
+// Mode pilote : la 3D et les joysticks en plein écran, idéal téléphone en paysage.
+const phoneLandscape = matchMedia("(orientation: landscape) and (max-height: 520px)");
+function updatePilot() {
+  const on = phoneLandscape.matches || !!document.fullscreenElement;
+  document.body.classList.toggle("pilot", on);
+  $("#pilot").classList.toggle("on", !!document.fullscreenElement);
+  if (on && activeTab !== "drive") selectTab("drive");
+}
+phoneLandscape.addEventListener("change", updatePilot);
+document.addEventListener("fullscreenchange", updatePilot);
+$("#pilot").onclick = async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else {
+      await document.documentElement.requestFullscreen();
+      await screen.orientation?.lock?.("landscape").catch(() => {});
+    }
+  } catch {
+    toast("Plein écran indisponible sur ce navigateur", "err");
+  }
+};
+updatePilot();
+
 let topView = false;
 $("#cam-reset").onclick = () => view.resetCamera(topView);
 $("#cam-follow").onclick = () => {
@@ -496,13 +800,21 @@ $("#cam-follow").onclick = () => {
   view.resetCamera(topView);
 };
 
+let lastFrame = performance.now();
 function frame() {
+  const now = performance.now();
+  const dt = Math.min(0.5, (now - lastFrame) / 1000);
+  lastFrame = now;
   drive = readDrive();
+  // Le sol défile sous le robot à la vitesse demandée (estimation, pas de capteur).
+  if (state.mode === "stand") view.move(drive.vx, drive.vy, (drive.yaw * Math.PI) / 180, dt);
   stickMove.render();
   stickTurn.render();
   $("#r-vx").textContent = drive.vx;
   $("#r-vy").textContent = drive.vy;
   $("#r-yaw").textContent = drive.yaw;
+  playAnimation();
+  updateLimits();
   view.update(state.angles);
   view.render();
   requestAnimationFrame(frame);

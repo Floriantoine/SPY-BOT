@@ -100,6 +100,18 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   border: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
 }
 .icon:hover { color: var(--text); border-color: var(--line-strong); }
+.icon.on { color: #cfe0ff; background: var(--accent-soft); border-color: rgba(79, 140, 255, .5); }
+
+.latency { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); padding-right: 8px; white-space: nowrap; }
+.latency:empty { display: none; }
+.latency.good { color: var(--ok); }
+.latency.slow { color: var(--warn); }
+.latency.bad { color: var(--danger); }
+
+.presets { display: flex; gap: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
+.presets button { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 6px; border-radius: 7px; font-weight: 600; }
+.presets button:hover { color: var(--text); }
+.presets button.active { background: var(--accent-soft); color: #cfe0ff; }
 
 /* Bouton de posture : propose toujours l'étape suivante (se lever / s'asseoir). */
 .btn.posture { display: flex; align-items: center; gap: 6px; min-width: 120px; justify-content: center; font-weight: 600; }
@@ -119,9 +131,9 @@ main { flex: 1; display: flex; min-height: 0; }
   background: var(--bg-2); border-left: 1px solid var(--line);
 }
 
-.tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); }
+.tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
 .tab {
-  flex: 1; border: 0; background: transparent; color: var(--muted);
+  flex: 1 0 auto; border: 0; background: transparent; color: var(--muted);
   padding: 8px 6px; border-radius: 9px; font-weight: 600; font-size: 13px;
 }
 .tab:hover { color: var(--text); }
@@ -274,6 +286,8 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
   padding: 2px 7px; border-radius: 999px; font: 600 11px/1.5 ui-monospace, Consolas, monospace;
   background: rgba(11, 14, 19, .82); border: 1px solid var(--line-strong); color: #cfd6e2; white-space: nowrap;
 }
+.servo-label.limit { background: var(--danger); border-color: var(--danger); color: #1a0505; }
+.servo-label.limit b { color: #1a0505; }
 .servo-label b { color: var(--accent); }
 .servo-label.lit { background: var(--warn); color: #111; border-color: var(--warn); z-index: 2; }
 .servo-label.lit b { color: #111; }
@@ -321,6 +335,36 @@ kbd {
   background: var(--surface-2); color: var(--text); font: 600 11px/1.6 ui-monospace, Consolas, monospace;
 }
 
+/* ------------------------------------------------------------ animations */
+
+.anim-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.anim { display: flex; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-2); overflow: hidden; }
+.anim.active { border-color: var(--accent); background: var(--accent-soft); }
+.anim-play { flex: 1; display: flex; align-items: center; gap: 6px; border: 0; background: transparent; padding: 8px 10px; font-weight: 600; text-align: left; min-width: 0; }
+.anim-play span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.anim-play svg { width: 14px; height: 14px; flex: none; color: var(--accent); fill: currentColor; }
+.anim-edit { border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--muted); padding: 0 9px; }
+.anim-edit:hover { color: var(--text); }
+.anim-transport { align-items: center; margin-bottom: 8px; }
+.toggle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+input.text, .keyframes input {
+  width: 100%; background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: 10px;
+  color: var(--text); font: inherit; padding: 8px 10px; outline: none;
+}
+input.text:focus, .keyframes input:focus { border-color: var(--accent); }
+.keyframes { margin: 10px 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+.keyframes li { padding-left: 2px; }
+.keyframes li > * { vertical-align: middle; }
+.keyframes li { display: list-item; }
+.keyframes .kf-pose { border: 0; background: transparent; color: var(--text); font-size: 12px; padding: 4px 0; width: calc(100% - 118px); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.keyframes label { display: inline-flex; align-items: center; gap: 4px; }
+.keyframes input { width: 62px; padding: 4px 6px; font-size: 12px; }
+.kf-del { border: 0; background: transparent; color: var(--muted); font-size: 16px; padding: 0 6px; }
+.kf-del:hover { color: var(--danger); }
+#tab-anim .row + .row { margin-top: 8px; }
+
 /* --------------------------------------------------------------- mobile */
 
 @media (max-width: 900px) {
@@ -335,11 +379,15 @@ kbd {
   .readout { top: 8px; left: 8px; right: 8px; justify-content: space-between; }
   .readout div { min-width: 0; padding: 0 6px; }
   .readout b { font-size: 15px; }
-  .view-tools { display: none; }
+  .view-tools { top: auto; bottom: 200px; right: 12px; flex-direction: column; }
+  #cam-reset, #cam-follow { display: none; }
   .topbar { gap: 10px; padding: 8px 10px; }
   .actions { gap: 6px; }
   .actions .btn { padding: 6px 10px; }
   .btn.posture { min-width: 0; }
+  .link { max-width: 100%; }
+  .link select { max-width: 150px; min-width: 0; }
+  .latency { padding-right: 6px; }
 }
 
 /* En calibration et montage, la vue sert à choisir un servo : pas de joysticks. */
@@ -351,3 +399,21 @@ kbd {
 @media (max-width: 900px) {
   #view.pickable { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; height: 40vh; border-bottom: 1px solid var(--line); }
 }
+
+/* Mode pilote : téléphone en paysage ou plein écran, seulement la 3D et les joysticks. */
+body.pilot { overflow: hidden; }
+body.pilot main { flex-direction: row; }
+body.pilot #panel, body.pilot .link .btn:not(#connect), body.pilot #refresh, body.pilot .brand { display: none; }
+body.pilot #view { height: auto; flex: 1; }
+body.pilot .topbar { flex-wrap: nowrap; padding: 6px max(12px, env(safe-area-inset-left, 0px)); gap: 8px; }
+body.pilot .link select { max-width: 120px; }
+body.pilot .actions { width: auto; margin-left: auto; }
+body.pilot .stick { --size: min(150px, 38vh); }
+body.pilot .stick.horizontal { height: calc(var(--size) / 2); margin-top: calc(var(--size) / 4); }
+body.pilot .stick-zone { bottom: 14px; }
+body.pilot .stick-zone.left { left: max(18px, env(safe-area-inset-left, 0px)); }
+body.pilot .stick-zone.right { right: max(18px, env(safe-area-inset-right, 0px)); }
+body.pilot .stick-zone label { display: none; }
+body.pilot .readout { left: 50%; right: auto; transform: translateX(-50%); top: 8px; }
+body.pilot .view-tools { top: 8px; bottom: auto; right: max(10px, env(safe-area-inset-right, 0px)); flex-direction: row; }
+body.pilot #cam-reset, body.pilot #cam-follow { display: grid; }

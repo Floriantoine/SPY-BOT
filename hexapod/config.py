@@ -118,6 +118,9 @@ class HexapodConfig:
                     "body_x": leg.body_x,
                     "body_y": leg.body_y,
                     "servos": [[j.board, j.channel] for j in (leg.coxa, leg.femur, leg.tibia)],
+                    # Pour l'interface : angle servo = 90 + sens × (angle - zéro) + trim,
+                    # borné entre min et max (sert à montrer les servos en butée).
+                    "joints": [[j.zero_deg, j.direction, j.min_deg, j.max_deg] for j in (leg.coxa, leg.femur, leg.tibia)],
                 }
                 for leg in self.legs
             ],

@@ -8,7 +8,8 @@ même si le lien a des à-coups, et que le robot s'arrête seul si le lien tombe
 Commandes (une par ligne, PC -> robot) :
 
     PING                          -> OK PONG
-    POWER 1|0                     servos alimentés (posture assise) / relâchés
+    POWER 1|0                     servos alimentés (démarrage en douceur vers la
+                                  posture assise) / relâchés
     STAND                         se lever (alimente d'abord les servos si besoin)
     SIT                           s'asseoir (finit le pas en cours)
     MOVE vx vy yaw                consigne de marche en mm/s, mm/s, deg/s ;
@@ -42,6 +43,7 @@ from .robot import Hexapod
 DEG = math.pi / 180.0
 
 OFF = "off"
+WAKE = "wake"  # démarrage en douceur vers la posture assise
 SIT = "sit"
 STANDING = "standing"
 STAND = "stand"
@@ -53,6 +55,10 @@ TEST = "test"
 # fémur à l'horizontale, tibia vertical vers le bas.
 CALIBRATION_POSE = (0.0, 0.0, -math.pi / 2)
 RISE_TIME = 2.0  # s pour se lever ou s'asseoir
+# Démarrage : les pattes s'activent l'une après l'autre (moins d'appel de courant),
+# et rejoignent la posture assise en douceur quand leur position est connue.
+WAKE_STAGGER = 0.25  # s entre deux pattes dont la position est inconnue
+WAKE_BLEND = 1.0  # s pour rejoindre la posture assise depuis une position connue
 WATCHDOG = 0.5  # s sans MOVE -> arrêt
 TELEMETRY_PERIOD = 0.05  # s
 TEST_DURATION = 3.0  # s
@@ -93,6 +99,9 @@ class Controller:
                 self.height = max(-self.sit_drop, self.height - self.sit_drop / RISE_TIME * dt)
                 if self.height == -self.sit_drop:
                     self.mode = SIT
+
+        elif self.mode == WAKE:
+            self._wake_tick(dt)
 
         elif self.mode == TEST:
             self.test_time += dt
@@ -149,12 +158,7 @@ class Controller:
     def cmd_power(self, on):
         if on == "1":
             if self.mode in (OFF, CALIBRATION, TEST):
-                self.mode = SIT
-                self.height = -self.sit_drop
-                self.robot.command = GaitCommand()
-                self.robot.gait.phase = 0.0
-                self._apply_pose()
-                self.angles = self.robot.update(0.0)
+                self._start_wake()
             return "OK POWER 1"
         self.mode = OFF
         self.robot.command = GaitCommand()
@@ -165,11 +169,16 @@ class Controller:
     def cmd_stand(self):
         if self.mode in (OFF, CALIBRATION, TEST):
             self.cmd_power("1")  # se lever depuis l'arrêt alimente d'abord les servos
-        if self.mode != STAND:
+        if self.mode == WAKE:
+            self.stand_after_wake = True  # se lèvera une fois le démarrage fini
+        elif self.mode != STAND:
             self.mode = STANDING
         return "OK STAND"
 
     def cmd_sit(self):
+        if self.mode == WAKE:
+            self.stand_after_wake = False
+            return "OK SIT"
         if self.mode not in (STAND, STANDING, SIT):
             return "ERR SIT : le robot n'est pas debout"
         if self.mode != SIT:
@@ -275,12 +284,14 @@ class Controller:
         self.robot.pose = BodyPose(p.x, p.y, self.height + p.z, p.roll, p.pitch, p.yaw)
 
     def _send_angles(self):
+        for leg in self.robot.config.legs:
+            self._send_leg(leg, self.angles[leg.name])
+
+    def _send_leg(self, leg, a):
         from .servo import ik_to_servo_deg
 
-        for leg in self.robot.config.legs:
-            a = self.angles[leg.name]
-            for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
-                self.driver.set_angle(joint.board, joint.channel, ik_to_servo_deg(value, joint))
+        for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+            self.driver.set_angle(joint.board, joint.channel, ik_to_servo_deg(value, joint))
 
     def _zero_angles(self):
         # Angles IK qui placent chaque servo au milieu de sa course.
@@ -288,6 +299,46 @@ class Controller:
             leg.name: LegAngles(leg.coxa.zero_deg * DEG, leg.femur.zero_deg * DEG, leg.tibia.zero_deg * DEG)
             for leg in self.robot.config.legs
         }
+
+    def _start_wake(self):
+        # Position de départ connue seulement si les servos tenaient déjà une
+        # pose (calibration, test) ; après un relâchement, elle est inconnue.
+        known = self.mode != OFF
+        self.wake_from = {n: LegAngles(a.coxa, a.femur, a.tibia) for n, a in self.angles.items()} if known else None
+        self.wake_time = 0.0
+        self.stand_after_wake = False
+        self.mode = WAKE
+        self.height = -self.sit_drop
+        self.robot.command = GaitCommand()
+        self.robot.gait.phase = 0.0
+        self._apply_pose()
+        self.wake_to = self.robot.solve()
+        self._wake_tick(0.0)
+
+    def _wake_tick(self, dt):
+        self.wake_time += dt
+        legs = self.robot.config.legs
+        done = True
+        for i, leg in enumerate(legs):
+            target = self.wake_to[leg.name]
+            if self.wake_from is None:
+                # Pattes activées l'une après l'autre, directement en posture assise.
+                if self.wake_time + 1e-9 < i * WAKE_STAGGER:
+                    done = False
+                    continue
+                a = target
+            else:
+                s = min(1.0, self.wake_time / WAKE_BLEND)
+                s = s * s * (3 - 2 * s)  # départ et arrivée en douceur
+                if s < 1.0:
+                    done = False
+                b = self.wake_from[leg.name]
+                a = LegAngles(*(u + (v - u) * s for u, v in (
+                    (b.coxa, target.coxa), (b.femur, target.femur), (b.tibia, target.tibia))))
+            self.angles[leg.name] = a
+            self._send_leg(leg, a)
+        if done:
+            self.mode = STANDING if self.stand_after_wake else SIT
 
     def _calibration_angles(self):
         return {leg.name: LegAngles(*CALIBRATION_POSE) for leg in self.robot.config.legs}

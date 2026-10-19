@@ -22,7 +22,7 @@ def run(seconds):
 
 assert ctrl.handle("POWER 1") == "OK POWER 1"
 ctrl.handle("STAND")
-run(3)
+run(4)
 assert ctrl.mode == "stand", ctrl.mode
 for cmd in ("MOVE 80 0 0", "MOVE 0 40 0", "MOVE 0 0 30", "MOVE 50 0 -20"):
     for _ in range(10):

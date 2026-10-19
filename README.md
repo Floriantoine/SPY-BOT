@@ -82,6 +82,10 @@ python -m pc.server
 
 Ouvre <http://localhost:8000>, choisis le port de l'ESP32 et clique sur **Connecter**. L'option **Simulation** fait tourner exactement le même code sans robot, pour essayer l'interface.
 
+Pour piloter depuis un téléphone sur le même Wi-Fi que le PC, lance `python -m pc.server --lan` et ouvre l'adresse affichée (`http://192.168.x.x:8000`) sur le téléphone. Attention : toute personne sur ce Wi-Fi peut alors piloter le robot. Le téléphone tenu en paysage passe en mode pilote (3D et joysticks en plein écran), et **Ajouter à l'écran d'accueil** l'installe comme une application.
+
+Si le câble USB saute, le serveur rouvre le port tout seul dès que l'ESP32 revient ; le temps de réponse du robot s'affiche à côté du bouton **Connecter**.
+
 ## Montage et premier essai
 
 Le guide pas à pas est dans [docs/MONTAGE.md](docs/MONTAGE.md) : assemblage, câblage, quel servo sur quel canal, vérification servo par servo, centrage des palonniers et calibration. L'onglet **Montage** de l'interface montre le câblage sur le modèle 3D.
@@ -95,7 +99,13 @@ Le guide pas à pas est dans [docs/MONTAGE.md](docs/MONTAGE.md) : assemblage, c�
 - Clavier : Z/Q/S/D pour se déplacer, A/E pour tourner, Maj pour aller à pleine vitesse, Espace pour s'arrêter, L pour se lever ou s'asseoir, Échap pour relâcher les servos.
 - Manette (Xbox, PlayStation...) : stick gauche pour se déplacer, stick droit pour tourner, A pour se lever, B pour s'asseoir.
 
-Les onglets règlent la vitesse maximale, la démarche, la position et l'inclinaison du corps, le câblage et la calibration. Le journal montre les échanges avec le robot et permet de taper une commande à la main.
+Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Normal** et **Rapide**), la démarche, la position et l'inclinaison du corps, le câblage et la calibration. Le journal montre les échanges avec le robot et permet de taper une commande à la main.
+
+- **Démarrage en douceur** : à la mise sous tension, les pattes s'activent l'une après l'autre (moins d'appel de courant), puis le robot se lève.
+- **Servos en butée** : un servo qui arrive au bout de sa course passe en rouge dans la 3D, avec son étiquette carte · canal.
+- **Traces des pieds** (bouton en haut à droite de la vue) : le sol défile sous le robot et chaque pied y laisse sa trace, verte au sol, bleue en l'air. Un pied qui glisse laisse un trait au lieu d'un point. Le défilement est estimé d'après les consignes, sans capteur.
+- **Animations** : révérence, danse, pompes... et un éditeur pour créer les tiennes à partir des poses de l'onglet **Corps**. Elles sont enregistrées dans le navigateur.
+- **Calibration** : **Exporter** télécharge les trims dans un fichier, **Importer** les recharge (par exemple après avoir reflashé l'ESP32), puis **Enregistrer** les garde dans le robot.
 
 ## Organisation du code
 
@@ -109,7 +119,7 @@ Les onglets règlent la vitesse maximale, la démarche, la position et l'inclina
 | `hexapod/config.py` | Dimensions, posture debout, câblage. |
 | `main.py` | Boucle de l'ESP32 à 50 Hz. |
 | `pc/server.py` | Serveur local de l'interface PC, entre le navigateur et le port série. |
-| `pc/web/` | Page web : vue 3D (three.js), joysticks, montage, calibration. |
+| `pc/web/` | Page web : vue 3D (three.js), joysticks, montage, calibration, animations (`anim.js`). |
 | `docs/MONTAGE.md` | Guide de montage et de câblage. |
 | `sim/simulate.py` | Ancienne simulation matplotlib (optionnelle). |
 

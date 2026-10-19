@@ -9,6 +9,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 
 const REF_TIBIA = 89.07; // longueur du tibia de hexapod-v2-7697, sert d'échelle
+const TRACE_POINTS = 150; // ~2,5 s d'historique par pied à 60 images/s
 
 const COLORS = {
   frame: 0xb03aa8, // PLA magenta, comme les rendus du projet d'origine
@@ -17,7 +18,9 @@ const COLORS = {
   horn: 0xe9e9ef,
   rubber: 0x23262d,
   selected: 0xfbbf24,
+  limit: 0xef4444,
   contact: 0x34d399,
+  swing: 0x60a5fa,
 };
 
 // Repère robot (x avant, y gauche, z haut) -> repère three.js (x droite, y haut, z arrière).
@@ -47,6 +50,8 @@ export class RobotView {
     this.showLabels = false;
     this.selection = null; // [nom de patte, articulation 0 coxa / 1 fémur / 2 tibia]
     this.focus = false; // atténue les autres pattes pour faire ressortir la sélection
+    this.limits = new Set(); // servos en butée, "RF:1" = fémur avant droit
+    this.showTraces = false; // trajectoire récente de chaque pied
     this.raycaster = new THREE.Raycaster();
     this._styleKey = "";
 
@@ -74,10 +79,19 @@ export class RobotView {
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
-    const grid = new THREE.GridHelper(2000, 80, 0x2a3446, 0x1a212d);
-    grid.position.y = 0.2;
-    this.ground.add(floor, grid);
+    this.ground.add(floor);
     scene.add(this.ground);
+
+    // Repère du sol : le robot reste au centre de la vue et c'est le sol qui
+    // défile quand il marche (odométrie d'après les consignes). La grille et les
+    // traces des pieds y sont accrochées.
+    this.odo = { x: 0, y: 0, th: 0 };
+    this.track = new THREE.Group();
+    this.track.matrixAutoUpdate = false;
+    scene.add(this.track);
+    this.grid = new THREE.GridHelper(2000, 80, 0x2a3446, 0x1a212d);
+    this.grid.rotation.x = Math.PI / 2; // grille dans le plan xy du repère robot
+    this.track.add(this.grid);
 
     // Tout le robot est construit dans son propre repère.
     this.robot = new THREE.Group();
@@ -107,8 +121,10 @@ export class RobotView {
       hornDim: dim(COLORS.horn),
       frameSel: std(0xe98a2c, { emissive: 0x3a1800 }),
       servoSel: sel(COLORS.selected),
+      servoLimit: std(COLORS.limit, { emissive: 0x5a0a0a, emissiveIntensity: 1 }),
       contact: new THREE.MeshBasicMaterial({ color: COLORS.contact, transparent: true, opacity: 0.55 }),
-      halo: new THREE.MeshBasicMaterial({ color: COLORS.selected, transparent: true, opacity: 0.14, depthWrite: false }),
+      halo: new THREE.MeshBasicMaterial({ color: COLORS.selected, transparent: true, opacity: 0.22, depthWrite: false }),
+      trace: new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
     };
 
     new ResizeObserver(() => this.resize()).observe(container);
@@ -310,6 +326,17 @@ export class RobotView {
     leg.contact.rotation.x = -Math.PI / 2;
     this.scene.add(leg.contact);
 
+    // Trace du pied : les dernières positions, vertes au sol, bleues en l'air.
+    const traceGeo = new THREE.BufferGeometry();
+    traceGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS * 3), 3));
+    traceGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS * 3), 3));
+    traceGeo.setDrawRange(0, 0);
+    leg.trace = new THREE.Line(traceGeo, this.mats.trace);
+    leg.trace.frustumCulled = false;
+    leg.trace.visible = false;
+    leg.traceCount = 0;
+    this.track.add(leg.trace);
+
     leg.halo = new THREE.Mesh(new THREE.SphereGeometry(20 * k, 24, 16), this.mats.halo);
     leg.halo.visible = false;
     this.robot.add(leg.halo);
@@ -383,7 +410,7 @@ export class RobotView {
 
   _applyStyles() {
     const sel = this.selection;
-    const key = JSON.stringify([sel, this.focus]);
+    const key = JSON.stringify([sel, this.focus, [...this.limits].sort()]);
     if (key === this._styleKey) return;
     this._styleKey = key;
     const m = this.mats;
@@ -391,8 +418,10 @@ export class RobotView {
       const mine = sel && p.leg === sel[0];
       const dimmed = this.focus && sel && !mine;
       const lit = mine && (p.servo !== undefined ? p.servo === sel[1] : p.link === sel[1]);
+      const atLimit = p.servo !== undefined && this.limits.has(p.leg + ":" + p.servo);
       let mat;
       if (p.role === "frame") mat = dimmed ? m.frameDim : lit ? m.frameSel : m.frame;
+      else if (p.role === "servo" && atLimit && !dimmed) mat = m.servoLimit;
       else if (p.role === "servo" || p.role === "horn") mat = dimmed ? (p.role === "horn" ? m.hornDim : m.servoDim) : lit ? m.servoSel : m[p.role];
       else if (p.role === "rubber") mat = dimmed ? m.darkDim : m.rubber;
       else mat = dimmed ? m.darkDim : m.servoDark;
@@ -416,17 +445,22 @@ export class RobotView {
     const footR = 4.5 * this.k;
     const lowest = Math.min(...tips.map((p) => p.y)) - footR;
     this.ground.position.y = lowest;
+    this._updateTrack(lowest);
     const tolerance = Math.max(1.5, 0.02 * this.geom.tibia);
     const sel = this.selection;
 
     this.legs.forEach((leg, i) => {
-      leg.contact.visible = tips[i].y - footR - lowest < tolerance;
+      const onGround = tips[i].y - footR - lowest < tolerance;
+      leg.contact.visible = onGround;
       leg.contact.position.set(tips[i].x, lowest + 0.5, tips[i].z);
       const j = sel && sel[0] === leg.name ? sel[1] : -1;
       leg.labels.forEach((label, n) => {
-        label.visible = this.showLabels || n === j;
+        const atLimit = this.limits.has(leg.name + ":" + n);
+        label.visible = this.showLabels || n === j || atLimit;
         label.element.classList.toggle("lit", n === j);
+        label.element.classList.toggle("limit", atLimit);
       });
+      this._trace(leg, tips[i], onGround);
       leg.halo.visible = j >= 0;
       if (j >= 0) {
         const p = leg.joints[j].getWorldPosition(new THREE.Vector3());
@@ -434,6 +468,50 @@ export class RobotView {
         leg.halo.scale.setScalar(1 + 0.12 * Math.sin(performance.now() / 180));
       }
     });
+  }
+
+  /** Avance le robot sur le sol : vx, vy en mm/s (repère robot), lacet en rad/s. */
+  move(vx, vy, yawRate, dt) {
+    const o = this.odo;
+    o.th += yawRate * dt;
+    o.x += (Math.cos(o.th) * vx - Math.sin(o.th) * vy) * dt;
+    o.y += (Math.sin(o.th) * vx + Math.cos(o.th) * vy) * dt;
+  }
+
+  _updateTrack(groundY) {
+    const o = this.odo;
+    const pose = new THREE.Matrix4().makeRotationZ(o.th).setPosition(o.x, o.y, 0);
+    this.track.matrix.copy(ROBOT_TO_THREE).multiply(pose.invert());
+    this.track.matrixWorldNeedsUpdate = true;
+    // La grille suit le robot par pas entiers de case, pour paraître infinie.
+    const cell = 25;
+    this.grid.position.set(Math.round(o.x / cell) * cell, Math.round(o.y / cell) * cell, groundY + 0.2);
+    this.track.updateMatrixWorld(true);
+  }
+
+  _trace(leg, tipWorld, onGround) {
+    leg.trace.visible = this.showTraces;
+    if (!this.showTraces) {
+      leg.traceCount = 0;
+      return;
+    }
+    const pos = leg.trace.geometry.attributes.position;
+    const col = leg.trace.geometry.attributes.color;
+    // Décale le tampon d'un point quand il est plein, puis ajoute la position actuelle.
+    if (leg.traceCount === TRACE_POINTS) {
+      pos.array.copyWithin(0, 3);
+      col.array.copyWithin(0, 3);
+    } else {
+      leg.traceCount++;
+    }
+    const at = (leg.traceCount - 1) * 3;
+    const p = this.track.worldToLocal(tipWorld.clone());
+    pos.array.set([p.x, p.y, p.z - 4 * this.k], at);
+    const c = new THREE.Color(onGround ? COLORS.contact : COLORS.swing);
+    col.array.set([c.r, c.g, c.b], at);
+    leg.trace.geometry.setDrawRange(0, leg.traceCount);
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
   }
 
   resize() {

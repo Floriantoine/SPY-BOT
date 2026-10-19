@@ -2,6 +2,7 @@
 
     pip install pyserial
     python -m pc.server            # puis ouvrir http://localhost:8000
+    python -m pc.server --lan      # accessible aussi depuis un téléphone du même Wi-Fi
 
 Le navigateur affiche le robot en 3D et envoie les commandes ; ce serveur les
 transmet à l'ESP32 par le port série USB (ou à un robot simulé, sans matériel)
@@ -12,6 +13,7 @@ import argparse
 import json
 import os
 import queue
+import socket
 import sys
 import threading
 import time
@@ -131,17 +133,49 @@ class SerialLink:
                 self.on_line(line)
 
 
+RECONNECT_PERIOD = 2.0  # s entre deux tentatives quand le câble a sauté
+
+
 class App:
     def __init__(self):
         self.hub = Hub()
         self.link = None
         self.lock = threading.Lock()
+        self.wanted = None  # port à rouvrir tout seul si la liaison tombe
 
     def on_line(self, line):
         self.hub.publish(line)
         if line.startswith("HELLO"):
             # Le robot vient de démarrer : on récupère sa géométrie et ses trims.
             self.request_info()
+        elif line.startswith("LINK error"):
+            self._reconnect_later()
+
+    def _reconnect_later(self):
+        port = self.wanted
+        with self.lock:
+            if self.link:
+                self.link.close()
+                self.link = None
+
+        def retry():
+            while self.wanted == port and self.link is None:
+                time.sleep(RECONNECT_PERIOD)
+                if self.wanted != port:
+                    return
+                try:
+                    with self.lock:
+                        if self.wanted != port or self.link is not None:
+                            return
+                        self.link = SerialLink(port, self.on_line)
+                except Exception:
+                    continue
+                self.hub.publish("LINK connected %s" % port)
+                threading.Timer(2.5, self.request_info).start()
+
+        if port and port != SIM:
+            self.hub.publish("LINK reconnecting %s" % port)
+            threading.Thread(target=retry, daemon=True).start()
 
     def request_info(self):
         try:
@@ -153,6 +187,7 @@ class App:
     def connect(self, port):
         with self.lock:
             self._disconnect()
+            self.wanted = port
             if port == SIM:
                 self.link = SimLink(self.on_line)
             else:
@@ -164,6 +199,7 @@ class App:
 
     def disconnect(self):
         with self.lock:
+            self.wanted = None
             self._disconnect()
         self.hub.publish("LINK disconnected")
 
@@ -181,6 +217,18 @@ class App:
         if link is None:
             raise RuntimeError("aucun robot connecté")
         link.send(line)
+
+
+def lan_address():
+    """Adresse IP de ce PC sur le réseau local (sans rien envoyer)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.168.0.1", 9))
+        return s.getsockname()[0]
+    except OSError:
+        return "IP-du-PC"
+    finally:
+        s.close()
 
 
 def list_ports():
@@ -219,7 +267,14 @@ def make_handler(app):
             if not path.startswith(WEB) or not os.path.isfile(path):
                 self.send_error(404)
                 return
-            types = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
+            types = {
+                ".html": "text/html",
+                ".js": "text/javascript",
+                ".css": "text/css",
+                ".webmanifest": "application/manifest+json",
+                ".svg": "image/svg+xml",
+                ".png": "image/png",
+            }
             with open(path, "rb") as f:
                 body = f.read()
             self.send_response(200)
@@ -271,13 +326,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", help="port série de l'ESP32 (ex. COM3, /dev/ttyUSB0) ou 'sim'")
     parser.add_argument("--http", type=int, default=8000, help="port de l'interface web")
+    parser.add_argument(
+        "--lan",
+        action="store_true",
+        help="ouvrir l'interface aux autres appareils du réseau (téléphone) ; "
+        "toute personne sur ce Wi-Fi peut alors piloter le robot",
+    )
     args = parser.parse_args()
 
     app = App()
     if args.port:
         app.connect(args.port)
-    server = ThreadingHTTPServer(("127.0.0.1", args.http), make_handler(app))
+    server = ThreadingHTTPServer(("0.0.0.0" if args.lan else "127.0.0.1", args.http), make_handler(app))
     print("Interface SPY-BOT : http://localhost:%d" % args.http)
+    if args.lan:
+        print("Depuis le téléphone (même Wi-Fi) : http://%s:%d" % (lan_address(), args.http))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

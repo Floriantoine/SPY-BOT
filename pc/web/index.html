@@ -2,8 +2,14 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
   <title>SPY-BOT</title>
+  <meta name="theme-color" content="#11151c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
     {"imports": {
@@ -26,6 +32,7 @@
         <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>
       </button>
       <button id="connect" class="btn">Connecter</button>
+      <span id="latency" class="latency" title="Temps de réponse du robot"></span>
     </div>
 
     <div class="actions">
@@ -58,6 +65,12 @@
       <div id="locked" class="locked">Lève le robot pour le piloter</div>
 
       <div class="view-tools">
+        <button class="icon" id="pilot" title="Mode pilote plein écran">
+          <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+        <button class="icon" id="traces" title="Traces des pieds au sol">
+          <svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M7.5 16.5C11 13 9 9 12 8s4 1 4.5-1"/></svg>
+        </button>
         <button class="icon" id="cam-reset" title="Recentrer la caméra">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
         </button>
@@ -74,12 +87,18 @@
         <button class="tab" data-tab="body">Corps</button>
         <button class="tab" data-tab="build">Montage</button>
         <button class="tab" data-tab="cal">Calibration</button>
+        <button class="tab" data-tab="anim">Animations</button>
         <button class="tab" data-tab="log">Journal</button>
       </nav>
 
       <div class="tab-page active" id="tab-drive">
         <div class="card">
           <h3>Vitesse</h3>
+          <div class="presets" id="presets" role="group" aria-label="Préréglages de vitesse">
+            <button data-preset="slow">Lent</button>
+            <button data-preset="normal">Normal</button>
+            <button data-preset="fast">Rapide</button>
+          </div>
           <div class="field"><span>Vitesse max</span><output></output>
             <input id="speed" type="range" min="10" max="150" step="5" value="80"></div>
           <div class="field"><span>Rotation max</span><output></output>
@@ -148,6 +167,11 @@
           <button class="btn" id="btn-cal" data-needs="link">Pose de calibration</button>
           <button class="btn primary" id="btn-save" data-needs="link">Enregistrer</button>
         </div>
+        <div class="row">
+          <button class="btn ghost" id="cal-export" title="Télécharger les trims dans un fichier">Exporter</button>
+          <button class="btn ghost" id="cal-import" data-needs="link" title="Recharger des trims depuis un fichier">Importer</button>
+          <input type="file" id="cal-file" accept=".json,application/json" hidden>
+        </div>
 
         <div class="card focus-card">
           <div class="focus-head">
@@ -186,6 +210,33 @@
             <li>Pour chaque servo, règle le trim jusqu'à ce que la patte réelle ait la pose du modèle 3D.</li>
             <li><b>Enregistrer</b> : les réglages restent dans l'ESP32.</li>
           </ol>
+        </div>
+      </div>
+
+      <div class="tab-page" id="tab-anim">
+        <div class="card">
+          <h3>Animations</h3>
+          <div class="anim-list" id="anim-list"></div>
+          <div class="row anim-transport">
+            <button class="btn" id="anim-stop" disabled>Stop</button>
+            <label class="toggle"><input type="checkbox" id="anim-loop"> En boucle</label>
+          </div>
+          <p class="hint">Les animations bougent le corps, pieds au sol. Lève le robot pour mieux les voir.</p>
+        </div>
+        <div class="card">
+          <h3>Éditeur</h3>
+          <div class="row">
+            <input id="anim-name" class="text" placeholder="Nom de l'animation" maxlength="24">
+          </div>
+          <ol class="keyframes" id="keyframes"></ol>
+          <p class="hint" id="keyframes-empty">Règle le corps dans l'onglet <b>Corps</b>, puis ajoute chaque pose ici.</p>
+          <div class="row">
+            <button class="btn" id="kf-add">Ajouter la pose du corps</button>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="anim-preview">Essayer</button>
+            <button class="btn primary" id="anim-save">Enregistrer</button>
+          </div>
         </div>
       </div>
 

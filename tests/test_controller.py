@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from hexapod import default_config
-from hexapod.controller import CALIBRATION, OFF, SIT, STAND, Controller
+from hexapod.controller import CALIBRATION, OFF, SIT, STAND, WAKE, Controller
 from hexapod.servo import DryRunDriver
 
 
@@ -39,13 +39,40 @@ class ControllerTest(unittest.TestCase):
     def test_stand_from_off_powers_on_first(self):
         c = self.ctrl
         self.assertEqual(c.handle("STAND"), "OK STAND")
-        self.assertEqual(len(self.driver.angles), 18)
-        run(c, 3.0)
+        self.assertEqual(c.mode, WAKE)
+        run(c, 4.0)
         self.assertEqual(c.mode, STAND)
+
+    def test_power_on_enables_legs_one_after_another(self):
+        c = self.ctrl
+        self.assertEqual(c.handle("POWER 1"), "OK POWER 1")
+        self.assertEqual(c.mode, WAKE)
+        self.assertEqual(len(self.driver.angles), 3)  # une seule patte active
+        run(c, 0.6)
+        self.assertEqual(len(self.driver.angles), 9)
+        run(c, 1.0)
+        self.assertEqual(len(self.driver.angles), 18)
+        self.assertEqual(c.mode, SIT)
+
+    def test_power_on_from_calibration_moves_smoothly(self):
+        c = self.ctrl
+        c.handle("CAL")
+        leg = c.robot.config.leg("RF")
+        key = (leg.femur.board, leg.femur.channel)
+        previous = self.driver.angles[key]
+        c.handle("POWER 1")
+        steps = []
+        for _ in range(60):
+            c.tick(0.02)
+            steps.append(abs(self.driver.angles[key] - previous))
+            previous = self.driver.angles[key]
+        self.assertEqual(c.mode, SIT)
+        self.assertLess(max(steps), 3.0)  # pas plus de 3° par pas de 20 ms
 
     def test_power_stand_walk_sit_power_off(self):
         c = self.ctrl
         self.assertEqual(c.handle("POWER 1"), "OK POWER 1")
+        run(c, 1.5)
         self.assertEqual(c.mode, SIT)
         self.assertEqual(len(self.driver.angles), 18)
         c.handle("STAND")
@@ -65,7 +92,7 @@ class ControllerTest(unittest.TestCase):
         c = self.ctrl
         c.handle("POWER 1")
         c.handle("STAND")
-        run(c, 3.0)
+        run(c, 4.0)
         for _ in range(20):
             c.handle("MOVE 0 0 30")
             run(c, 0.1)
@@ -76,7 +103,7 @@ class ControllerTest(unittest.TestCase):
         c = self.ctrl
         c.handle("POWER 1")
         c.handle("STAND")
-        run(c, 3.0)
+        run(c, 4.0)
         c.handle("MOVE 60 0 0")
         run(c, 2.0)
         self.assertTrue(c.robot.command.is_zero)
@@ -137,7 +164,7 @@ class ControllerTest(unittest.TestCase):
         c = self.ctrl
         c.handle("POWER 1")
         c.handle("STAND")
-        run(c, 3.0)
+        run(c, 4.0)
         self.assertTrue(c.handle("TEST RF coxa").startswith("ERR"))
 
     def test_bad_commands(self):
