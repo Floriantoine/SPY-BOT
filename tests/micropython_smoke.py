@@ -33,6 +33,9 @@ run(1)
 ctrl.handle("SIT")
 run(4)
 assert ctrl.mode == "sit", ctrl.mode
+assert ctrl.handle("TEST LF femur") == "OK TEST LF femur"
+run(4)
+assert ctrl.mode == "cal", ctrl.mode
 assert ctrl.handle("CAL") == "OK CAL"
 assert ctrl.handle("TRIM RR coxa 2.5").startswith("OK")
 assert ctrl.handle("SAVE") == "OK SAVE"

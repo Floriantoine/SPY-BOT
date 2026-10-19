@@ -16,6 +16,8 @@ Commandes (une par ligne, PC -> robot) :
     POSE x y z roll pitch yaw     décalage du corps en mm et degrés
     GAIT period step_height       durée du cycle (s) et hauteur de pas (mm)
     CAL                           pose de calibration : tous les servos à 90° + trim
+    TEST leg joint                fait osciller un seul servo pendant 3 s (vérif. câblage),
+                                  les autres au milieu ; refusé quand le robot est debout
     TRIM leg joint deg            règle le trim d'une articulation (ex. TRIM RF femur -3)
     SAVE                          enregistre les trims dans la mémoire du robot
     GETCAL                        -> CAL {"RF": [coxa, femur, tibia], ...}
@@ -45,10 +47,13 @@ STANDING = "standing"
 STAND = "stand"
 SITTING = "sitting"
 CALIBRATION = "cal"
+TEST = "test"
 
 RISE_TIME = 2.0  # s pour se lever ou s'asseoir
 WATCHDOG = 0.5  # s sans MOVE -> arrêt
 TELEMETRY_PERIOD = 0.05  # s
+TEST_DURATION = 3.0  # s
+TEST_AMPLITUDE = 20.0 * math.pi / 180.0
 JOINTS = ("coxa", "femur", "tibia")
 
 
@@ -85,6 +90,17 @@ class Controller:
                 self.height = max(-self.sit_drop, self.height - self.sit_drop / RISE_TIME * dt)
                 if self.height == -self.sit_drop:
                     self.mode = SIT
+
+        elif self.mode == TEST:
+            self.test_time += dt
+            self.angles = self._zero_angles()
+            if self.test_time < TEST_DURATION:
+                a = self.angles[self.test_leg]
+                offset = TEST_AMPLITUDE * math.sin(2 * math.pi * self.test_time)
+                setattr(a, self.test_joint, getattr(a, self.test_joint) + offset)
+            else:
+                self.mode = CALIBRATION
+            self._send_angles()
 
         if self.mode in (SIT, STANDING, STAND, SITTING):
             self._apply_pose()
@@ -129,7 +145,7 @@ class Controller:
 
     def cmd_power(self, on):
         if on == "1":
-            if self.mode in (OFF, CALIBRATION):
+            if self.mode in (OFF, CALIBRATION, TEST):
                 self.mode = SIT
                 self.height = -self.sit_drop
                 self.robot.command = GaitCommand()
@@ -188,6 +204,17 @@ class Controller:
         self.angles = self._zero_angles()
         self._send_angles()
         return "OK CAL"
+
+    def cmd_test(self, leg_name, joint_name):
+        self._joint(leg_name, joint_name)  # valide les noms
+        if self.mode in (STAND, STANDING, SITTING):
+            return "ERR TEST : asseoir le robot d'abord"
+        self.mode = TEST
+        self.robot.command = GaitCommand()
+        self.test_leg = leg_name.upper()
+        self.test_joint = joint_name.lower()
+        self.test_time = 0.0
+        return "OK TEST %s %s" % (self.test_leg, self.test_joint)
 
     def cmd_trim(self, leg_name, joint_name, deg):
         joint = self._joint(leg_name, joint_name)

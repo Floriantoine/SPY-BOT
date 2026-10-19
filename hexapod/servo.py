@@ -2,6 +2,8 @@
 
 import math
 
+from .config import I2C_ADDRESSES
+
 DEG_PER_RAD = 180.0 / math.pi
 
 
@@ -71,7 +73,7 @@ class PCA9685Driver:
     1400 µs au milieu, 10 µs par degré, bornées à 800-2000 µs.
     """
 
-    def __init__(self, i2c=None, addresses=(0x40, 0x41), sda=21, scl=22,
+    def __init__(self, i2c=None, addresses=I2C_ADDRESSES, sda=21, scl=22,
                  center_us=1400, us_per_deg=10.0, min_us=800, max_us=2000):
         if i2c is None:
             from machine import I2C, Pin

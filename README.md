@@ -82,21 +82,20 @@ python -m pc.server
 
 Ouvre <http://localhost:8000>, choisis le port de l'ESP32 et clique sur **Connecter**. L'option **Simulation** fait tourner exactement le même code sans robot, pour essayer l'interface.
 
-## Premier essai
+## Montage et premier essai
 
-1. Robot posé sur une boîte, pattes dans le vide, alimentation des servos branchée.
-2. **Pose de calibration** : chaque servo va au milieu de sa course. Pour chaque patte, règle les trims jusqu'à ce que le robot ait la même pose que le modèle 3D (coxa dans l'axe de la patte, fémur relevé d'environ 15°, tibia perpendiculaire au fémur), puis **Enregistrer** (les trims sont gardés dans l'ESP32). Si un servo tourne dans le mauvais sens, change son `direction` dans `config.py`.
-3. **Activer les servos** puis **Se lever**, toujours sur la boîte, pour vérifier les mouvements.
-4. Pose le robot au sol, **Se lever**, puis pilote :
+Le guide pas à pas est dans [docs/MONTAGE.md](docs/MONTAGE.md) : assemblage, câblage, quel servo sur quel canal, vérification servo par servo, centrage des palonniers et calibration. L'onglet **Montage** de l'interface montre le câblage sur le modèle 3D.
 
-| Touche | Action |
-| --- | --- |
-| Z / S (ou ↑ / ↓) | avancer / reculer |
-| Q / D | pas de côté gauche / droite |
-| A / E (ou ← / →) | tourner sur place à gauche / à droite |
-| Espace | stop |
+## Pilotage
 
-Les curseurs règlent la vitesse, la vitesse de rotation, la pose du corps (hauteur, roulis, tangage, lacet) et la démarche. **Relâcher** coupe tous les servos.
+![Interface](docs/img/pilotage.png)
+
+- **Joystick gauche** : avancer, reculer et se déplacer de côté, avec une vitesse proportionnelle à l'inclinaison.
+- **Joystick droit** : tourner sur place.
+- Clavier : Z/Q/S/D pour se déplacer, A/E pour tourner, Maj pour aller à pleine vitesse, Espace pour s'arrêter, L pour se lever ou s'asseoir, Échap pour relâcher les servos.
+- Manette (Xbox, PlayStation...) : stick gauche pour se déplacer, stick droit pour tourner, A pour se lever, B pour s'asseoir.
+
+Les onglets règlent la vitesse maximale, la démarche, la position et l'inclinaison du corps, le câblage et la calibration. Le journal montre les échanges avec le robot et permet de taper une commande à la main.
 
 ## Organisation du code
 
@@ -109,7 +108,9 @@ Les curseurs règlent la vitesse, la vitesse de rotation, la pose du corps (haut
 | `hexapod/controller.py` | États du robot (relâché, assis, debout, calibration) et protocole texte avec le PC. |
 | `hexapod/config.py` | Dimensions, posture debout, câblage. |
 | `main.py` | Boucle de l'ESP32 à 50 Hz. |
-| `pc/server.py`, `pc/web/` | Interface PC : serveur local, page 3D (three.js). |
+| `pc/server.py` | Serveur local de l'interface PC, entre le navigateur et le port série. |
+| `pc/web/` | Page web : vue 3D (three.js), joysticks, montage, calibration. |
+| `docs/MONTAGE.md` | Guide de montage et de câblage. |
 | `sim/simulate.py` | Ancienne simulation matplotlib (optionnelle). |
 
 Le code de `hexapod/` n'utilise que ce qui existe aussi dans MicroPython : il tourne pareil sur l'ESP32 et sur le PC.
@@ -123,4 +124,4 @@ micropython tests/micropython_smoke.py    # même code sous MicroPython
 
 ## Protocole série
 
-Une commande par ligne à 115200 bauds, documentée en tête de `hexapod/controller.py` : `POWER 1|0`, `STAND`, `SIT`, `MOVE vx vy yaw`, `POSE x y z roll pitch yaw`, `GAIT période hauteur`, `CAL`, `TRIM patte articulation degrés`, `SAVE`, `GETCAL`, `GEOM`. Le robot renvoie `OK …`, `ERR …` et une ligne de télémétrie `T …` 20 fois par seconde.
+Une commande par ligne à 115200 bauds, documentée en tête de `hexapod/controller.py` : `POWER 1|0`, `STAND`, `SIT`, `MOVE vx vy yaw`, `POSE x y z roll pitch yaw`, `GAIT période hauteur`, `CAL`, `TEST patte articulation`, `TRIM patte articulation degrés`, `SAVE`, `GETCAL`, `GEOM`. Le robot renvoie `OK …`, `ERR …` et une ligne de télémétrie `T …` 20 fois par seconde.

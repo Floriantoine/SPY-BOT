@@ -1,151 +1,245 @@
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Joystick } from "./joystick.js";
+import { RobotView } from "./scene.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
+const MODES = {
+  test: "Test servo",
+  off: "Relâché",
+  sit: "Assis",
+  standing: "Se lève…",
+  stand: "Debout",
+  sitting: "S'assoit…",
+  cal: "Calibration",
+};
+const JOINTS = ["coxa", "femur", "tibia"];
+const JOINT_LABELS = { coxa: "Coxa", femur: "Fémur", tibia: "Tibia" };
+
+const state = {
+  connected: false,
+  mode: null,
+  angles: null,
+  calib: {},
+  selectedLeg: "RF",
+};
+
 // ---------------------------------------------------------------- liaison
 
 async function post(path, body) {
-  const res = await fetch(path, { method: "POST", body });
-  const data = await res.json();
-  if (data.error) log("! " + data.error);
-  return data;
+  try {
+    const res = await fetch(path, { method: "POST", body });
+    const data = await res.json();
+    if (data.error) toast(data.error, "err");
+    return data;
+  } catch {
+    toast("Serveur PC injoignable", "err");
+    return {};
+  }
 }
 
-const send = (line) => post("/cmd", line);
-
-function log(line) {
-  const el = $("#log");
-  el.textContent += line + "\n";
-  const lines = el.textContent.split("\n");
-  if (lines.length > 200) el.textContent = lines.slice(-200).join("\n");
-  el.scrollTop = el.scrollHeight;
+function send(line, quiet = false) {
+  if (!quiet) log(line, "out");
+  return post("/cmd", line);
 }
 
 async function refreshPorts() {
-  const { ports, link } = await (await fetch("/ports")).json();
+  const { ports = [], link } = await (await fetch("/ports")).json();
   const sel = $("#port");
+  const previous = sel.value;
   sel.innerHTML = "";
-  for (const p of ports) sel.add(new Option(`${p.device} — ${p.description}`, p.device));
+  for (const p of ports) sel.add(new Option(`${p.device} · ${p.description}`, p.device));
   sel.add(new Option("Simulation (sans robot)", "sim"));
-  if (link) sel.value = link;
+  sel.value = link || (ports.some((p) => p.device === previous) ? previous : sel.options[0].value);
 }
 
 $("#refresh").onclick = refreshPorts;
-$("#connect").onclick = () => post("/connect", JSON.stringify({ port: $("#port").value }));
-$("#disconnect").onclick = () => post("/disconnect");
-for (const b of $$("button[data-cmd]")) b.onclick = () => send(b.dataset.cmd);
+$("#connect").onclick = () => {
+  if (state.connected) post("/disconnect");
+  else post("/connect", JSON.stringify({ port: $("#port").value }));
+};
 
-// ------------------------------------------------------------- état robot
-
-let geom = null;
-let angles = null; // 6 x [coxa, fémur, tibia] en radians
-let calib = {};
-let selectedLeg = "RF";
-let mode = "off";
-
-function setLink(connected, text) {
-  $("#link-dot").classList.toggle("on", connected);
-  $("#link-text").textContent = text;
-}
+// ------------------------------------------------------------ événements
 
 const events = new EventSource("/events");
 events.onmessage = (e) => {
   const line = e.data;
-  const [kind, ...rest] = line.split(" ");
+  const space = line.indexOf(" ");
+  const kind = space < 0 ? line : line.slice(0, space);
+  const rest = space < 0 ? "" : line.slice(space + 1);
+
   if (kind === "T") {
-    mode = rest[0];
-    $("#mode").textContent = MODES[mode] || mode;
-    const v = rest.slice(2).map((x) => Number(x) / 1000);
-    angles = [0, 1, 2, 3, 4, 5].map((i) => v.slice(3 * i, 3 * i + 3));
+    const parts = rest.split(" ");
+    setMode(parts[0]);
+    $("#r-phase").textContent = state.mode === "stand" ? Number(parts[1]).toFixed(2) : "–";
+    const v = parts.slice(2).map((x) => Number(x) / 1000);
+    state.angles = [0, 1, 2, 3, 4, 5].map((i) => v.slice(3 * i, 3 * i + 3));
     return;
   }
+  log(line, kind === "ERR" ? "err" : "");
   if (kind === "GEOM") {
-    geom = JSON.parse(rest.join(" "));
-    buildRobot();
+    const geom = JSON.parse(rest);
+    view.setGeometry(geom);
+    renderWiring(geom);
   } else if (kind === "CAL") {
-    calib = JSON.parse(rest.join(" "));
-    showTrims();
+    state.calib = JSON.parse(rest);
+    renderTrims();
   } else if (kind === "LINK") {
-    if (rest[0] === "connected") setLink(true, "Connecté : " + (rest[1] === "sim" ? "simulation" : rest[1]));
-    else setLink(false, rest[0] === "error" ? "Erreur de liaison" : "Non connecté");
-  } else if (kind === "OK" && rest[0] === "TRIM") {
-    const [, leg, joint, value] = rest;
-    (calib[leg] ||= [0, 0, 0])[JOINTS.indexOf(joint)] = Number(value);
+    const [what, ...name] = rest.split(" ");
+    setConnected(what === "connected", name.join(" "));
+    if (what === "error") toast("Liaison perdue : " + name.join(" "), "err");
+  } else if (kind === "ERR") {
+    toast(rest, "err");
+  } else if (kind === "OK") {
+    const [cmd, leg, joint, value] = rest.split(" ");
+    if (cmd === "TRIM") (state.calib[leg] ||= [0, 0, 0])[JOINTS.indexOf(joint)] = Number(value);
+    if (cmd === "SAVE") toast("Calibration enregistrée dans l'ESP32", "ok");
+  } else if (kind === "HELLO") {
+    toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
   }
-  log(line);
 };
+events.onerror = () => setConnected(false);
 
-const MODES = {
-  off: "relâché",
-  sit: "assis",
-  standing: "se lève…",
-  stand: "debout",
-  sitting: "s'assoit…",
-  cal: "calibration",
-};
+function setConnected(connected, name = "") {
+  state.connected = connected;
+  if (!connected) setMode(null);
+  $("#link-dot").classList.toggle("on", connected);
+  const btn = $("#connect");
+  btn.textContent = connected ? "Déconnecter" : "Connecter";
+  btn.classList.toggle("connected", connected);
+  $("#port").disabled = connected;
+  if (connected && name) $("#port").value = name;
+  updateControls();
+}
+
+function setMode(mode) {
+  if (mode === state.mode) return;
+  state.mode = mode;
+  updateControls();
+}
+
+function updateControls() {
+  const { connected, mode } = state;
+  const powered = connected && mode && mode !== "off" && mode !== "cal";
+  $("#mode").textContent = connected ? MODES[mode] || "…" : "Déconnecté";
+  $("#mode-chip").dataset.mode = connected ? mode || "" : "";
+
+  const power = $("#btn-power");
+  power.disabled = !connected;
+  power.classList.toggle("on", powered);
+  power.querySelector("span").textContent = powered ? "Activé" : "Activer";
+
+  const stand = $("#btn-stand");
+  const up = mode === "stand" || mode === "standing";
+  stand.disabled = !powered;
+  stand.classList.toggle("on", up);
+  stand.querySelector("span").textContent = up ? "S'asseoir" : "Se lever";
+
+  for (const el of $$("[data-needs=link]")) el.disabled = !connected;
+  $("#view").classList.toggle("can-drive", connected && mode === "stand");
+}
+
+$("#btn-power").onclick = () => send(state.mode && state.mode !== "off" && state.mode !== "cal" ? "POWER 0" : "POWER 1");
+$("#btn-stand").onclick = () => send(state.mode === "stand" || state.mode === "standing" ? "SIT" : "STAND");
+$("#btn-relax").onclick = () => send("POWER 0");
+$("#btn-cal").onclick = () => send("CAL");
+$("#btn-save").onclick = () => send("SAVE");
 
 // --------------------------------------------------------------- pilotage
 
-const pressed = new Set();
-const MOVE_KEYS = { z: "z", s: "s", q: "q", d: "d", a: "a", e: "e",
-  arrowup: "z", arrowdown: "s", arrowleft: "a", arrowright: "e" };
+const stickMove = new Joystick($("#stick-move"));
+const stickTurn = new Joystick($("#stick-turn"), { horizontal: true });
+const keys = new Set();
 
-function bindSlider(input, format) {
-  const out = input.parentElement.querySelector("output");
-  const update = () => (out.textContent = format(Number(input.value)));
-  input.addEventListener("input", update);
-  update();
-}
-
-bindSlider($("#speed"), (v) => `${v} mm/s`);
-bindSlider($("#turn"), (v) => `${v} °/s`);
+const isTyping = (e) => ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && e.target.type !== "range";
 
 document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "SELECT") return;
-  const k = MOVE_KEYS[e.key.toLowerCase()];
-  if (k) {
-    pressed.add(k);
+  if (isTyping(e) || e.repeat && !"zqsdae".includes(e.key.toLowerCase())) return;
+  const k = e.key.toLowerCase();
+  if ("zqsdae".includes(k) && k.length === 1) {
+    keys.add(k);
     e.preventDefault();
-  } else if (e.key === " ") {
-    pressed.clear();
+  } else if (k === "shift") {
+    keys.add("shift");
+  } else if (k === " ") {
+    keys.clear();
     e.preventDefault();
+  } else if (k === "l" && !e.repeat) {
+    $("#btn-stand").click();
+  } else if (k === "p" && !e.repeat) {
+    $("#btn-power").click();
+  } else if (k === "escape") {
+    send("POWER 0");
   }
 });
-document.addEventListener("keyup", (e) => {
-  const k = MOVE_KEYS[e.key.toLowerCase()];
-  if (k) pressed.delete(k);
-});
-window.addEventListener("blur", () => pressed.clear());
+document.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+window.addEventListener("blur", () => keys.clear());
 
-for (const b of $$(".pad button[data-key]")) {
-  const k = b.dataset.key;
-  b.addEventListener("pointerdown", () => pressed.add(k));
-  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ev, () => pressed.delete(k));
+function readKeyboard() {
+  const has = (k) => (keys.has(k) ? 1 : 0);
+  const gain = keys.has("shift") ? 1 : 0.5;
+  let x = has("d") - has("q");
+  let y = has("z") - has("s");
+  const n = Math.hypot(x, y) || 1;
+  return { x: (x / n) * gain, y: (y / n) * gain, turn: (has("e") - has("a")) * gain };
 }
-$("#stop").onclick = () => pressed.clear();
 
+// Manette (API Gamepad) : stick gauche déplacement, stick droit rotation.
+const padButtons = {};
+function readGamepad() {
+  const pad = [...(navigator.getGamepads?.() || [])].find(Boolean);
+  if (!pad) return null;
+  const pressed = (i) => pad.buttons[i]?.pressed;
+  for (const [i, action] of [[0, "STAND"], [1, "SIT"]]) {
+    if (pressed(i) && !padButtons[i]) send(action);
+    padButtons[i] = pressed(i);
+  }
+  const [lx = 0, ly = 0, rx = 0] = pad.axes;
+  return { x: lx, y: -ly, turn: rx };
+}
+
+function readDrive() {
+  const kb = readKeyboard();
+  const pad = readGamepad();
+  const big = (a, b) => (Math.abs(a) >= Math.abs(b) ? a : b);
+  const ext = {
+    x: big(kb.x, pad ? pad.x : 0),
+    y: big(kb.y, pad ? pad.y : 0),
+    turn: big(kb.turn, pad ? pad.turn : 0),
+  };
+  stickMove.setExternal(ext.x, ext.y);
+  stickTurn.setExternal(ext.turn, 0);
+  const move = stickMove.value;
+  const turn = stickTurn.value.x;
+  const speed = Number($("#speed").value);
+  const maxTurn = Number($("#turn").value);
+  // Stick vers la droite = aller à droite (vy négatif) / tourner à droite (lacet négatif).
+  return {
+    vx: Math.round(move.y * speed),
+    vy: Math.round(-move.x * speed),
+    yaw: Math.round(-turn * maxTurn),
+  };
+}
+
+let drive = { vx: 0, vy: 0, yaw: 0 };
 let moving = false;
 setInterval(() => {
-  const speed = Number($("#speed").value);
-  const turn = Number($("#turn").value);
-  const has = (k) => (pressed.has(k) ? 1 : 0);
-  const vx = speed * (has("z") - has("s"));
-  const vy = speed * (has("q") - has("d"));
-  const yaw = turn * (has("a") - has("e"));
-  for (const b of $$(".pad button[data-key]")) b.classList.toggle("active", pressed.has(b.dataset.key));
+  if (state.mode !== "stand") {
+    moving = false;
+    return;
+  }
+  const { vx, vy, yaw } = drive;
   // Le robot s'arrête seul s'il ne reçoit plus de MOVE pendant 0,5 s.
   if (vx || vy || yaw) {
-    send(`MOVE ${vx} ${vy} ${yaw}`);
+    send(`MOVE ${vx} ${vy} ${yaw}`, true);
     moving = true;
   } else if (moving) {
-    send("MOVE 0 0 0");
+    send("MOVE 0 0 0", true);
     moving = false;
   }
 }, 100);
 
-// ------------------------------------------------------------ corps, démarche
+// ------------------------------------------------------- curseurs, réglages
 
 function throttle(fn, ms) {
   let timer = null;
@@ -167,181 +261,188 @@ function throttle(fn, ms) {
   };
 }
 
-const poseInputs = [...$$("input.pose")].sort((a, b) => a.dataset.i - b.dataset.i);
-const sendPose = throttle(() => send("POSE " + poseInputs.map((i) => i.value).join(" ")), 60);
-for (const input of poseInputs) {
-  bindSlider(input, (v) => (Number(input.dataset.i) < 3 ? `${v} mm` : `${v}°`));
-  input.addEventListener("input", sendPose);
+function bindSlider(input, format) {
+  const out = input.closest(".field, .trim-row")?.querySelector("output");
+  const update = () => {
+    const p = ((input.value - input.min) / (input.max - input.min)) * 100;
+    input.style.setProperty("--p", p + "%");
+    if (out) out.textContent = format(Number(input.value));
+  };
+  input.addEventListener("input", update);
+  update();
+  return update;
 }
-$("#pose-reset").onclick = () => {
-  for (const input of poseInputs) {
-    input.value = 0;
-    input.dispatchEvent(new Event("input"));
-  }
-};
 
-const sendGait = throttle(() => send(`GAIT ${$("#period").value} ${$("#step").value}`), 150);
-bindSlider($("#period"), (v) => v.toFixed(1));
-bindSlider($("#step"), (v) => `${v}`);
+bindSlider($("#speed"), (v) => `${v} mm/s`);
+bindSlider($("#turn"), (v) => `${v} °/s`);
+bindSlider($("#period"), (v) => `${v.toFixed(1)} s`);
+bindSlider($("#step"), (v) => `${v} mm`);
+const sendGait = throttle(() => send(`GAIT ${$("#period").value} ${$("#step").value}`, true), 150);
 $("#period").addEventListener("input", sendGait);
 $("#step").addEventListener("input", sendGait);
 
+const poseInputs = [...$$("input.pose")].sort((a, b) => a.dataset.i - b.dataset.i);
+const sendPose = throttle(() => send("POSE " + poseInputs.map((i) => i.value).join(" "), true), 60);
+const poseUpdaters = poseInputs.map((input) => {
+  input.addEventListener("input", sendPose);
+  return bindSlider(input, (v) => (Number(input.dataset.i) < 3 ? `${v} mm` : `${v}°`));
+});
+$("#pose-reset").onclick = () => {
+  poseInputs.forEach((input, i) => {
+    input.value = 0;
+    poseUpdaters[i]();
+  });
+  sendPose();
+};
+
+// Onglets.
+for (const tab of $$(".tab")) {
+  tab.onclick = () => {
+    for (const t of $$(".tab")) t.classList.toggle("active", t === tab);
+    for (const p of $$(".tab-page")) p.classList.toggle("active", p.id === "tab-" + tab.dataset.tab);
+    view.showLabels = tab.dataset.tab === "build";
+    if (tab.dataset.tab !== "build") view.highlight = null;
+  };
+}
+
+// ----------------------------------------------------------------- montage
+
+const LEG_NAMES_FR = { RF: "Avant droite", RM: "Milieu droite", RR: "Arrière droite", LF: "Avant gauche", LM: "Milieu gauche", LR: "Arrière gauche" };
+
+function renderWiring(geom) {
+  const boards = geom.addresses.map((addr, b) => ({ addr, side: b === 0 ? "pattes droites" : "pattes gauches", rows: [] }));
+  for (const leg of geom.legs) {
+    leg.servos.forEach(([board, channel], j) => boards[board].rows.push({ leg: leg.name, j, channel }));
+  }
+  const box = $("#wiring");
+  box.innerHTML = "";
+  for (const b of boards) {
+    b.rows.sort((x, y) => x.channel - y.channel);
+    const div = document.createElement("div");
+    div.className = "board";
+    div.innerHTML = `<h4>PCA9685 0x${b.addr.toString(16)} <small>${b.side}</small></h4>`;
+    for (const r of b.rows) {
+      const row = document.createElement("div");
+      row.className = "wire";
+      row.innerHTML = `<span class="ch">${r.channel}</span>
+        <span>${LEG_NAMES_FR[r.leg]} <small>· ${JOINT_LABELS[JOINTS[r.j]]}</small></span>
+        <button class="btn" data-needs="link">Tester</button>`;
+      row.onclick = () => {
+        for (const w of $$(".wire")) w.classList.toggle("lit", w === row);
+        view.highlight = [r.leg, r.j];
+      };
+      row.querySelector("button").onclick = () => send(`TEST ${r.leg} ${JOINTS[r.j]}`);
+      div.append(row);
+    }
+    box.append(div);
+  }
+  updateControls();
+}
+
+$("#btn-center").onclick = () => send("CAL");
+
 // ------------------------------------------------------------- calibration
 
-const JOINTS = ["coxa", "femur", "tibia"];
-const LEG_LABELS = { LF: "Avant G", RF: "Avant D", LM: "Milieu G", RM: "Milieu D", LR: "Arrière G", RR: "Arrière D" };
-
-for (const name of ["LF", "RF", "LM", "RM", "LR", "RR"]) {
+const LEG_LAYOUT = [["LF", "Avant G"], ["RF", "Avant D"], ["LM", "Milieu G"], ["RM", "Milieu D"], ["LR", "Arrière G"], ["RR", "Arrière D"]];
+const legMap = $("#legs");
+const bodyCell = document.createElement("div");
+bodyCell.className = "body";
+bodyCell.textContent = "AVANT ↑";
+legMap.append(bodyCell);
+LEG_LAYOUT.forEach(([name, label], i) => {
   const b = document.createElement("button");
-  b.textContent = LEG_LABELS[name];
+  b.textContent = label;
   b.dataset.leg = name;
+  b.style.gridColumn = i % 2 ? 3 : 1;
+  b.style.gridRow = Math.floor(i / 2) + 1;
   b.onclick = () => {
-    selectedLeg = name;
-    showTrims();
+    state.selectedLeg = name;
+    renderTrims();
   };
-  $("#legs").append(b);
-}
-
-const trimInputs = [...$$("input.trim")];
-for (const input of trimInputs) {
-  bindSlider(input, (v) => `${v.toFixed(1)}°`);
-  const sendTrim = throttle(() => send(`TRIM ${selectedLeg} ${input.dataset.joint} ${input.value}`), 80);
-  input.addEventListener("input", sendTrim);
-}
-
-function showTrims() {
-  for (const b of $$("#legs button")) b.classList.toggle("active", b.dataset.leg === selectedLeg);
-  const t = calib[selectedLeg] || [0, 0, 0];
-  for (const input of trimInputs) {
-    input.value = t[JOINTS.indexOf(input.dataset.joint)];
-    input.parentElement.querySelector("output").textContent = `${Number(input.value).toFixed(1)}°`;
-  }
-}
-showTrims();
-
-// ---------------------------------------------------------------------- 3D
-
-// Repère robot : x avant, y gauche, z haut -> three.js : x droite, y haut, z arrière.
-const v3 = (x, y, z) => new THREE.Vector3(-y, z, -x);
-
-const view = $("#view");
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-view.append(renderer.domElement);
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x12161c);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 2.2));
-const sun = new THREE.DirectionalLight(0xffffff, 1.5);
-sun.position.set(200, 400, 300);
-scene.add(sun);
-
-const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
-camera.position.set(260, 220, 320);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0, 0);
-
-const grid = new THREE.GridHelper(1000, 40, 0x3a4552, 0x262e38);
-scene.add(grid);
-
-const robot = new THREE.Group();
-scene.add(robot);
-let legMeshes = [];
-
-const MAT_BODY = new THREE.MeshStandardMaterial({ color: 0x4a5563, metalness: 0.2, roughness: 0.6 });
-const MAT_LEG = new THREE.MeshStandardMaterial({ color: 0x3d8bfd, roughness: 0.5 });
-const MAT_SEL = new THREE.MeshStandardMaterial({ color: 0xf0a030, roughness: 0.5 });
-const MAT_JOINT = new THREE.MeshStandardMaterial({ color: 0xdddddd });
-
-function segment(radius) {
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 1, 12), MAT_LEG);
-  robot.add(mesh);
-  return mesh;
-}
-
-function placeSegment(mesh, a, b) {
-  const dir = new THREE.Vector3().subVectors(b, a);
-  mesh.position.copy(a).addScaledVector(dir, 0.5);
-  mesh.scale.set(1, Math.max(dir.length(), 0.01), 1);
-  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-}
-
-function buildRobot() {
-  robot.clear();
-  const order = ["RF", "RM", "RR", "LR", "LM", "LF"];
-  const byName = Object.fromEntries(geom.legs.map((l) => [l.name, l]));
-  const shape = new THREE.Shape(order.map((n) => new THREE.Vector2(-byName[n].body_y, byName[n].body_x)));
-  const thickness = 0.25 * geom.tibia;
-  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false }), MAT_BODY);
-  body.rotation.x = -Math.PI / 2;
-  body.position.y = -thickness / 2;
-  robot.add(body);
-
-  // Flèche vers l'avant.
-  const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), v3(0, 0, thickness / 2 + 1), 0.6 * geom.tibia, 0xf0a030);
-  robot.add(arrow);
-
-  const r = 0.06 * geom.tibia;
-  legMeshes = geom.legs.map(() => ({
-    root: segment(r * 0.8),
-    coxa: segment(r),
-    femur: segment(r),
-    tibia: segment(r * 0.8),
-    joints: [0, 1, 2, 3].map(() => {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(r * 1.3, 12, 8), MAT_JOINT);
-      robot.add(s);
-      return s;
-    }),
-  }));
-  const span = Math.max(...geom.legs.map((l) => Math.hypot(l.x, l.y))) + geom.coxa + geom.femur + geom.tibia;
-  camera.position.set(span * 1.2, span * 1.0, span * 1.5);
-}
-
-// Même FK que hexapod/leg_ik.py.
-function legPoints(leg, [c, f, t]) {
-  const kr = geom.coxa + geom.femur * Math.cos(f);
-  const kz = geom.femur * Math.sin(f);
-  const fr = kr + geom.tibia * Math.cos(f + t);
-  const fz = kz + geom.tibia * Math.sin(f + t);
-  const local = [[0, 0], [geom.coxa, 0], [kr, kz], [fr, fz]];
-  const ca = Math.cos(leg.angle + c);
-  const sa = Math.sin(leg.angle + c);
-  return local.map(([r, z]) => v3(leg.x + r * ca, leg.y + r * sa, z));
-}
-
-function updateRobot() {
-  if (!geom || !angles || !legMeshes.length) return;
-  let lowest = 0;
-  geom.legs.forEach((leg, i) => {
-    const pts = legPoints(leg, angles[i]);
-    const m = legMeshes[i];
-    const mat = leg.name === selectedLeg && mode === "cal" ? MAT_SEL : MAT_LEG;
-    for (const seg of [m.root, m.coxa, m.femur, m.tibia]) seg.material = mat;
-    placeSegment(m.root, v3(leg.body_x, leg.body_y, 0), pts[0]);
-    placeSegment(m.coxa, pts[0], pts[1]);
-    placeSegment(m.femur, pts[1], pts[2]);
-    placeSegment(m.tibia, pts[2], pts[3]);
-    pts.forEach((p, j) => m.joints[j].position.copy(p));
-    lowest = Math.min(lowest, pts[3].y);
-  });
-  // Le sol passe sous le pied le plus bas.
-  grid.position.y = lowest;
-}
-
-function resize() {
-  const w = view.clientWidth;
-  const h = view.clientHeight;
-  renderer.setSize(w, h);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-}
-window.addEventListener("resize", resize);
-resize();
-
-renderer.setAnimationLoop(() => {
-  updateRobot();
-  controls.update();
-  renderer.render(scene, camera);
+  legMap.append(b);
 });
 
+const trimBox = $(".trims");
+const trimSliders = {};
+for (const joint of JOINTS) {
+  const row = document.createElement("div");
+  row.className = "trim-row";
+  row.innerHTML = `<span>${JOINT_LABELS[joint]}</span><button class="icon" data-d="-0.5">−</button>
+    <input type="range" min="-30" max="30" step="0.5" value="0"><button class="icon" data-d="0.5">+</button><output></output>`;
+  trimBox.append(row);
+  const input = row.querySelector("input");
+  const update = bindSlider(input, (v) => `${v.toFixed(1)}°`);
+  const sendTrim = throttle(() => send(`TRIM ${state.selectedLeg} ${joint} ${input.value}`, true), 80);
+  input.addEventListener("input", sendTrim);
+  for (const b of row.querySelectorAll("button")) {
+    b.onclick = () => {
+      input.value = Number(input.value) + Number(b.dataset.d);
+      update();
+      sendTrim();
+    };
+  }
+  trimSliders[joint] = { input, update };
+}
+
+function renderTrims() {
+  for (const b of legMap.querySelectorAll("button")) b.classList.toggle("active", b.dataset.leg === state.selectedLeg);
+  const t = state.calib[state.selectedLeg] || [0, 0, 0];
+  JOINTS.forEach((joint, i) => {
+    trimSliders[joint].input.value = t[i];
+    trimSliders[joint].update();
+  });
+}
+renderTrims();
+
+// ---------------------------------------------------------- journal, toasts
+
+function log(line, cls = "") {
+  const el = $("#log");
+  const row = document.createElement("div");
+  if (cls) row.className = cls;
+  row.textContent = (cls === "out" ? "→ " : "") + line;
+  el.append(row);
+  while (el.childElementCount > 300) el.firstChild.remove();
+  el.scrollTop = el.scrollHeight;
+}
+
+function toast(text, kind = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = text;
+  $("#toasts").append(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+$("#console").onsubmit = (e) => {
+  e.preventDefault();
+  const input = $("#console-input");
+  if (input.value.trim()) send(input.value.trim());
+  input.value = "";
+};
+
+// ------------------------------------------------------------------- 3D
+
+const view = new RobotView($("#view"));
+let topView = false;
+$("#cam-reset").onclick = () => view.resetCamera(topView);
+$("#cam-follow").onclick = () => {
+  topView = !topView;
+  view.resetCamera(topView);
+};
+
+function frame() {
+  drive = readDrive();
+  stickMove.render();
+  stickTurn.render();
+  $("#r-vx").textContent = drive.vx;
+  $("#r-vy").textContent = drive.vy;
+  $("#r-yaw").textContent = drive.yaw;
+  view.update(state.angles, state.mode === "cal" ? state.selectedLeg : null);
+  view.render();
+  requestAnimationFrame(frame);
+}
+
+updateControls();
 refreshPorts();
+requestAnimationFrame(frame);

@@ -102,6 +102,28 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(other.robot.config.leg("LM").femur.trim_deg, -4.5)
         self.assertEqual(json.loads(other.handle("GETCAL")[4:])["LM"], [0.0, -4.5, 0.0])
 
+    def test_servo_test_moves_only_that_servo(self):
+        c = self.ctrl
+        self.assertEqual(c.handle("TEST rr tibia"), "OK TEST RR tibia")
+        leg = c.robot.config.leg("RR")
+        target = (leg.tibia.board, leg.tibia.channel)
+        seen = {}
+        for _ in range(int(1.0 / 0.02)):
+            c.tick(0.02)
+            for key, deg in self.driver.angles.items():
+                seen.setdefault(key, set()).add(round(deg, 3))
+        self.assertGreater(max(seen[target]) - min(seen[target]), 30.0)
+        self.assertTrue(all(len(v) == 1 for k, v in seen.items() if k != target))
+        run(c, 3.0)
+        self.assertEqual(c.mode, CALIBRATION)
+
+    def test_servo_test_refused_while_standing(self):
+        c = self.ctrl
+        c.handle("POWER 1")
+        c.handle("STAND")
+        run(c, 3.0)
+        self.assertTrue(c.handle("TEST RF coxa").startswith("ERR"))
+
     def test_bad_commands(self):
         c = self.ctrl
         self.assertTrue(c.handle("FLY").startswith("ERR"))
@@ -114,6 +136,9 @@ class ControllerTest(unittest.TestCase):
         geom = json.loads(self.ctrl.handle("GEOM")[5:])
         self.assertEqual(len(geom["legs"]), 6)
         self.assertAlmostEqual(geom["tibia"], 89.07)
+        self.assertEqual(geom["addresses"], [0x40, 0x41])
+        rf = next(leg for leg in geom["legs"] if leg["name"] == "RF")
+        self.assertEqual(rf["servos"], [[0, 5], [0, 6], [0, 7]])
 
 
 if __name__ == "__main__":

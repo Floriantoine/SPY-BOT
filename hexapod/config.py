@@ -108,6 +108,7 @@ class HexapodConfig:
             "coxa": self.coxa_length,
             "femur": self.femur_length,
             "tibia": self.tibia_length,
+            "addresses": list(I2C_ADDRESSES),
             "legs": [
                 {
                     "name": leg.name,
@@ -116,6 +117,7 @@ class HexapodConfig:
                     "angle": leg.mount_angle,
                     "body_x": leg.body_x,
                     "body_y": leg.body_y,
+                    "servos": [[j.board, j.channel] for j in (leg.coxa, leg.femur, leg.tibia)],
                 }
                 for leg in self.legs
             ],
@@ -123,6 +125,9 @@ class HexapodConfig:
 
 
 LEG_NAMES = ("RF", "RM", "RR", "LF", "LM", "LR")
+
+# Adresse I²C de chaque carte PCA9685 (index = « carte » dans WIRING).
+I2C_ADDRESSES = (0x40, 0x41)
 
 # Câblage de hexapod-v2-7697 : (carte, premier canal) ; coxa, fémur, tibia
 # sur trois canaux consécutifs. Carte 0 = 0x40 (droite), 1 = 0x41 (gauche).
