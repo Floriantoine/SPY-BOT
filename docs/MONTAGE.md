@@ -89,6 +89,6 @@ Si un servo part dans le mauvais sens quand le robot se lève, change son `direc
 
 ## 7. Premier lever
 
-Toujours sur la boîte : **Activer**, puis **Se lever**. Si tout est cohérent, pose le robot au sol, relève-le et pilote-le avec les joysticks, le clavier ou une manette.
+Toujours sur la boîte : **Se lever** (les servos s'alimentent tout seuls). Le même bouton devient **S'asseoir**, et **Relâcher** coupe les servos. Si tout est cohérent, pose le robot au sol, relève-le et pilote-le avec les joysticks, le clavier ou une manette.
 
 ![Pilotage](img/pilotage.png)

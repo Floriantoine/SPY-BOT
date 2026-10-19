@@ -101,13 +101,10 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 .icon:hover { color: var(--text); border-color: var(--line-strong); }
 
-.segmented { display: flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
-.segmented button {
-  display: flex; align-items: center; gap: 6px;
-  border: 0; background: transparent; border-radius: 9px; padding: 6px 12px; font-weight: 600; color: var(--muted);
-}
-.segmented button:hover:not(:disabled) { color: var(--text); }
-.segmented button.on { background: var(--accent-soft); color: #cfe0ff; }
+/* Bouton de posture : propose toujours l'étape suivante (se lever / s'asseoir). */
+.btn.posture { display: flex; align-items: center; gap: 6px; min-width: 120px; justify-content: center; font-weight: 600; }
+.btn.posture svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s; }
+.btn.posture.down svg { transform: rotate(180deg); }
 
 /* --------------------------------------------------------------- layout */
 
@@ -341,8 +338,8 @@ kbd {
   .view-tools { display: none; }
   .topbar { gap: 10px; padding: 8px 10px; }
   .actions { gap: 6px; }
-  .segmented svg { display: none; }
-  .segmented button, .actions .btn { padding: 6px 10px; }
+  .actions .btn { padding: 6px 10px; }
+  .btn.posture { min-width: 0; }
 }
 
 /* En calibration et montage, la vue sert à choisir un servo : pas de joysticks. */

@@ -30,16 +30,10 @@
 
     <div class="actions">
       <span class="chip" id="mode-chip"><i></i><b id="mode">Déconnecté</b></span>
-      <div class="segmented" role="group" aria-label="Posture">
-        <button id="btn-power" data-needs="link" title="Alimenter les servos (P)">
-          <svg viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
-          <span>Activer</span>
-        </button>
-        <button id="btn-stand" data-needs="power" title="Se lever / s'asseoir (L)">
-          <svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
-          <span>Se lever</span>
-        </button>
-      </div>
+      <button id="btn-stand" class="btn primary posture" data-needs="link" title="Se lever / s'asseoir (L)">
+        <svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+        <span>Se lever</span>
+      </button>
       <button id="btn-relax" class="btn danger" data-needs="link" title="Relâcher tous les servos (Échap)">Relâcher</button>
     </div>
   </header>

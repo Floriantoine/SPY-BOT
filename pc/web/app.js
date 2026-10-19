@@ -127,26 +127,21 @@ function setMode(mode) {
 
 function updateControls() {
   const { connected, mode } = state;
-  const powered = connected && mode && mode !== "off" && mode !== "cal";
   $("#mode").textContent = connected ? MODES[mode] || "…" : "Déconnecté";
   $("#mode-chip").dataset.mode = connected ? mode || "" : "";
 
-  const power = $("#btn-power");
-  power.disabled = !connected;
-  power.classList.toggle("on", powered);
-  power.querySelector("span").textContent = powered ? "Activé" : "Activer";
-
+  // Un seul bouton de posture : il propose toujours l'étape suivante.
   const stand = $("#btn-stand");
   const up = mode === "stand" || mode === "standing";
-  stand.disabled = !powered;
-  stand.classList.toggle("on", up);
+  stand.classList.toggle("down", up);
   stand.querySelector("span").textContent = up ? "S'asseoir" : "Se lever";
+  stand.title = up ? "S'asseoir (L)" : "Se lever, en alimentant les servos si besoin (L)";
 
   for (const el of $$("[data-needs=link]")) el.disabled = !connected;
+  $("#btn-relax").disabled = !connected || mode === "off";
   $("#view").classList.toggle("can-drive", connected && mode === "stand");
 }
 
-$("#btn-power").onclick = () => send(state.mode && state.mode !== "off" && state.mode !== "cal" ? "POWER 0" : "POWER 1");
 $("#btn-stand").onclick = () => send(state.mode === "stand" || state.mode === "standing" ? "SIT" : "STAND");
 $("#btn-relax").onclick = () => send("POWER 0");
 $("#btn-cal").onclick = () => send("CAL");
@@ -173,8 +168,6 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
   } else if (k === "l" && !e.repeat) {
     $("#btn-stand").click();
-  } else if (k === "p" && !e.repeat) {
-    $("#btn-power").click();
   } else if (k === "escape") {
     send("POWER 0");
   }

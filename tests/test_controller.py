@@ -36,9 +36,15 @@ class ControllerTest(unittest.TestCase):
         run(self.ctrl, 0.5)
         self.assertEqual(self.driver.angles, {})
 
+    def test_stand_from_off_powers_on_first(self):
+        c = self.ctrl
+        self.assertEqual(c.handle("STAND"), "OK STAND")
+        self.assertEqual(len(self.driver.angles), 18)
+        run(c, 3.0)
+        self.assertEqual(c.mode, STAND)
+
     def test_power_stand_walk_sit_power_off(self):
         c = self.ctrl
-        self.assertTrue(c.handle("STAND").startswith("ERR"))
         self.assertEqual(c.handle("POWER 1"), "OK POWER 1")
         self.assertEqual(c.mode, SIT)
         self.assertEqual(len(self.driver.angles), 18)

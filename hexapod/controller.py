@@ -9,7 +9,7 @@ Commandes (une par ligne, PC -> robot) :
 
     PING                          -> OK PONG
     POWER 1|0                     servos alimentés (posture assise) / relâchés
-    STAND                         se lever (depuis assis)
+    STAND                         se lever (alimente d'abord les servos si besoin)
     SIT                           s'asseoir (finit le pas en cours)
     MOVE vx vy yaw                consigne de marche en mm/s, mm/s, deg/s ;
                                   à renvoyer au moins toutes les 0,5 s
@@ -163,8 +163,8 @@ class Controller:
         return "OK POWER 0"
 
     def cmd_stand(self):
-        if self.mode not in (SIT, SITTING, STAND):
-            return "ERR STAND : alimenter le robot d'abord (POWER 1)"
+        if self.mode in (OFF, CALIBRATION, TEST):
+            self.cmd_power("1")  # se lever depuis l'arrêt alimente d'abord les servos
         if self.mode != STAND:
             self.mode = STANDING
         return "OK STAND"
