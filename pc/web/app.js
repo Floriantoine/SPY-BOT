@@ -24,6 +24,9 @@ const state = {
   selectedLeg: "RF",
 };
 
+const view = new RobotView($("#view"));
+window.spybot = { view, state }; // pour déboguer depuis la console
+
 // ---------------------------------------------------------------- liaison
 
 async function post(path, body) {
@@ -79,6 +82,7 @@ events.onmessage = (e) => {
   log(line, kind === "ERR" ? "err" : "");
   if (kind === "GEOM") {
     const geom = JSON.parse(rest);
+    state.geom = geom;
     view.setGeometry(geom);
     renderWiring(geom);
   } else if (kind === "CAL") {
@@ -92,7 +96,10 @@ events.onmessage = (e) => {
     toast(rest, "err");
   } else if (kind === "OK") {
     const [cmd, leg, joint, value] = rest.split(" ");
-    if (cmd === "TRIM") (state.calib[leg] ||= [0, 0, 0])[JOINTS.indexOf(joint)] = Number(value);
+    if (cmd === "TRIM") {
+      (state.calib[leg] ||= [0, 0, 0])[JOINTS.indexOf(joint)] = Number(value);
+      renderSelection();
+    }
     if (cmd === "SAVE") toast("Calibration enregistrée dans l'ESP32", "ok");
   } else if (kind === "HELLO") {
     toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
@@ -296,18 +303,57 @@ $("#pose-reset").onclick = () => {
 };
 
 // Onglets.
+let activeTab = "drive";
 for (const tab of $$(".tab")) {
-  tab.onclick = () => {
-    for (const t of $$(".tab")) t.classList.toggle("active", t === tab);
-    for (const p of $$(".tab-page")) p.classList.toggle("active", p.id === "tab-" + tab.dataset.tab);
-    view.showLabels = tab.dataset.tab === "build";
-    if (tab.dataset.tab !== "build") view.highlight = null;
-  };
+  tab.onclick = () => selectTab(tab.dataset.tab);
 }
 
-// ----------------------------------------------------------------- montage
+function selectTab(name) {
+  activeTab = name;
+  for (const t of $$(".tab")) t.classList.toggle("active", t.dataset.tab === name);
+  for (const p of $$(".tab-page")) p.classList.toggle("active", p.id === "tab-" + name);
+  const picking = name === "cal" || name === "build";
+  view.showLabels = name === "build";
+  view.selection = picking ? [state.selectedLeg, state.selectedJoint] : null;
+  view.focus = name === "cal";
+  $("#view").classList.toggle("pickable", picking);
+}
+
+// ------------------------------------------------- sélection d'un servo
 
 const LEG_NAMES_FR = { RF: "Avant droite", RM: "Milieu droite", RR: "Arrière droite", LF: "Avant gauche", LM: "Milieu gauche", LR: "Arrière gauche" };
+state.selectedJoint = 0;
+
+function select(leg, joint, { turnCamera = true } = {}) {
+  if (turnCamera && leg !== state.selectedLeg) view.lookAtLeg(leg);
+  state.selectedLeg = leg;
+  state.selectedJoint = joint;
+  if (activeTab === "cal" || activeTab === "build") view.selection = [leg, joint];
+  renderSelection();
+}
+
+function servoPort(leg, joint) {
+  const g = state.geom && state.geom.legs.find((l) => l.name === leg);
+  if (!g) return "";
+  const [board, channel] = g.servos[joint];
+  return `PCA9685 0x${state.geom.addresses[board].toString(16)} · canal ${channel}`;
+}
+
+function trimOf(leg, joint) {
+  return (state.calib[leg] || [0, 0, 0])[joint] || 0;
+}
+
+// Toucher la 3D (sans faire tourner la caméra) choisit le servo touché.
+let downAt = null;
+view.renderer.domElement.addEventListener("pointerdown", (e) => (downAt = [e.clientX, e.clientY]));
+view.renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  if (activeTab !== "cal" && activeTab !== "build") return;
+  const hit = view.pick(e.clientX, e.clientY);
+  if (hit) select(hit.leg, hit.joint, { turnCamera: false });
+});
+
+// ----------------------------------------------------------------- montage
 
 function renderWiring(geom) {
   const boards = geom.addresses.map((addr, b) => ({ addr, side: b === 0 ? "pattes droites" : "pattes gauches", rows: [] }));
@@ -324,18 +370,18 @@ function renderWiring(geom) {
     for (const r of b.rows) {
       const row = document.createElement("div");
       row.className = "wire";
+      row.dataset.leg = r.leg;
+      row.dataset.joint = r.j;
       row.innerHTML = `<span class="ch">${r.channel}</span>
         <span>${LEG_NAMES_FR[r.leg]} <small>· ${JOINT_LABELS[JOINTS[r.j]]}</small></span>
         <button class="btn" data-needs="link">Tester</button>`;
-      row.onclick = () => {
-        for (const w of $$(".wire")) w.classList.toggle("lit", w === row);
-        view.highlight = [r.leg, r.j];
-      };
+      row.onclick = () => select(r.leg, r.j);
       row.querySelector("button").onclick = () => send(`TEST ${r.leg} ${JOINTS[r.j]}`);
       div.append(row);
     }
     box.append(div);
   }
+  renderSelection();
   updateControls();
 }
 
@@ -355,44 +401,71 @@ LEG_LAYOUT.forEach(([name, label], i) => {
   b.dataset.leg = name;
   b.style.gridColumn = i % 2 ? 3 : 1;
   b.style.gridRow = Math.floor(i / 2) + 1;
-  b.onclick = () => {
-    state.selectedLeg = name;
-    renderTrims();
-  };
+  b.onclick = () => select(name, state.selectedJoint);
   legMap.append(b);
 });
 
-const trimBox = $(".trims");
-const trimSliders = {};
-for (const joint of JOINTS) {
-  const row = document.createElement("div");
-  row.className = "trim-row";
-  row.innerHTML = `<span>${JOINT_LABELS[joint]}</span><button class="icon" data-d="-0.5">−</button>
-    <input type="range" min="-30" max="30" step="0.5" value="0"><button class="icon" data-d="0.5">+</button><output></output>`;
-  trimBox.append(row);
-  const input = row.querySelector("input");
-  const update = bindSlider(input, (v) => `${v.toFixed(1)}°`);
-  const sendTrim = throttle(() => send(`TRIM ${state.selectedLeg} ${joint} ${input.value}`, true), 80);
-  input.addEventListener("input", sendTrim);
-  for (const b of row.querySelectorAll("button")) {
-    b.onclick = () => {
-      input.value = Number(input.value) + Number(b.dataset.d);
-      update();
-      sendTrim();
-    };
-  }
-  trimSliders[joint] = { input, update };
+const jointButtons = JOINTS.map((joint, j) => {
+  const b = document.createElement("button");
+  b.innerHTML = `<span>${JOINT_LABELS[joint]}</span><b></b>`;
+  b.onclick = () => select(state.selectedLeg, j);
+  $("#joints").append(b);
+  return b;
+});
+
+const selTrim = $("#sel-trim");
+const updateSelSlider = bindSlider(selTrim, () => "");
+const sendTrim = throttle(() => {
+  const value = Number(selTrim.value);
+  (state.calib[state.selectedLeg] ||= [0, 0, 0])[state.selectedJoint] = value;
+  send(`TRIM ${state.selectedLeg} ${JOINTS[state.selectedJoint]} ${value}`, true);
+}, 80);
+
+function setTrim(value) {
+  selTrim.value = Math.max(-30, Math.min(30, value));
+  updateSelSlider();
+  (state.calib[state.selectedLeg] ||= [0, 0, 0])[state.selectedJoint] = Number(selTrim.value);
+  renderSelection();
+  sendTrim();
 }
 
-function renderTrims() {
-  for (const b of legMap.querySelectorAll("button")) b.classList.toggle("active", b.dataset.leg === state.selectedLeg);
-  const t = state.calib[state.selectedLeg] || [0, 0, 0];
-  JOINTS.forEach((joint, i) => {
-    trimSliders[joint].input.value = t[i];
-    trimSliders[joint].update();
+selTrim.addEventListener("input", () => setTrim(Number(selTrim.value)));
+for (const b of $$(".nudge button")) b.onclick = () => setTrim(Number(selTrim.value) + Number(b.dataset.d));
+$("#sel-zero").onclick = () => setTrim(0);
+$("#sel-test").onclick = () => send(`TEST ${state.selectedLeg} ${JOINTS[state.selectedJoint]}`);
+
+document.addEventListener("keydown", (e) => {
+  if (activeTab !== "cal" || isTyping(e)) return;
+  const steps = { ArrowLeft: -0.5, ArrowRight: 0.5 };
+  if (e.key in steps) {
+    setTrim(Number(selTrim.value) + steps[e.key]);
+    e.preventDefault();
+  } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    select(state.selectedLeg, (state.selectedJoint + (e.key === "ArrowDown" ? 1 : 2)) % 3);
+    e.preventDefault();
+  }
+});
+
+function renderSelection() {
+  const { selectedLeg: leg, selectedJoint: j } = state;
+  for (const b of legMap.querySelectorAll("button")) b.classList.toggle("active", b.dataset.leg === leg);
+  jointButtons.forEach((b, i) => {
+    b.classList.toggle("active", i === j);
+    b.querySelector("b").textContent = `${trimOf(leg, i).toFixed(1)}°`;
   });
+  for (const w of $$(".wire")) w.classList.toggle("lit", w.dataset.leg === leg && Number(w.dataset.joint) === j);
+  $("#sel-name").textContent = `${LEG_NAMES_FR[leg]} · ${JOINT_LABELS[JOINTS[j]]}`;
+  $("#sel-port").textContent = servoPort(leg, j);
+  const value = trimOf(leg, j);
+  $("#sel-value").textContent = (value > 0 ? "+" : "") + value.toFixed(1);
+  if (document.activeElement !== selTrim) {
+    selTrim.value = value;
+    updateSelSlider();
+  }
 }
-renderTrims();
+
+// Compatibilité avec le reste du fichier.
+const renderTrims = renderSelection;
 
 // ---------------------------------------------------------- journal, toasts
 
@@ -423,7 +496,6 @@ $("#console").onsubmit = (e) => {
 
 // ------------------------------------------------------------------- 3D
 
-const view = new RobotView($("#view"));
 let topView = false;
 $("#cam-reset").onclick = () => view.resetCamera(topView);
 $("#cam-follow").onclick = () => {
@@ -438,11 +510,12 @@ function frame() {
   $("#r-vx").textContent = drive.vx;
   $("#r-vy").textContent = drive.vy;
   $("#r-yaw").textContent = drive.yaw;
-  view.update(state.angles, state.mode === "cal" ? state.selectedLeg : null);
+  view.update(state.angles);
   view.render();
   requestAnimationFrame(frame);
 }
 
 updateControls();
+renderSelection();
 refreshPorts();
 requestAnimationFrame(frame);

@@ -150,23 +150,48 @@
       </div>
 
       <div class="tab-page" id="tab-cal">
+        <div class="row">
+          <button class="btn" id="btn-cal" data-needs="link">Pose de calibration</button>
+          <button class="btn primary" id="btn-save" data-needs="link">Enregistrer</button>
+        </div>
+
+        <div class="card focus-card">
+          <div class="focus-head">
+            <div>
+              <small>Servo sélectionné</small>
+              <h2 id="sel-name">Avant droite · Coxa</h2>
+              <span class="focus-port" id="sel-port">PCA9685 0x40 · canal 5</span>
+            </div>
+            <div class="focus-value"><b id="sel-value">0.0</b><span>°</span></div>
+          </div>
+          <div class="nudge">
+            <button class="btn" data-d="-1">−1°</button>
+            <button class="btn" data-d="-0.5">−0,5°</button>
+            <button class="btn" data-d="0.5">+0,5°</button>
+            <button class="btn" data-d="1">+1°</button>
+          </div>
+          <input id="sel-trim" type="range" min="-30" max="30" step="0.5" value="0" aria-label="Trim du servo sélectionné">
+          <div class="row">
+            <button class="btn ghost" id="sel-zero">Remettre à 0</button>
+            <button class="btn ghost" id="sel-test" data-needs="link">Tester ce servo</button>
+          </div>
+          <p class="hint">Touche une articulation sur la 3D pour la choisir. Au clavier : ← → pour régler, ↑ ↓ pour changer d'articulation.</p>
+        </div>
+
+        <div class="card">
+          <h3>Choisir le servo</h3>
+          <div class="leg-map" id="legs"></div>
+          <div class="joint-pick" id="joints"></div>
+        </div>
+
         <div class="card">
           <h3>Comment faire</h3>
           <ol class="steps">
             <li>Pose le robot sur une boîte, pattes dans le vide.</li>
-            <li>Clique sur <b>Pose de calibration</b> : chaque servo va au milieu de sa course.</li>
-            <li>Pour chaque patte, règle les trims jusqu'à ce que le robot ait la pose du modèle 3D.</li>
-            <li><b>Enregistre</b> : les réglages restent dans l'ESP32.</li>
+            <li><b>Pose de calibration</b> : chaque servo va au milieu de sa course.</li>
+            <li>Pour chaque servo, règle le trim jusqu'à ce que la patte réelle ait la pose du modèle 3D.</li>
+            <li><b>Enregistrer</b> : les réglages restent dans l'ESP32.</li>
           </ol>
-          <div class="row">
-            <button class="btn" id="btn-cal" data-needs="link">Pose de calibration</button>
-            <button class="btn primary" id="btn-save" data-needs="link">Enregistrer</button>
-          </div>
-        </div>
-        <div class="card">
-          <h3>Patte</h3>
-          <div class="leg-map" id="legs"></div>
-          <div class="trims"></div>
         </div>
       </div>
 

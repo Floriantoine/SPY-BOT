@@ -115,6 +115,7 @@ main { flex: 1; display: flex; min-height: 0; }
 
 #view { position: relative; flex: 1; min-width: 0; overflow: hidden; touch-action: none; }
 #view canvas { display: block; }
+#view.pickable canvas { cursor: crosshair; }
 
 #panel {
   width: 360px; flex: none; display: flex; flex-direction: column;
@@ -246,10 +247,28 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
 }
 .leg-map button.active { border-color: var(--warn); background: rgba(251, 191, 36, .12); color: #fde68a; }
 
-.trim-row { display: grid; grid-template-columns: 58px 30px 1fr 30px 52px; align-items: center; gap: 6px; margin: 8px 0; }
-.trim-row span { color: var(--muted); font-size: 13px; }
-.trim-row output { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
-.trim-row .icon { width: 30px; height: 30px; font-weight: 700; }
+.focus-card { border-color: rgba(251, 191, 36, .45); background: linear-gradient(180deg, rgba(251, 191, 36, .08), var(--surface-solid) 60%); }
+.focus-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.focus-head small { color: var(--warn); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+.focus-head h2 { margin: 2px 0; font-size: 18px; text-wrap: balance; }
+.focus-port { color: var(--muted); font: 12px ui-monospace, Consolas, monospace; }
+.focus-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.focus-value b { font-size: 34px; font-weight: 700; color: #fde68a; }
+.focus-value span { color: var(--muted); font-size: 18px; }
+.nudge { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+.nudge .btn { padding: 10px 0; font-variant-numeric: tabular-nums; }
+.focus-card input[type=range] { margin-bottom: 10px; --accent: var(--warn); }
+.focus-card .hint { margin-top: 10px; font-size: 12px; }
+
+.joint-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.joint-pick button {
+  display: grid; gap: 2px; padding: 8px; text-align: left;
+  border: 1px solid var(--line); background: var(--surface-2); border-radius: 10px;
+}
+.joint-pick button span { color: var(--muted); font-size: 12px; }
+.joint-pick button b { font-variant-numeric: tabular-nums; }
+.joint-pick button.active { border-color: var(--warn); background: rgba(251, 191, 36, .12); }
+.joint-pick button.active span { color: #fde68a; }
 
 /* --------------------------------------------------------------- montage */
 
@@ -324,4 +343,14 @@ kbd {
   .actions { gap: 6px; }
   .segmented svg { display: none; }
   .segmented button, .actions .btn { padding: 6px 10px; }
+}
+
+/* En calibration et montage, la vue sert à choisir un servo : pas de joysticks. */
+#view.pickable .stick-zone,
+#view.pickable .locked,
+#view.pickable .readout { display: none; }
+
+/* Sur téléphone, la 3D reste visible en haut pendant qu'on règle les servos. */
+@media (max-width: 900px) {
+  #view.pickable { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; height: 40vh; border-bottom: 1px solid var(--line); }
 }

@@ -38,7 +38,9 @@ export class RobotView {
     container.prepend(this.labelRenderer.domElement);
     container.prepend(renderer.domElement);
     this.showLabels = false;
-    this.highlight = null; // [nom de patte, index d'articulation]
+    this.selection = null; // [nom de patte, articulation 0 coxa / 1 fémur / 2 tibia]
+    this.focus = false; // atténue les autres pattes pour faire ressortir la sélection
+    this.raycaster = new THREE.Raycaster();
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0b0e13);
@@ -75,6 +77,7 @@ export class RobotView {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.maxPolarAngle = Math.PI * 0.49;
+    this.controls.addEventListener("start", () => (this.cameraGoal = null));
     this.resetCamera();
 
     this.mats = {
@@ -83,6 +86,9 @@ export class RobotView {
       selected: new THREE.MeshStandardMaterial({ color: COLORS.selected, roughness: 0.35, emissive: 0x3a2a00 }),
       joint: new THREE.MeshStandardMaterial({ color: COLORS.joint, roughness: 0.4, metalness: 0.3 }),
       contact: new THREE.MeshBasicMaterial({ color: COLORS.contact, transparent: true, opacity: 0.55 }),
+      dim: new THREE.MeshStandardMaterial({ color: 0x3a4a66, roughness: 0.6, transparent: true, opacity: 0.35 }),
+      dimJoint: new THREE.MeshStandardMaterial({ color: 0x8090a8, roughness: 0.6, transparent: true, opacity: 0.35 }),
+      halo: new THREE.MeshBasicMaterial({ color: COLORS.selected, transparent: true, opacity: 0.25, depthWrite: false }),
     };
 
     new ResizeObserver(() => this.resize()).observe(container);
@@ -148,11 +154,17 @@ export class RobotView {
         segs: [this._segment(r * 0.8), this._segment(r * 1.1), this._segment(r), this._segment(r * 0.75)],
         joints: [0, 1, 2].map(() => this._sphere(r * 1.35, this.mats.joint)),
         labels: [],
+        halo: new THREE.Mesh(new THREE.SphereGeometry(r * 3.2, 24, 16), this.mats.halo),
         foot: this._sphere(r * 0.9, this.mats.joint),
         contact: new THREE.Mesh(new THREE.RingGeometry(r * 1.4, r * 2.4, 24), this.mats.contact),
       };
       leg.contact.rotation.x = -Math.PI / 2;
       this.scene.add(leg.contact);
+      this.robot.add(leg.halo);
+      // Pour la sélection à la souris : quel servo fait bouger chaque pièce.
+      leg.segs.forEach((seg, i) => (seg.userData = { leg: g.name, joint: Math.max(0, i - 1) }));
+      leg.joints.forEach((sph, j) => (sph.userData = { leg: g.name, joint: j }));
+      leg.foot.userData = { leg: g.name, joint: 2 };
       leg.labels = leg.joints.map((sphere, j) => {
         const [board, channel] = g.servos[j];
         const el = document.createElement("div");
@@ -202,7 +214,22 @@ export class RobotView {
     return [v3(leg.body_x, leg.body_y, 0), p(0, 0), p(g.coxa, 0), p(kr, kz), p(fr, fz)];
   }
 
-  update(angles, highlight) {
+  /** Servo sous le pointeur (coordonnées écran), ou null. */
+  pick(clientX, clientY) {
+    const b = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - b.left) / b.width) * 2 - 1, -((clientY - b.top) / b.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const joints = this.legs.flatMap((m) => m.joints);
+    const targets = this.legs.flatMap((m) => [...m.segs, ...m.joints, m.foot]);
+    const hits = this.raycaster.intersectObjects(targets, false);
+    if (!hits.length) return null;
+    // Une articulation touchée l'emporte sur le segment qui y aboutit.
+    const margin = 0.08 * this.geom.tibia;
+    const joint = hits.find((h) => joints.includes(h.object) && h.distance - hits[0].distance < margin);
+    return (joint || hits[0]).object.userData;
+  }
+
+  update(angles) {
     if (!this.geom || !angles || !this.legs.length) return;
     const all = this.geom.legs.map((leg, i) => this.legPoints(leg, angles[i]));
     const lowest = Math.min(...all.map((pts) => pts[4].y));
@@ -213,23 +240,42 @@ export class RobotView {
       const pts = all[i];
       const m = this.legs[i];
       const onGround = pts[4].y - lowest < tolerance;
-      const mat = leg.name === highlight ? this.mats.selected : onGround ? this.mats.leg : this.mats.swing;
-      m.segs.forEach((seg, j) => {
-        seg.material = mat;
-        this._place(seg, pts[j], pts[j + 1]);
+      const sel = this.selection && this.selection[0] === leg.name ? this.selection[1] : -1;
+      const dimmed = this.focus && this.selection && sel < 0;
+      const base = dimmed ? this.mats.dim : onGround ? this.mats.leg : this.mats.swing;
+      m.segs.forEach((seg, i) => {
+        // Segment mis en avant : celui que fait tourner le servo choisi.
+        const driven = sel >= 0 && Math.max(0, i - 1) === sel && i > 0;
+        seg.material = driven ? this.mats.selected : base;
+        this._place(seg, pts[i], pts[i + 1]);
       });
       m.joints.forEach((s, j) => {
         s.position.copy(pts[j + 1]);
-        const lit = this.highlight && this.highlight[0] === leg.name && this.highlight[1] === j;
-        s.material = lit ? this.mats.selected : this.mats.joint;
+        const lit = sel === j;
+        s.material = lit ? this.mats.selected : dimmed ? this.mats.dimJoint : this.mats.joint;
         s.scale.setScalar(lit ? 1.6 : 1);
-        m.labels[j].visible = this.showLabels;
+        m.labels[j].visible = this.showLabels || lit;
         m.labels[j].element.classList.toggle("lit", lit);
       });
+      m.halo.visible = sel >= 0;
+      if (sel >= 0) {
+        m.halo.position.copy(pts[sel + 1]);
+        m.halo.scale.setScalar(1 + 0.15 * Math.sin(performance.now() / 180));
+      }
+      m.foot.material = dimmed ? this.mats.dimJoint : this.mats.joint;
       m.foot.position.copy(pts[4]);
       m.contact.visible = onGround;
       m.contact.position.set(pts[4].x, lowest + 0.5, pts[4].z);
     });
+  }
+
+  /** Fait tourner la caméra pour montrer la patte `name` de face. */
+  lookAtLeg(name) {
+    const leg = this.geom && this.geom.legs.find((l) => l.name === name);
+    if (!leg) return;
+    const s = this.span();
+    const out = v3(Math.cos(leg.angle), Math.sin(leg.angle), 0);
+    this.cameraGoal = out.multiplyScalar(s * 2.1).add(new THREE.Vector3(0, s * 1.2, 0));
   }
 
   resize() {
@@ -242,6 +288,10 @@ export class RobotView {
   }
 
   render() {
+    if (this.cameraGoal) {
+      this.camera.position.lerp(this.cameraGoal, 0.12);
+      if (this.camera.position.distanceTo(this.cameraGoal) < 1) this.cameraGoal = null;
+    }
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.labelRenderer.render(this.scene, this.camera);
