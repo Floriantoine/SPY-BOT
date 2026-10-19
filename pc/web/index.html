@@ -192,6 +192,7 @@
           <div class="row">
             <button class="btn ghost" id="sel-zero">Remettre à 0</button>
             <button class="btn ghost" id="sel-test" data-needs="link">Tester ce servo</button>
+            <button class="btn ghost" id="sel-invert" data-needs="link" title="Si le servo part dans le mauvais sens pendant le test">Inverser le sens</button>
           </div>
           <p class="hint">Touche une articulation sur la 3D pour la choisir. Au clavier : ← → pour régler, ↑ ↓ pour changer d'articulation.</p>
         </div>
@@ -207,6 +208,7 @@
           <ol class="steps">
             <li>Pose le robot sur une boîte, pattes dans le vide.</li>
             <li><b>Pose de calibration</b> : coxa perpendiculaire au corps, fémur à plat, tibia vertical.</li>
+            <li><b>Tester ce servo</b> : la vraie patte doit bouger dans le même sens que la 3D. Si elle part dans l'autre sens, clique sur <b>Inverser le sens</b>, puis refixe son palonnier dans la pose de calibration.</li>
             <li>Pour chaque servo, règle le trim jusqu'à ce que la patte réelle ait la pose du modèle 3D.</li>
             <li><b>Enregistrer</b> : les réglages restent dans l'ESP32.</li>
           </ol>

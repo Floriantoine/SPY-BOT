@@ -39,7 +39,7 @@ class JointServo:
 
     board : index de la carte PCA9685 (0 = 0x40, 1 = 0x41).
     zero_deg : angle IK (en degrés) qui place le servo au milieu (90°).
-    direction : +1 ou -1 selon le sens de montage.
+    direction : +1 ou -1 selon le sens de montage (inversé si `inverted`).
     trim_deg : réglage fin mesuré sur le robot réel (calibration).
     min_deg / max_deg : butées, en degrés servo.
     """
@@ -49,10 +49,21 @@ class JointServo:
         self.board = board
         self.channel = channel
         self.zero_deg = zero_deg
+        self.default_direction = direction
         self.direction = direction
         self.trim_deg = trim_deg
         self.min_deg = min_deg
         self.max_deg = max_deg
+
+
+    @property
+    def inverted(self):
+        return self.direction != self.default_direction
+
+    @inverted.setter
+    def inverted(self, value):
+        # Servo monté dans l'autre sens que prévu (réglé à la calibration).
+        self.direction = -self.default_direction if value else self.default_direction
 
 
 class LegConfig:

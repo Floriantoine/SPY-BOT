@@ -20,8 +20,10 @@ Commandes (une par ligne, PC -> robot) :
     TEST leg joint                fait osciller un seul servo pendant 3 s (vérif. câblage),
                                   les autres en pose de calibration ; refusé debout
     TRIM leg joint deg            règle le trim d'une articulation (ex. TRIM RF femur -3)
-    SAVE                          enregistre les trims dans la mémoire du robot
-    GETCAL                        -> CAL {"RF": [coxa, femur, tibia], ...}
+    INVERT leg joint 1|0          inverse le sens d'un servo monté à l'envers
+    SAVE                          enregistre les trims et sens dans la mémoire du robot
+    GETCAL                        -> CAL {"RF": [coxa, femur, tibia], ...,
+                                          "invert": {"RF": [0, 1, 0], ...}}
     GEOM                          -> GEOM {...} géométrie du robot (pour la vue 3D)
 
 Réponses (robot -> PC) : `OK ...`, `ERR ...`, `CAL {...}`, et ~20 fois par
@@ -235,6 +237,13 @@ class Controller:
             self._send_angles()
         return "OK TRIM %s %s %.1f" % (leg_name.upper(), joint_name.lower(), joint.trim_deg)
 
+    def cmd_invert(self, leg_name, joint_name, on):
+        joint = self._joint(leg_name, joint_name)
+        joint.inverted = on == "1"
+        if self.mode in (CALIBRATION, TEST):
+            self._send_angles()
+        return "OK INVERT %s %s %d" % (leg_name.upper(), joint_name.lower(), joint.inverted)
+
     def cmd_save(self):
         with open(self.calib_path, "w") as f:
             f.write(json.dumps(self.calibration()))
@@ -249,10 +258,12 @@ class Controller:
     # --- calibration ------------------------------------------------------
 
     def calibration(self):
-        return {
-            leg.name: [leg.coxa.trim_deg, leg.femur.trim_deg, leg.tibia.trim_deg]
-            for leg in self.robot.config.legs
+        legs = self.robot.config.legs
+        data = {leg.name: [leg.coxa.trim_deg, leg.femur.trim_deg, leg.tibia.trim_deg] for leg in legs}
+        data["invert"] = {
+            leg.name: [int(j.inverted) for j in (leg.coxa, leg.femur, leg.tibia)] for leg in legs
         }
+        return data
 
     def load_calibration(self):
         try:
@@ -267,6 +278,9 @@ class Controller:
             trims = data.get(leg.name)
             if trims and len(trims) == 3:
                 leg.coxa.trim_deg, leg.femur.trim_deg, leg.tibia.trim_deg = trims
+            inv = data.get("invert", {}).get(leg.name)
+            if inv and len(inv) == 3:
+                leg.coxa.inverted, leg.femur.inverted, leg.tibia.inverted = [bool(v) for v in inv]
 
     # --- interne ----------------------------------------------------------
 

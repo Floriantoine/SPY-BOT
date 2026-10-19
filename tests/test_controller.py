@@ -186,3 +186,26 @@ class ControllerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InvertTest(unittest.TestCase):
+    def test_invert_flips_servo_direction_and_is_saved(self):
+        import os
+        import tempfile
+
+        path = os.path.join(tempfile.mkdtemp(), "calib.json")
+        driver = DryRunDriver()
+        ctrl = Controller(default_config(), driver, path)
+        ctrl.handle("CAL")
+        ctrl.tick(0.02)
+        leg = ctrl.robot.config.leg("RF")
+        key = (leg.femur.board, leg.femur.channel)
+        self.assertAlmostEqual(driver.angles[key], 105.0, places=3)
+        self.assertEqual(ctrl.handle("INVERT RF femur 1"), "OK INVERT RF femur 1")
+        # Même pose, sens opposé autour du milieu : 90 + 15 devient 90 - 15.
+        self.assertAlmostEqual(driver.angles[key], 75.0, places=3)
+        self.assertEqual(ctrl.calibration()["invert"]["RF"], [0, 1, 0])
+        ctrl.handle("SAVE")
+        again = Controller(default_config(), DryRunDriver(), path)
+        self.assertTrue(again.robot.config.leg("RF").femur.inverted)
+        self.assertFalse(again.robot.config.leg("RM").femur.inverted)

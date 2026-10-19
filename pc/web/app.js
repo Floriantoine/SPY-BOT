@@ -23,6 +23,7 @@ const state = {
   mode: null,
   angles: null,
   calib: {},
+  invert: {},
   selectedLeg: "RF",
 };
 
@@ -90,7 +91,9 @@ events.onmessage = (e) => {
     view.setGeometry(geom);
     renderWiring(geom);
   } else if (kind === "CAL") {
-    state.calib = JSON.parse(rest);
+    const { invert = {}, ...trims } = JSON.parse(rest);
+    state.calib = trims;
+    state.invert = invert;
     renderTrims();
   } else if (kind === "LINK") {
     const [what, ...name] = rest.split(" ");
@@ -107,6 +110,11 @@ events.onmessage = (e) => {
     if (cmd === "TRIM") {
       (state.calib[leg] ||= [0, 0, 0])[JOINTS.indexOf(joint)] = Number(value);
       renderSelection();
+    }
+    if (cmd === "INVERT") {
+      (state.invert[leg] ||= [0, 0, 0])[JOINTS.indexOf(joint)] = Number(value);
+      renderSelection();
+      send("GEOM", true); // sens des servos à jour pour l'affichage des butées
     }
     if (cmd === "SAVE") toast("Calibration enregistrée dans l'ESP32", "ok");
   } else if (kind === "HELLO") {
@@ -495,6 +503,11 @@ selTrim.addEventListener("input", () => setTrim(Number(selTrim.value)));
 for (const b of $$(".nudge button")) b.onclick = () => setTrim(Number(selTrim.value) + Number(b.dataset.d));
 $("#sel-zero").onclick = () => setTrim(0);
 $("#sel-test").onclick = () => send(`TEST ${state.selectedLeg} ${JOINTS[state.selectedJoint]}`);
+$("#sel-invert").onclick = () => {
+  const { selectedLeg: leg, selectedJoint: j } = state;
+  send(`INVERT ${leg} ${JOINTS[j]} ${invertedOf(leg, j) ? 0 : 1}`);
+};
+const invertedOf = (leg, j) => Boolean(state.invert[leg]?.[j]);
 
 document.addEventListener("keydown", (e) => {
   if (activeTab !== "cal" || isTyping(e)) return;
@@ -517,7 +530,8 @@ function renderSelection() {
   });
   for (const w of $$(".wire")) w.classList.toggle("lit", w.dataset.leg === leg && Number(w.dataset.joint) === j);
   $("#sel-name").textContent = `${LEG_NAMES_FR[leg]} · ${JOINT_LABELS[JOINTS[j]]}`;
-  $("#sel-port").textContent = servoPort(leg, j);
+  $("#sel-port").textContent = servoPort(leg, j) + (invertedOf(leg, j) ? " · sens inversé" : "");
+  $("#sel-invert").classList.toggle("on", invertedOf(leg, j));
   const value = trimOf(leg, j);
   $("#sel-value").textContent = (value > 0 ? "+" : "") + value.toFixed(1);
   if (document.activeElement !== selTrim) {
@@ -531,7 +545,7 @@ const renderTrims = renderSelection;
 
 // Sauvegarde des trims dans un fichier, pour les retrouver après un reflash.
 $("#cal-export").onclick = () => {
-  const data = { robot: "SPY-BOT", saved: new Date().toISOString(), trims: state.calib };
+  const data = { robot: "SPY-BOT", saved: new Date().toISOString(), trims: state.calib, invert: state.invert };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -544,10 +558,11 @@ $("#cal-file").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  let trims;
+  let trims, invert;
   try {
     const data = JSON.parse(await file.text());
     trims = data.trims || data;
+    invert = data.invert || {};
     const ok = Object.entries(trims).every(([leg, v]) => LEG_NAMES_FR[leg] && Array.isArray(v) && v.length === 3 && v.every(Number.isFinite));
     if (!ok) throw new Error();
   } catch {
@@ -557,6 +572,7 @@ $("#cal-file").onchange = async (e) => {
   const lines = [];
   for (const [leg, values] of Object.entries(trims)) {
     values.forEach((v, j) => lines.push(`TRIM ${leg} ${JOINTS[j]} ${v}`));
+    (invert[leg] || [0, 0, 0]).forEach((v, j) => lines.push(`INVERT ${leg} ${JOINTS[j]} ${v ? 1 : 0}`));
   }
   await send(lines.join("\n"), true);
   state.calib = trims;
