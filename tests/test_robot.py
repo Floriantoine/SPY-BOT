@@ -86,6 +86,21 @@ class PostureLimitsTest(unittest.TestCase):
                     self.assertGreater(raw, joint.min_deg + 3, (height, leg.name))
                     self.assertLess(raw, joint.max_deg - 3, (height, leg.name))
 
+    def test_longest_steps_stay_inside_servo_limits(self):
+        # Pas le plus long, dans toutes les directions et en tournant.
+        config = default_config()
+        for vx, vy, yaw in ((1000, 0, 0), (0, 1000, 0), (700, 700, 0), (0, 0, 3.0)):
+            robot = Hexapod(config)
+            robot.command = GaitCommand(vx, vy, yaw)
+            for _ in range(150):
+                angles = robot.update(0.02)
+                for leg in config.legs:
+                    a = angles[leg.name]
+                    for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+                        raw = 90.0 + joint.direction * (math.degrees(value) - joint.zero_deg)
+                        self.assertGreater(raw, joint.min_deg, (vx, vy, yaw, leg.name))
+                        self.assertLess(raw, joint.max_deg, (vx, vy, yaw, leg.name))
+
 
 class MissingBoardTest(unittest.TestCase):
     """Une PCA9685 absente du bus ne doit pas empêcher le robot de démarrer."""

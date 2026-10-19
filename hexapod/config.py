@@ -205,8 +205,9 @@ def default_config(dimensions=None):
         tibia_length=d["tibia"],
         stance_radius=stance_radius,
         stance_height=stance_height,
-        # Longueur de pas et levée proportionnelles à la taille de la patte
-        # (25 mm de rayon de pas et de levée sur le robot d'origine).
+        # Longueur de pas et levée proportionnelles à la taille de la patte.
+        # Pas jusqu'à 0,8 tibia (108 mm ici) : reste dans la course des servos
+        # dans toutes les directions (vérifié par les tests).
         step_height=0.28 * d["tibia"],
-        max_stride=0.56 * d["tibia"],
+        max_stride=0.8 * d["tibia"],
     )

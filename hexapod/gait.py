@@ -29,7 +29,7 @@ class GaitCommand:
 
 
 class TripodGait:
-    def __init__(self, period=1.0, step_height=30.0, max_stride=60.0):
+    def __init__(self, period=1.4, step_height=30.0, max_stride=60.0):
         self.period = period  # durée d'un cycle complet (s)
         self.step_height = step_height  # hauteur de levée du pied (mm)
         self.max_stride = max_stride  # longueur de pas maximale (mm)

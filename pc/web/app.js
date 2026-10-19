@@ -118,6 +118,7 @@ events.onmessage = (e) => {
     }
     if (cmd === "SAVE") toast("Calibration enregistrée dans l'ESP32", "ok");
   } else if (kind === "HELLO") {
+    sendGait(); // le robot démarre avec ses propres réglages : on lui envoie ceux de l'interface
     toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
   }
 };
@@ -325,9 +326,10 @@ $("#step").addEventListener("input", sendGait);
 
 // Préréglages de vitesse : règlent d'un coup vitesse, rotation et démarche.
 const PRESET_VALUES = {
-  slow: { speed: 40, turn: 15, period: 1.4, step: 20 },
-  normal: { speed: 80, turn: 30, period: 1.0, step: 25 },
-  fast: { speed: 140, turn: 50, period: 0.6, step: 30 },
+  // Longueur d'un pas = vitesse × période / 2 : de grands pas plutôt que des pas rapides.
+  slow: { speed: 50, turn: 15, period: 1.6, step: 30 },
+  normal: { speed: 100, turn: 30, period: 1.4, step: 35 },
+  fast: { speed: 150, turn: 50, period: 1.0, step: 40 },
 };
 function markPreset() {
   for (const b of $$("#presets button")) {
