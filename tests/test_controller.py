@@ -178,7 +178,7 @@ class ControllerTest(unittest.TestCase):
     def test_geometry(self):
         geom = json.loads(self.ctrl.handle("GEOM")[5:])
         self.assertEqual(len(geom["legs"]), 6)
-        self.assertAlmostEqual(geom["tibia"], 89.07)
+        self.assertAlmostEqual(geom["tibia"], 135.0)
         self.assertEqual(geom["addresses"], [0x40, 0x41])
         rf = next(leg for leg in geom["legs"] if leg["name"] == "RF")
         self.assertEqual(rf["servos"], [[0, 5], [0, 6], [0, 7]])

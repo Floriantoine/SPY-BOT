@@ -4,23 +4,26 @@ Repère du corps : x vers l'avant, y vers la gauche, z vers le haut, origine au
 centre du châssis. Toutes les longueurs sont en millimètres, les angles en
 radians sauf mention contraire.
 
-Les valeurs par défaut reprennent le hexapode SmallpTsai/hexapod-v2-7697
-(servos MG92B, 2 PCA9685 en 0x40 et 0x41). Si tes pièces sont agrandies,
+La géométrie reprend le hexapode SmallpTsai/hexapod-v2-7697 (servos MG92B,
+2 PCA9685 en 0x40 et 0x41), pièces agrandies à 150 %. Pour d'autres pièces,
 modifie seulement DIMENSIONS ci-dessous : tout le reste en découle.
 """
 
 import math
 
 DIMENSIONS = {
-    # Fixation des pattes sur le châssis (hexapod-v2-7697/config.h).
-    "mount_middle_y": 29.87,  # pattes du milieu : écart latéral au centre
-    "mount_corner_x": 55.41,  # pattes avant/arrière : écart longitudinal
-    "mount_corner_y": 22.41,  # pattes avant/arrière : écart latéral
+    # Robot de l'utilisateur : pièces de hexapod-v2-7697 imprimées à 150 %.
+    # Les valeurs mesurées sur le robot remplacent celles calculées
+    # (origine × 1,5 entre parenthèses).
+    # Fixation des pattes sur le châssis.
+    "mount_middle_y": 43.85,  # pattes du milieu : écart latéral au centre (mesuré : corps de 87,7 de large)
+    "mount_corner_x": 83.12,  # pattes avant/arrière : écart longitudinal (55,41 × 1,5)
+    "mount_corner_y": 33.62,  # pattes avant/arrière : écart latéral (22,41 × 1,5)
     # Segments d'une patte.
-    "root_to_coxa": 20.75,  # fixation châssis -> axe du servo de coxa
-    "coxa": 28.0,  # axe coxa -> axe fémur
-    "femur": 42.6,  # axe fémur -> axe tibia
-    "tibia": 89.07,  # axe tibia -> bout du pied
+    "root_to_coxa": 31.13,  # fixation châssis -> axe du servo de coxa (20,75 × 1,5)
+    "coxa": 45.0,  # axe coxa -> axe fémur (mesuré, 42 calculé)
+    "femur": 59.0,  # axe fémur -> axe tibia (mesuré, 63,9 calculé)
+    "tibia": 135.0,  # axe tibia -> bout du pied (mesuré, 133,6 calculé)
 }
 
 # Posture debout : fémur relevé de 30°, tibia incliné de 15° vers l'extérieur
@@ -84,7 +87,8 @@ class HexapodConfig:
         self.tibia_length = tibia_length
         self.stance_radius = stance_radius
         self.stance_height = stance_height
-        self.sit_drop = 0.6 * stance_height if sit_drop is None else sit_drop
+        # Limité pour que le fémur reste dans la course de son servo (~60° de levée).
+        self.sit_drop = 0.3 * stance_height if sit_drop is None else sit_drop
         self.step_height = step_height
         self.max_stride = max_stride
 

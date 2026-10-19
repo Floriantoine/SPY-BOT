@@ -67,3 +67,20 @@ class HexapodTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PostureLimitsTest(unittest.TestCase):
+    def test_sit_and_stand_stay_inside_servo_limits(self):
+        # Un servo en butée déformerait la posture : assis comme debout, chaque
+        # angle demandé doit rester dans la course du servo, avec 3° de marge.
+        config = default_config()
+        robot = Hexapod(config)
+        for height in (0.0, -config.sit_drop):
+            robot.pose = BodyPose(0, 0, height, 0, 0, 0)
+            angles = robot.solve()
+            for leg in config.legs:
+                a = angles[leg.name]
+                for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+                    raw = 90.0 + joint.direction * (math.degrees(value) - joint.zero_deg)
+                    self.assertGreater(raw, joint.min_deg + 3, (height, leg.name))
+                    self.assertLess(raw, joint.max_deg - 3, (height, leg.name))

@@ -37,7 +37,7 @@ Autre câblage ou autres broches : `WIRING` dans `hexapod/config.py`, `sda`/`scl
 
 ### Dimensions
 
-Toutes les longueurs sont dans `DIMENSIONS`, en haut de `hexapod/config.py` (valeurs du robot d'origine, en mm). Si tes pièces sont agrandies, change uniquement ces valeurs : la posture debout, la longueur de pas et la vue 3D s'adaptent toutes seules. Mesure d'axe à axe :
+Toutes les longueurs sont dans `DIMENSIONS`, en haut de `hexapod/config.py` (en mm ; actuellement les pièces de hexapod-v2-7697 imprimées à 150 %, avec la coxa, le fémur et le tibia mesurés sur le robot). Si tes pièces sont agrandies, change uniquement ces valeurs : la posture debout, la longueur de pas et la vue 3D s'adaptent toutes seules. Mesure d'axe à axe :
 
 - `root_to_coxa` : bord du châssis → axe du servo de coxa
 - `coxa` : axe coxa → axe fémur
