@@ -85,15 +85,25 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(line[1], OFF)
         self.assertEqual(len(line), 3 + 18)
 
+    def test_calibration_pose_is_easy_to_check(self):
+        # Fémur à plat et tibia vertical : le servo de fémur (milieu = fémur
+        # relevé de 15°, monté à l'envers) est à 105°, les autres au milieu.
+        self.ctrl.handle("CAL")
+        for leg in self.ctrl.robot.config.legs:
+            angle = lambda j: self.driver.angles[(j.board, j.channel)]
+            self.assertAlmostEqual(angle(leg.coxa), 90.0)
+            self.assertAlmostEqual(angle(leg.femur), 105.0)
+            self.assertAlmostEqual(angle(leg.tibia), 90.0)
+
     def test_calibration_round_trip(self):
         c = self.ctrl
         self.assertEqual(c.handle("CAL"), "OK CAL")
         self.assertEqual(c.mode, CALIBRATION)
         leg = c.robot.config.leg("LM")
         before = self.driver.angles[(leg.femur.board, leg.femur.channel)]
-        self.assertAlmostEqual(before, 90.0)
+        self.assertAlmostEqual(before, 105.0)
         self.assertEqual(c.handle("TRIM lm femur -4.5"), "OK TRIM LM femur -4.5")
-        self.assertAlmostEqual(self.driver.angles[(leg.femur.board, leg.femur.channel)], 85.5)
+        self.assertAlmostEqual(self.driver.angles[(leg.femur.board, leg.femur.channel)], 100.5)
         c.handle("SAVE")
         with open(self.calib) as f:
             self.assertEqual(json.load(f)["LM"], [0.0, -4.5, 0.0])

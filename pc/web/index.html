@@ -138,10 +138,10 @@
             <li><b>Alimentation</b> : les servos sur une alimentation 5-6 V séparée (plusieurs ampères) branchée au bornier V+ des PCA9685, masses communes avec l'ESP32.</li>
             <li><b>Servos</b> : branche chaque servo sur son canal (tableau ci-dessous et étiquettes sur le modèle 3D), fil marron/noir côté GND.</li>
             <li><b>Vérifie</b> chaque servo avec <b>Tester</b> : seul celui-là doit bouger.</li>
-            <li><b>Centre</b> : clique sur <b>Servos au milieu</b>, puis visse les palonniers pour que chaque segment ait la pose du modèle 3D.</li>
+            <li><b>Palonniers</b> : clique sur <b>Pose de montage</b>, puis visse les palonniers pour que chaque patte ait la pose du modèle 3D : fémur à plat, tibia vertical.</li>
             <li>Termine par l'onglet <b>Calibration</b> pour les réglages fins.</li>
           </ol>
-          <button class="btn wide" id="btn-center" data-needs="link">Servos au milieu</button>
+          <button class="btn wide" id="btn-center" data-needs="link">Pose de montage</button>
         </div>
         <div class="card">
           <h3>Câblage des servos</h3>
@@ -188,7 +188,7 @@
           <h3>Comment faire</h3>
           <ol class="steps">
             <li>Pose le robot sur une boîte, pattes dans le vide.</li>
-            <li><b>Pose de calibration</b> : chaque servo va au milieu de sa course.</li>
+            <li><b>Pose de calibration</b> : coxa perpendiculaire au corps, fémur à plat, tibia vertical.</li>
             <li>Pour chaque servo, règle le trim jusqu'à ce que la patte réelle ait la pose du modèle 3D.</li>
             <li><b>Enregistrer</b> : les réglages restent dans l'ESP32.</li>
           </ol>

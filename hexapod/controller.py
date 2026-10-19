@@ -15,9 +15,9 @@ Commandes (une par ligne, PC -> robot) :
                                   à renvoyer au moins toutes les 0,5 s
     POSE x y z roll pitch yaw     décalage du corps en mm et degrés
     GAIT period step_height       durée du cycle (s) et hauteur de pas (mm)
-    CAL                           pose de calibration : tous les servos à 90° + trim
+    CAL                           pose de calibration : fémur à plat, tibia vertical (+ trim)
     TEST leg joint                fait osciller un seul servo pendant 3 s (vérif. câblage),
-                                  les autres au milieu ; refusé quand le robot est debout
+                                  les autres en pose de calibration ; refusé debout
     TRIM leg joint deg            règle le trim d'une articulation (ex. TRIM RF femur -3)
     SAVE                          enregistre les trims dans la mémoire du robot
     GETCAL                        -> CAL {"RF": [coxa, femur, tibia], ...}
@@ -49,6 +49,9 @@ SITTING = "sitting"
 CALIBRATION = "cal"
 TEST = "test"
 
+# Pose de calibration (angles IK en radians) : coxa dans l'axe de la fixation,
+# fémur à l'horizontale, tibia vertical vers le bas.
+CALIBRATION_POSE = (0.0, 0.0, -math.pi / 2)
 RISE_TIME = 2.0  # s pour se lever ou s'asseoir
 WATCHDOG = 0.5  # s sans MOVE -> arrêt
 TELEMETRY_PERIOD = 0.05  # s
@@ -93,7 +96,7 @@ class Controller:
 
         elif self.mode == TEST:
             self.test_time += dt
-            self.angles = self._zero_angles()
+            self.angles = self._calibration_angles()
             if self.test_time < TEST_DURATION:
                 a = self.angles[self.test_leg]
                 offset = TEST_AMPLITUDE * math.sin(2 * math.pi * self.test_time)
@@ -195,13 +198,13 @@ class Controller:
         return "OK GAIT %.2f %.0f" % (gait.period, gait.step_height)
 
     def cmd_cal(self):
-        """Tous les servos au milieu (+ trim). Avec la config par défaut :
-        coxa dans l'axe, fémur relevé de 15°, tibia perpendiculaire au fémur.
-        On règle les trims jusqu'à ce que le robot réel corresponde à la pose
-        affichée sur le PC."""
+        """Pose de calibration, choisie pour être facile à vérifier à l'œil :
+        coxa perpendiculaire au corps, fémur à l'horizontale, tibia vertical.
+        On fixe les palonniers dans cette pose, puis on règle les trims
+        jusqu'à ce que le robot réel corresponde à la pose affichée sur le PC."""
         self.mode = CALIBRATION
         self.robot.command = GaitCommand()
-        self.angles = self._zero_angles()
+        self.angles = self._calibration_angles()
         self._send_angles()
         return "OK CAL"
 
@@ -285,6 +288,9 @@ class Controller:
             leg.name: LegAngles(leg.coxa.zero_deg * DEG, leg.femur.zero_deg * DEG, leg.tibia.zero_deg * DEG)
             for leg in self.robot.config.legs
         }
+
+    def _calibration_angles(self):
+        return {leg.name: LegAngles(*CALIBRATION_POSE) for leg in self.robot.config.legs}
 
     def _safe_solve(self):
         try:

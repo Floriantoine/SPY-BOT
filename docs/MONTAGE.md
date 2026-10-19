@@ -67,13 +67,13 @@ Les canaux 0, 1 et 11 à 15 restent libres. La droite et la gauche se comprennen
 2. Lance `python -m pc.server`, ouvre <http://localhost:8000> et connecte-toi à l'ESP32.
 3. Onglet **Montage** : clique sur **Tester** pour chaque servo. Seul ce servo doit osciller pendant 3 secondes, et le modèle 3D montre lequel doit bouger. Si un autre bouge, inverse les deux prises.
 
-## 5. Centrer les servos et visser les palonniers
+## 5. Mettre en pose de montage et visser les palonniers
 
-1. Clique sur **Servos au milieu** : les 18 servos se placent au milieu de leur course.
-2. Sans les faire tourner, enfonce chaque palonnier dans la position la plus proche de la pose du modèle 3D, puis visse :
+1. Clique sur **Pose de montage** : les 18 servos prennent la pose de calibration et la tiennent tant qu'ils sont alimentés.
+2. Sans les faire tourner, enfonce chaque palonnier dans la position la plus proche de cette pose, puis visse :
    - coxa dans l'axe de sa fixation, perpendiculaire au bord du châssis ;
-   - fémur relevé d'environ 15° au-dessus de l'horizontale ;
-   - tibia perpendiculaire au fémur, donc presque vertical.
+   - fémur à l'horizontale, parallèle au sol (une équerre ou un niveau aide) ;
+   - tibia vertical, à angle droit avec le fémur.
 
 Les cannelures du palonnier ne permettent pas un réglage exact : le reste se fait par logiciel, à l'étape suivante.
 
@@ -81,7 +81,7 @@ Les cannelures du palonnier ne permettent pas un réglage exact : le reste se fa
 
 Onglet **Calibration**, robot posé sur une boîte, pattes dans le vide :
 
-1. **Pose de calibration**.
+1. **Pose de calibration** (la même pose qu'à l'étape 5).
 2. Pour chaque patte, ajuste les trims coxa, fémur et tibia (boutons − / + par pas de 0,5°) jusqu'à ce que la patte réelle ait la pose du modèle 3D.
 3. **Enregistrer** : les trims sont gardés dans l'ESP32 (`calib.json`) et rechargés à chaque démarrage.
 
