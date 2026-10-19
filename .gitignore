@@ -4,3 +4,5 @@ __pycache__/
 *.egg-info/
 .venv/
 sim/*.gif
+pc/sim_calib.json
+calib.json

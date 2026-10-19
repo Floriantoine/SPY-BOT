@@ -5,20 +5,22 @@ pour chaque patte, où se trouve le pied vu depuis le corps déplacé, puis dans
 le repère de la patte.
 """
 
-from dataclasses import dataclass
 import math
 
 
-@dataclass(frozen=True)
 class BodyPose:
-    """Pose du corps par rapport à sa position neutre (mm et radians)."""
+    """Pose du corps par rapport à sa position neutre (mm et radians).
 
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
-    roll: float = 0.0  # autour de x
-    pitch: float = 0.0  # autour de y
-    yaw: float = 0.0  # autour de z
+    roll autour de x, pitch autour de y, yaw autour de z.
+    """
+
+    def __init__(self, x=0.0, y=0.0, z=0.0, roll=0.0, pitch=0.0, yaw=0.0):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.roll = roll
+        self.pitch = pitch
+        self.yaw = yaw
 
 
 def rotation_matrix(roll, pitch, yaw):

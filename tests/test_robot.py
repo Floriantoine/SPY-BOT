@@ -37,16 +37,31 @@ class HexapodTest(unittest.TestCase):
             for a, b in zip(foot, targets[leg.name]):
                 self.assertAlmostEqual(a, b)
 
-    def test_left_side_is_mirrored(self):
-        c = self.robot.config
+    def test_standby_pose_matches_reference_robot(self):
+        # Posture debout de hexapod-v2-7697 : fémur relevé de 30°, tibia
+        # incliné de 15° vers l'extérieur, soit coxa 0°, fémur +15° et
+        # tibia -15° par rapport au milieu des servos.
         self.robot.update(0.0)
-        right = self.robot.driver.angles[(c.leg("RM").femur.board, c.leg("RM").femur.channel)]
-        left = self.robot.driver.angles[(c.leg("LM").femur.board, c.leg("LM").femur.channel)]
-        self.assertAlmostEqual(right - 90.0, 90.0 - left)
+        for leg in self.robot.config.legs:
+            servos = self.robot.driver.angles
+            self.assertAlmostEqual(servos[(leg.coxa.board, leg.coxa.channel)], 90.0)
+            self.assertAlmostEqual(servos[(leg.femur.board, leg.femur.channel)], 75.0)
+            self.assertAlmostEqual(servos[(leg.tibia.board, leg.tibia.channel)], 75.0)
+
+    def test_eighteen_distinct_channels(self):
+        c = self.robot.config
+        channels = {(j.board, j.channel) for leg in c.legs for j in (leg.coxa, leg.femur, leg.tibia)}
+        self.assertEqual(len(channels), 18)
+
+    def test_scaled_dimensions_stay_reachable(self):
+        robot = Hexapod(default_config({"femur": 85.2, "tibia": 178.1, "coxa": 56.0}))
+        robot.command = GaitCommand(vx=120.0, yaw_rate=0.5)
+        for _ in range(100):
+            robot.update(0.02)
 
     def test_servo_mapping_clamps(self):
         joint = default_config().leg("RF").coxa
-        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 180.0)
+        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 135.0)
         self.assertEqual(ik_to_servo_deg(0.0, joint), 90.0)
 
 

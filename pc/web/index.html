@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPY-BOT</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {"imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }}
+  </script>
+</head>
+<body>
+  <main id="view">
+    <div id="hud">
+      <span id="link-dot" class="dot"></span>
+      <span id="link-text">Non connecté</span>
+      <span class="sep">·</span>
+      <span>Mode : <b id="mode">-</b></span>
+    </div>
+    <div id="keys-help">Z/S avancer-reculer · Q/D pas de côté · A/E tourner sur place · Espace stop</div>
+  </main>
+
+  <aside id="panel">
+    <h1>SPY-BOT</h1>
+
+    <section>
+      <h2>Connexion</h2>
+      <div class="row">
+        <select id="port"></select>
+        <button id="refresh" title="Rafraîchir la liste">↻</button>
+      </div>
+      <div class="row">
+        <button id="connect" class="primary">Connecter</button>
+        <button id="disconnect">Déconnecter</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Alimentation et posture</h2>
+      <div class="row">
+        <button data-cmd="POWER 1" class="primary">Activer les servos</button>
+        <button data-cmd="POWER 0" class="danger">Relâcher</button>
+      </div>
+      <div class="row">
+        <button data-cmd="STAND">Se lever</button>
+        <button data-cmd="SIT">S'asseoir</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Pilotage</h2>
+      <label>Vitesse <output id="speed-out"></output>
+        <input id="speed" type="range" min="10" max="150" step="5" value="60">
+      </label>
+      <label>Rotation <output id="turn-out"></output>
+        <input id="turn" type="range" min="5" max="60" step="5" value="25">
+      </label>
+      <div class="pad">
+        <button data-key="a" title="Tourner à gauche (A)">⟲</button>
+        <button data-key="z" title="Avancer (Z)">▲</button>
+        <button data-key="e" title="Tourner à droite (E)">⟳</button>
+        <button data-key="q" title="Pas à gauche (Q)">◀</button>
+        <button id="stop" title="Stop (Espace)">■</button>
+        <button data-key="d" title="Pas à droite (D)">▶</button>
+        <span></span>
+        <button data-key="s" title="Reculer (S)">▼</button>
+        <span></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Corps</h2>
+      <label>Hauteur <output></output><input class="pose" data-i="2" type="range" min="-30" max="30" value="0"></label>
+      <label>Avant / arrière <output></output><input class="pose" data-i="0" type="range" min="-30" max="30" value="0"></label>
+      <label>Gauche / droite <output></output><input class="pose" data-i="1" type="range" min="-30" max="30" value="0"></label>
+      <label>Roulis <output></output><input class="pose" data-i="3" type="range" min="-20" max="20" value="0"></label>
+      <label>Tangage <output></output><input class="pose" data-i="4" type="range" min="-20" max="20" value="0"></label>
+      <label>Lacet <output></output><input class="pose" data-i="5" type="range" min="-25" max="25" value="0"></label>
+      <button id="pose-reset">Recentrer</button>
+    </section>
+
+    <section>
+      <h2>Démarche</h2>
+      <label>Durée d'un cycle (s) <output></output><input id="period" type="range" min="0.4" max="3" step="0.1" value="1"></label>
+      <label>Levée du pied (mm) <output></output><input id="step" type="range" min="5" max="60" step="1" value="25"></label>
+    </section>
+
+    <section>
+      <h2>Calibration</h2>
+      <p class="hint">« Pose de calibration » met chaque servo au milieu de sa course.
+        Pour chaque patte, ajuste les trims jusqu'à ce que le robot réel ait la même pose que le modèle 3D
+        (coxa dans l'axe, fémur un peu relevé, tibia perpendiculaire au fémur), puis enregistre.</p>
+      <div class="row">
+        <button data-cmd="CAL">Pose de calibration</button>
+        <button data-cmd="SAVE" class="primary">Enregistrer</button>
+      </div>
+      <div class="legs" id="legs"></div>
+      <label>Coxa <output></output><input class="trim" data-joint="coxa" type="range" min="-30" max="30" step="0.5" value="0"></label>
+      <label>Fémur <output></output><input class="trim" data-joint="femur" type="range" min="-30" max="30" step="0.5" value="0"></label>
+      <label>Tibia <output></output><input class="trim" data-joint="tibia" type="range" min="-30" max="30" step="0.5" value="0"></label>
+    </section>
+
+    <section>
+      <h2>Journal</h2>
+      <pre id="log"></pre>
+    </section>
+  </aside>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+:root {
+  --bg: #12161c;
+  --panel: #1b2129;
+  --line: #2c3540;
+  --text: #e6e9ee;
+  --muted: #8b95a3;
+  --accent: #3d8bfd;
+  --danger: #e5534b;
+  --ok: #3fb950;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 system-ui, sans-serif;
+}
+
+#view { position: relative; flex: 1; min-width: 0; }
+#view canvas { display: block; }
+
+#hud {
+  position: absolute; top: 12px; left: 12px;
+  background: rgba(27, 33, 41, 0.85);
+  padding: 6px 10px; border-radius: 6px;
+}
+#keys-help {
+  position: absolute; bottom: 12px; left: 12px;
+  color: var(--muted); font-size: 12px;
+}
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); margin-right: 4px; }
+.dot.on { background: var(--ok); }
+.sep { color: var(--muted); margin: 0 4px; }
+
+#panel {
+  width: 340px; overflow-y: auto;
+  background: var(--panel); border-left: 1px solid var(--line);
+  padding: 12px 14px;
+}
+h1 { font-size: 18px; margin: 0 0 8px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 8px; }
+section { border-top: 1px solid var(--line); padding: 12px 0; }
+
+.row { display: flex; gap: 6px; margin-bottom: 6px; }
+.row > * { flex: 1; }
+.row > #refresh { flex: 0 0 36px; }
+
+button, select {
+  background: #252d37; color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 8px; font: inherit; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); }
+button.danger { background: var(--danger); border-color: var(--danger); }
+button.active { background: var(--accent); }
+
+label { display: block; margin: 6px 0; color: var(--muted); }
+label output { float: right; color: var(--text); }
+input[type=range] { width: 100%; }
+
+.pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+.pad button { font-size: 18px; padding: 10px 0; }
+
+.legs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+.hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+
+#log {
+  height: 120px; overflow-y: auto; margin: 0;
+  background: #0d1015; padding: 6px; border-radius: 6px;
+  font-size: 11px; white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+  body { flex-direction: column; height: auto; }
+  #view { height: 55vh; flex: none; }
+  #panel { width: 100%; border-left: none; }
+}

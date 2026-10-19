@@ -5,20 +5,23 @@ lève et revient vers l'avant (transfert). Trois pieds touchent donc toujours
 le sol, ce qui rend la marche statiquement stable.
 """
 
-from dataclasses import dataclass
 import math
 
 TRIPOD_A = ("RF", "LM", "RR")
 TRIPOD_B = ("LF", "RM", "LR")
 
 
-@dataclass(frozen=True)
 class GaitCommand:
-    """Consigne de déplacement dans le repère corps."""
+    """Consigne de déplacement dans le repère corps.
 
-    vx: float = 0.0  # mm/s vers l'avant
-    vy: float = 0.0  # mm/s vers la gauche
-    yaw_rate: float = 0.0  # rad/s, positif = vers la gauche
+    vx en mm/s vers l'avant, vy en mm/s vers la gauche, yaw_rate en rad/s
+    (positif = vers la gauche).
+    """
+
+    def __init__(self, vx=0.0, vy=0.0, yaw_rate=0.0):
+        self.vx = vx
+        self.vy = vy
+        self.yaw_rate = yaw_rate
 
     @property
     def is_zero(self):
@@ -50,7 +53,7 @@ class TripodGait:
         half = self.period / 2
         sx = (command.vx - command.yaw_rate * py) * half
         sy = (command.vy + command.yaw_rate * px) * half
-        n = math.hypot(sx, sy)
+        n = math.sqrt(sx * sx + sy * sy)
         if n > self.max_stride:
             sx, sy = sx * self.max_stride / n, sy * self.max_stride / n
         return sx, sy

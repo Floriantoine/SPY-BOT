@@ -3,49 +3,90 @@
 Repère du corps : x vers l'avant, y vers la gauche, z vers le haut, origine au
 centre du châssis. Toutes les longueurs sont en millimètres, les angles en
 radians sauf mention contraire.
+
+Les valeurs par défaut reprennent le hexapode SmallpTsai/hexapod-v2-7697
+(servos MG92B, 2 PCA9685 en 0x40 et 0x41). Si tes pièces sont agrandies,
+modifie seulement DIMENSIONS ci-dessous : tout le reste en découle.
 """
 
-from dataclasses import dataclass, field
 import math
 
+DIMENSIONS = {
+    # Fixation des pattes sur le châssis (hexapod-v2-7697/config.h).
+    "mount_middle_y": 29.87,  # pattes du milieu : écart latéral au centre
+    "mount_corner_x": 55.41,  # pattes avant/arrière : écart longitudinal
+    "mount_corner_y": 22.41,  # pattes avant/arrière : écart latéral
+    # Segments d'une patte.
+    "root_to_coxa": 20.75,  # fixation châssis -> axe du servo de coxa
+    "coxa": 28.0,  # axe coxa -> axe fémur
+    "femur": 42.6,  # axe fémur -> axe tibia
+    "tibia": 89.07,  # axe tibia -> bout du pied
+}
 
-@dataclass(frozen=True)
+# Posture debout : fémur relevé de 30°, tibia incliné de 15° vers l'extérieur
+# (posture « standby » de hexapod-v2-7697).
+STAND_FEMUR_DEG = 30.0
+STAND_TIBIA_OUT_DEG = 15.0
+
+
 class JointServo:
     """Lien entre un angle articulaire (IK) et un canal de servo PCA9685.
 
-    angle_servo_deg = 90 + direction * (degrés(angle_ik) - zero_deg)
+    angle_servo_deg = 90 + direction * (degrés(angle_ik) - zero_deg) + trim_deg
+
+    board : index de la carte PCA9685 (0 = 0x40, 1 = 0x41).
+    zero_deg : angle IK (en degrés) qui place le servo au milieu (90°).
+    direction : +1 ou -1 selon le sens de montage.
+    trim_deg : réglage fin mesuré sur le robot réel (calibration).
+    min_deg / max_deg : butées, en degrés servo.
     """
 
-    board: int  # index de la carte PCA9685 (0 ou 1, 16 canaux chacune)
-    channel: int
-    zero_deg: float = 0.0  # angle IK (en degrés) qui place le servo à 90°
-    direction: int = 1  # +1 ou -1 selon le sens de montage
-    trim_deg: float = 0.0  # réglage fin mesuré sur le robot réel
-    min_deg: float = 0.0
-    max_deg: float = 180.0
+    def __init__(self, board, channel, zero_deg=0.0, direction=1, trim_deg=0.0,
+                 min_deg=30.0, max_deg=150.0):
+        self.board = board
+        self.channel = channel
+        self.zero_deg = zero_deg
+        self.direction = direction
+        self.trim_deg = trim_deg
+        self.min_deg = min_deg
+        self.max_deg = max_deg
 
 
-@dataclass(frozen=True)
 class LegConfig:
-    name: str
-    mount_x: float  # position de l'axe coxa dans le repère corps
-    mount_y: float
-    mount_angle: float  # orientation de la patte (rad), 0 = vers l'avant
-    coxa: JointServo
-    femur: JointServo
-    tibia: JointServo
+    """Une patte : position (mm) de l'axe coxa dans le repère corps, son
+    orientation (rad, 0 = vers l'avant), le point de fixation sur le châssis
+    (pour l'affichage) et ses trois servos."""
+
+    def __init__(self, name, mount_x, mount_y, mount_angle, coxa, femur, tibia,
+                 body_x=None, body_y=None):
+        self.name = name
+        self.mount_x = mount_x
+        self.mount_y = mount_y
+        self.mount_angle = mount_angle
+        self.coxa = coxa
+        self.femur = femur
+        self.tibia = tibia
+        self.body_x = mount_x if body_x is None else body_x
+        self.body_y = mount_y if body_y is None else body_y
 
 
-@dataclass(frozen=True)
 class HexapodConfig:
-    coxa_length: float = 50.0
-    femur_length: float = 80.0
-    tibia_length: float = 120.0
-    # Position neutre des pieds : distance horizontale depuis l'axe coxa et
-    # hauteur sous le corps.
-    stance_radius: float = 140.0
-    stance_height: float = 90.0
-    legs: tuple = field(default_factory=tuple)
+    """Dimensions du robot. stance_radius et stance_height donnent la position
+    neutre des pieds : distance horizontale depuis l'axe coxa et hauteur sous
+    le corps. sit_drop : de combien le corps descend en position assise."""
+
+    def __init__(self, legs=(), coxa_length=50.0, femur_length=80.0, tibia_length=120.0,
+                 stance_radius=140.0, stance_height=90.0, sit_drop=None,
+                 step_height=30.0, max_stride=60.0):
+        self.legs = tuple(legs)
+        self.coxa_length = coxa_length
+        self.femur_length = femur_length
+        self.tibia_length = tibia_length
+        self.stance_radius = stance_radius
+        self.stance_height = stance_height
+        self.sit_drop = 0.6 * stance_height if sit_drop is None else sit_drop
+        self.step_height = step_height
+        self.max_stride = max_stride
 
     def leg(self, name):
         for leg in self.legs:
@@ -61,48 +102,88 @@ class HexapodConfig:
             -self.stance_height,
         )
 
+    def to_dict(self):
+        """Géométrie sérialisable (pour l'interface PC)."""
+        return {
+            "coxa": self.coxa_length,
+            "femur": self.femur_length,
+            "tibia": self.tibia_length,
+            "legs": [
+                {
+                    "name": leg.name,
+                    "x": leg.mount_x,
+                    "y": leg.mount_y,
+                    "angle": leg.mount_angle,
+                    "body_x": leg.body_x,
+                    "body_y": leg.body_y,
+                }
+                for leg in self.legs
+            ],
+        }
+
 
 LEG_NAMES = ("RF", "RM", "RR", "LF", "LM", "LR")
 
+# Câblage de hexapod-v2-7697 : (carte, premier canal) ; coxa, fémur, tibia
+# sur trois canaux consécutifs. Carte 0 = 0x40 (droite), 1 = 0x41 (gauche).
+WIRING = {
+    "RF": (0, 5),
+    "RM": (0, 2),
+    "RR": (0, 8),
+    "LF": (1, 5),
+    "LM": (1, 2),
+    "LR": (1, 8),
+}
 
-def default_config():
-    """Hexapode « classique » : châssis hexagonal, 18 servos sur 2 PCA9685.
 
-    Pattes droites sur la carte 0 (canaux 0-8), gauches sur la carte 1.
-    Les servos du côté gauche sont montés en miroir, d'où direction = -1 sur
-    le fémur et le tibia.
-    """
+def default_config(dimensions=None):
+    d = dict(DIMENSIONS)
+    d.update(dimensions or {})
 
-    def joints(board, base, mirrored):
-        d = -1 if mirrored else 1
-        return dict(
-            coxa=JointServo(board, base, direction=1),
-            femur=JointServo(board, base + 1, direction=d),
-            # Tibia à la verticale (-90° par rapport au fémur) quand le servo est à 90°.
-            tibia=JointServo(board, base + 2, zero_deg=-90.0, direction=d),
-        )
-
-    geometry = {
-        # nom: (x, y, angle de montage en degrés)
-        "RF": (60.0, -40.0, -45.0),
-        "RM": (0.0, -60.0, -90.0),
-        "RR": (-60.0, -40.0, -135.0),
-        "LF": (60.0, 40.0, 45.0),
-        "LM": (0.0, 60.0, 90.0),
-        "LR": (-60.0, 40.0, 135.0),
+    mounts = {
+        # nom : (x, y, angle en degrés) du point de fixation sur le châssis
+        "RF": (d["mount_corner_x"], -d["mount_corner_y"], -45.0),
+        "RM": (0.0, -d["mount_middle_y"], -90.0),
+        "RR": (-d["mount_corner_x"], -d["mount_corner_y"], -135.0),
+        "LF": (d["mount_corner_x"], d["mount_corner_y"], 45.0),
+        "LM": (0.0, d["mount_middle_y"], 90.0),
+        "LR": (-d["mount_corner_x"], d["mount_corner_y"], 135.0),
     }
     legs = []
     for name in LEG_NAMES:
-        x, y, a = geometry[name]
-        left = name.startswith("L")
-        index = "FMR".index(name[1])
+        x, y, a = mounts[name]
+        a = a * math.pi / 180.0
+        board, ch = WIRING[name]
         legs.append(
             LegConfig(
                 name=name,
-                mount_x=x,
-                mount_y=y,
-                mount_angle=math.radians(a),
-                **joints(1 if left else 0, index * 3, left),
+                # L'axe de la coxa est décalé de root_to_coxa vers l'extérieur.
+                mount_x=x + d["root_to_coxa"] * math.cos(a),
+                mount_y=y + d["root_to_coxa"] * math.sin(a),
+                mount_angle=a,
+                body_x=x,
+                body_y=y,
+                coxa=JointServo(board, ch, min_deg=45.0, max_deg=135.0),
+                # Servo de fémur monté à l'envers, milieu = fémur relevé de 15°.
+                femur=JointServo(board, ch + 1, zero_deg=15.0, direction=-1),
+                # Milieu = tibia perpendiculaire au fémur.
+                tibia=JointServo(board, ch + 2, zero_deg=-90.0),
             )
         )
-    return HexapodConfig(legs=tuple(legs))
+
+    femur_a = STAND_FEMUR_DEG * math.pi / 180.0
+    tibia_a = STAND_TIBIA_OUT_DEG * math.pi / 180.0
+    stance_radius = d["coxa"] + d["femur"] * math.cos(femur_a) + d["tibia"] * math.sin(tibia_a)
+    stance_height = d["tibia"] * math.cos(tibia_a) - d["femur"] * math.sin(femur_a)
+    return HexapodConfig(
+        legs=legs,
+        coxa_length=d["coxa"],
+        femur_length=d["femur"],
+        tibia_length=d["tibia"],
+        stance_radius=stance_radius,
+        stance_height=stance_height,
+        # Longueur de pas et levée proportionnelles à la taille de la patte
+        # (25 mm de rayon de pas et de levée sur le robot d'origine).
+        step_height=0.28 * d["tibia"],
+        max_stride=0.56 * d["tibia"],
+    )

@@ -13,3 +13,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m unittest -v
+      - name: Firmware sous MicroPython
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q micropython
+          micropython tests/micropython_smoke.py

@@ -10,7 +10,7 @@ class Hexapod:
     def __init__(self, config, driver=None, gait=None):
         self.config = config
         self.driver = driver or DryRunDriver()
-        self.gait = gait or TripodGait()
+        self.gait = gait or TripodGait(step_height=config.step_height, max_stride=config.max_stride)
         self.command = GaitCommand()
         self.pose = BodyPose()
 
