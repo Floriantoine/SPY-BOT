@@ -1,0 +1,5 @@
+# Le cœur (hexapod/) n'utilise que la bibliothèque standard.
+# Simulation 3D :
+matplotlib>=3.7
+# Sur le robot (Raspberry Pi + PCA9685) :
+# adafruit-circuitpython-servokit
