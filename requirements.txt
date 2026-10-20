@@ -1,0 +1,10 @@
+# Le code du robot (hexapod/, main.py) n'utilise que la bibliothèque standard
+# et tourne tel quel sous MicroPython sur l'ESP32.
+
+# Interface PC (pc/server.py) : liaison série USB avec l'ESP32.
+pyserial>=3.5
+# Pour flasher l'ESP32 et copier les fichiers.
+esptool>=4.7
+mpremote>=1.22
+# Optionnel : simulation matplotlib (sim/simulate.py).
+# matplotlib>=3.7

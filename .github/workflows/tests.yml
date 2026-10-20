@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m unittest -v
+      - name: Firmware sous MicroPython
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q micropython
+          micropython tests/micropython_smoke.py

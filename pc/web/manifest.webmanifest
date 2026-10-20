@@ -1,0 +1,14 @@
+{
+  "name": "SPY-BOT",
+  "short_name": "SPY-BOT",
+  "description": "Pilotage et calibration de l'hexapode SPY-BOT",
+  "lang": "fr",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0b0e13",
+  "theme_color": "#11151c",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>SPY-BOT</title>
+  <meta name="theme-color" content="#11151c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {"imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 9l6 3.5v7L16 23l-6-3.5v-7z"/><path d="M10 12.5L4 9M22 12.5L28 9M10 16H3M22 16h7M10 19.5L4 23M22 19.5l6 3.5"/></svg>
+      <span>SPY-BOT</span>
+    </div>
+
+    <div class="link">
+      <span id="link-dot" class="dot"></span>
+      <select id="port" aria-label="Port de l'ESP32"></select>
+      <button id="refresh" class="icon" title="Rafraîchir les ports">
+        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>
+      </button>
+      <button id="connect" class="btn">Connecter</button>
+      <span id="latency" class="latency" title="Temps de réponse du robot"></span>
+    </div>
+
+    <div class="actions">
+      <span class="chip" id="mode-chip"><i></i><b id="mode">Déconnecté</b></span>
+      <button id="btn-stand" class="btn primary posture" data-needs="link" title="Se lever / s'asseoir (L)">
+        <svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+        <span>Se lever</span>
+      </button>
+      <button id="btn-relax" class="btn danger" data-needs="link" title="Relâcher tous les servos (Échap)">Relâcher</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="view">
+      <div class="readout">
+        <div><small>Avance</small><b id="r-vx">0</b><em>mm/s</em></div>
+        <div><small>Côté</small><b id="r-vy">0</b><em>mm/s</em></div>
+        <div><small>Rotation</small><b id="r-yaw">0</b><em>°/s</em></div>
+        <div><small>Phase</small><b id="r-phase">–</b></div>
+      </div>
+
+      <div class="stick-zone left">
+        <div class="stick" id="stick-move"><div class="ring"></div><div class="knob"></div></div>
+        <label>Déplacement</label>
+      </div>
+      <div class="stick-zone right">
+        <div class="stick horizontal" id="stick-turn"><div class="ring"></div><div class="knob"></div></div>
+        <label>Rotation sur place</label>
+      </div>
+      <div id="locked" class="locked">Lève le robot pour le piloter</div>
+
+      <div class="view-tools">
+        <button class="icon" id="pilot" title="Mode pilote plein écran">
+          <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+        <button class="icon" id="traces" title="Traces des pieds au sol">
+          <svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M7.5 16.5C11 13 9 9 12 8s4 1 4.5-1"/></svg>
+        </button>
+        <button class="icon" id="cam-reset" title="Recentrer la caméra">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        </button>
+        <button class="icon" id="cam-follow" title="Vue de dessus / perspective">
+          <svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4zM3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
+        </button>
+      </div>
+      <div id="toasts"></div>
+    </section>
+
+    <aside id="panel">
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="drive">Pilotage</button>
+        <button class="tab" data-tab="body">Corps</button>
+        <button class="tab" data-tab="build">Montage</button>
+        <button class="tab" data-tab="cal">Calibration</button>
+        <button class="tab" data-tab="anim">Animations</button>
+        <button class="tab" data-tab="log">Journal</button>
+      </nav>
+
+      <div class="tab-page active" id="tab-drive">
+        <div class="card">
+          <h3>Vitesse</h3>
+          <div class="presets" id="presets" role="group" aria-label="Préréglages de vitesse">
+            <button data-preset="slow">Lent</button>
+            <button data-preset="normal">Normal</button>
+            <button data-preset="fast">Rapide</button>
+          </div>
+          <div class="field"><span>Vitesse max</span><output></output>
+            <input id="speed" type="range" min="10" max="150" step="5" value="100"></div>
+          <div class="field"><span>Rotation max</span><output></output>
+            <input id="turn" type="range" min="5" max="60" step="5" value="30"></div>
+        </div>
+        <div class="card">
+          <h3>Démarche</h3>
+          <div class="field"><span>Durée d'un pas</span><output></output>
+            <input id="period" type="range" min="0.4" max="3" step="0.1" value="1.4"></div>
+          <div class="field"><span>Levée du pied</span><output></output>
+            <input id="step" type="range" min="5" max="60" step="1" value="35"></div>
+        </div>
+        <div class="card keys">
+          <h3>Raccourcis</h3>
+          <ul>
+            <li><kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> déplacement</li>
+            <li><kbd>A</kbd><kbd>E</kbd> tourner sur place</li>
+            <li><kbd>Maj</kbd> pleine vitesse, sinon 50 %</li>
+            <li><kbd>Espace</kbd> stop · <kbd>L</kbd> lever/asseoir · <kbd>Échap</kbd> relâcher</li>
+            <li>Manette : stick gauche déplacement, stick droit rotation, A lever, B asseoir</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="tab-page" id="tab-body">
+        <div class="card">
+          <h3>Position du corps</h3>
+          <div class="field"><span>Hauteur</span><output></output><input class="pose" data-i="2" type="range" min="-30" max="30" value="0"></div>
+          <div class="field"><span>Avant / arrière</span><output></output><input class="pose" data-i="0" type="range" min="-30" max="30" value="0"></div>
+          <div class="field"><span>Gauche / droite</span><output></output><input class="pose" data-i="1" type="range" min="-30" max="30" value="0"></div>
+        </div>
+        <div class="card">
+          <h3>Orientation du corps</h3>
+          <div class="field"><span>Roulis</span><output></output><input class="pose" data-i="3" type="range" min="-20" max="20" value="0"></div>
+          <div class="field"><span>Tangage</span><output></output><input class="pose" data-i="4" type="range" min="-20" max="20" value="0"></div>
+          <div class="field"><span>Lacet</span><output></output><input class="pose" data-i="5" type="range" min="-25" max="25" value="0"></div>
+        </div>
+        <button id="pose-reset" class="btn ghost wide">Recentrer le corps</button>
+      </div>
+
+      <div class="tab-page" id="tab-build">
+        <div class="card">
+          <h3>Étapes de montage</h3>
+          <ol class="steps">
+            <li><b>Pattes</b> : imprime et assemble les 6 pattes en suivant le
+              <a href="https://github.com/SmallpTsai/hexapod-v2-7697/blob/master/mechanism/LEG.md" target="_blank" rel="noopener">guide de hexapod-v2-7697</a>,
+              <b>sans visser les palonniers</b> pour l'instant.</li>
+            <li><b>Électronique</b> : ESP32 GPIO21 → SDA, GPIO22 → SCL, 3V3 → VCC, GND → GND des deux PCA9685.
+              Sur la 2ᵉ carte (milieu droite et pattes arrière), ferme le pont <b>A0</b> (adresse 0x41).</li>
+            <li><b>Alimentation</b> : les servos sur une alimentation 5-6 V séparée (plusieurs ampères) branchée au bornier V+ des PCA9685, masses communes avec l'ESP32.</li>
+            <li><b>Servos</b> : branche chaque servo sur son canal (tableau ci-dessous et étiquettes sur le modèle 3D), fil marron/noir côté GND.</li>
+            <li><b>Vérifie</b> chaque servo avec <b>Tester</b> : seul celui-là doit bouger.</li>
+            <li><b>Palonniers</b> : clique sur <b>Pose de montage</b>, puis visse les palonniers pour que chaque patte ait la pose du modèle 3D : fémur à plat, tibia vertical.</li>
+            <li>Termine par l'onglet <b>Calibration</b> pour les réglages fins.</li>
+          </ol>
+          <button class="btn wide" id="btn-center" data-needs="link">Pose de montage</button>
+        </div>
+        <div class="card">
+          <h3>Câblage des servos</h3>
+          <div id="wiring"><p class="hint">Connecte le robot (ou la simulation) pour afficher le câblage.</p></div>
+        </div>
+      </div>
+
+      <div class="tab-page" id="tab-cal">
+        <div class="row">
+          <button class="btn" id="btn-cal" data-needs="link">Pose de calibration</button>
+          <button class="btn primary" id="btn-save" data-needs="link">Enregistrer</button>
+        </div>
+        <div class="row">
+          <button class="btn ghost" id="cal-export" title="Télécharger les trims dans un fichier">Exporter</button>
+          <button class="btn ghost" id="cal-import" data-needs="link" title="Recharger des trims depuis un fichier">Importer</button>
+          <input type="file" id="cal-file" accept=".json,application/json" hidden>
+        </div>
+
+        <div class="card focus-card">
+          <div class="focus-head">
+            <div>
+              <small>Servo sélectionné</small>
+              <h2 id="sel-name">Avant droite · Coxa</h2>
+              <span class="focus-port" id="sel-port">PCA9685 0x40 · canal 5</span>
+            </div>
+            <div class="focus-value"><b id="sel-value">0.0</b><span>°</span></div>
+          </div>
+          <div class="nudge">
+            <button class="btn" data-d="-1">−1°</button>
+            <button class="btn" data-d="-0.5">−0,5°</button>
+            <button class="btn" data-d="0.5">+0,5°</button>
+            <button class="btn" data-d="1">+1°</button>
+          </div>
+          <input id="sel-trim" type="range" min="-30" max="30" step="0.5" value="0" aria-label="Trim du servo sélectionné">
+          <div class="row">
+            <button class="btn ghost" id="sel-zero">Remettre à 0</button>
+            <button class="btn ghost" id="sel-test" data-needs="link">Tester ce servo</button>
+            <button class="btn ghost" id="sel-invert" data-needs="link" title="Si le servo part dans le mauvais sens pendant le test">Inverser le sens</button>
+          </div>
+          <p class="hint">Touche une articulation sur la 3D pour la choisir. Au clavier : ← → pour régler, ↑ ↓ pour changer d'articulation.</p>
+        </div>
+
+        <div class="card">
+          <h3>Choisir le servo</h3>
+          <div class="leg-map" id="legs"></div>
+          <div class="joint-pick" id="joints"></div>
+        </div>
+
+        <div class="card">
+          <h3>Comment faire</h3>
+          <ol class="steps">
+            <li>Pose le robot sur une boîte, pattes dans le vide.</li>
+            <li><b>Pose de calibration</b> : coxa perpendiculaire au corps, fémur à plat, tibia vertical.</li>
+            <li><b>Tester ce servo</b> : la vraie patte doit bouger dans le même sens que la 3D. Si elle part dans l'autre sens, clique sur <b>Inverser le sens</b>, puis refixe son palonnier dans la pose de calibration.</li>
+            <li>Pour chaque servo, règle le trim jusqu'à ce que la patte réelle ait la pose du modèle 3D.</li>
+            <li><b>Enregistrer</b> : les réglages restent dans l'ESP32.</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="tab-page" id="tab-anim">
+        <div class="card">
+          <h3>Animations</h3>
+          <div class="anim-list" id="anim-list"></div>
+          <div class="row anim-transport">
+            <button class="btn" id="anim-stop" disabled>Stop</button>
+            <label class="toggle"><input type="checkbox" id="anim-loop"> En boucle</label>
+          </div>
+          <p class="hint">Les animations bougent le corps, pieds au sol. Lève le robot pour mieux les voir.</p>
+        </div>
+        <div class="card">
+          <h3>Éditeur</h3>
+          <div class="row">
+            <input id="anim-name" class="text" placeholder="Nom de l'animation" maxlength="24">
+          </div>
+          <ol class="keyframes" id="keyframes"></ol>
+          <p class="hint" id="keyframes-empty">Règle le corps dans l'onglet <b>Corps</b>, puis ajoute chaque pose ici.</p>
+          <div class="row">
+            <button class="btn" id="kf-add">Ajouter la pose du corps</button>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="anim-preview">Essayer</button>
+            <button class="btn primary" id="anim-save">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-page" id="tab-log">
+        <div class="card grow">
+          <h3>Échanges avec le robot</h3>
+          <pre id="log"></pre>
+          <form id="console">
+            <input id="console-input" placeholder="Commande manuelle, ex. PING" autocomplete="off">
+            <button class="btn">Envoyer</button>
+          </form>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
