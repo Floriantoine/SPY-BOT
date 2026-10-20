@@ -147,7 +147,7 @@
               <a href="https://github.com/SmallpTsai/hexapod-v2-7697/blob/master/mechanism/LEG.md" target="_blank" rel="noopener">guide de hexapod-v2-7697</a>,
               <b>sans visser les palonniers</b> pour l'instant.</li>
             <li><b>Électronique</b> : ESP32 GPIO21 → SDA, GPIO22 → SCL, 3V3 → VCC, GND → GND des deux PCA9685.
-              Sur la carte de gauche, ferme le pont <b>A0</b> (adresse 0x41).</li>
+              Sur la 2ᵉ carte (milieu droite et pattes arrière), ferme le pont <b>A0</b> (adresse 0x41).</li>
             <li><b>Alimentation</b> : les servos sur une alimentation 5-6 V séparée (plusieurs ampères) branchée au bornier V+ des PCA9685, masses communes avec l'ESP32.</li>
             <li><b>Servos</b> : branche chaque servo sur son canal (tableau ci-dessous et étiquettes sur le modèle 3D), fil marron/noir côté GND.</li>
             <li><b>Vérifie</b> chaque servo avec <b>Tester</b> : seul celui-là doit bouger.</li>

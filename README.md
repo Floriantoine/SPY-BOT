@@ -13,7 +13,7 @@ L'IK tourne sur l'ESP32 et non sur le PC : la marche reste fluide même si la li
 
 ## Matériel et câblage
 
-Géométrie et câblage repris de [SmallpTsai/hexapod-v2-7697](https://github.com/SmallpTsai/hexapod-v2-7697), la carte LinkIt 7697 étant remplacée par un ESP32.
+Géométrie reprise de [SmallpTsai/hexapod-v2-7697](https://github.com/SmallpTsai/hexapod-v2-7697), la carte LinkIt 7697 étant remplacée par un ESP32.
 
 | ESP32 | PCA9685 (les deux cartes) |
 | --- | --- |
@@ -22,16 +22,16 @@ Géométrie et câblage repris de [SmallpTsai/hexapod-v2-7697](https://github.co
 | 3V3 | VCC |
 | GND | GND (commun avec l'alimentation des servos) |
 
-Carte droite en `0x40`, carte gauche en `0x41` (pont A0 soudé). Les servos sont alimentés séparément (5-6 V, plusieurs ampères), jamais par l'ESP32.
+1ʳᵉ carte en `0x40` (pattes avant et milieu gauche), 2ᵉ carte en `0x41` (pont A0 soudé : milieu droite et pattes arrière). Les servos sont alimentés séparément (5-6 V, plusieurs ampères), jamais par l'ESP32.
 
 | Patte | Carte | Canaux coxa / fémur / tibia |
 | --- | --- | --- |
 | Avant droite (RF) | 0x40 | 5 / 6 / 7 |
-| Milieu droite (RM) | 0x40 | 2 / 3 / 4 |
-| Arrière droite (RR) | 0x40 | 8 / 9 / 10 |
-| Avant gauche (LF) | 0x41 | 5 / 6 / 7 |
-| Milieu gauche (LM) | 0x41 | 2 / 3 / 4 |
-| Arrière gauche (LR) | 0x41 | 8 / 9 / 10 |
+| Avant gauche (LF) | 0x40 | 2 / 3 / 4 |
+| Milieu gauche (LM) | 0x40 | 8 / 9 / 10 |
+| Milieu droite (RM) | 0x41 | 2 / 3 / 4 |
+| Arrière gauche (LR) | 0x41 | 5 / 6 / 7 |
+| Arrière droite (RR) | 0x41 | 8 / 9 / 10 |
 
 Autre câblage ou autres broches : `WIRING` dans `hexapod/config.py`, `sda`/`scl` dans `PCA9685Driver` (`hexapod/servo.py`).
 

@@ -68,8 +68,8 @@ class PCA9685:
 class PCA9685Driver:
     """Pilote réel : ESP32 sous MicroPython avec deux PCA9685 sur le même bus I²C.
 
-    Par défaut : SDA = GPIO21, SCL = GPIO22, cartes en 0x40 (pattes droites)
-    et 0x41 (pattes gauches). Impulsions de hexapod-v2-7697 pour des MG92B :
+    Par défaut : SDA = GPIO21, SCL = GPIO22, cartes en 0x40 et 0x41
+    (quelle patte sur quelle carte : WIRING dans config.py). Impulsions de hexapod-v2-7697 pour des MG92B :
     1400 µs au milieu, 10 µs par degré, bornées à 800-2000 µs.
     """
 

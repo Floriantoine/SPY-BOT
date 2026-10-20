@@ -5,7 +5,7 @@ centre du châssis. Toutes les longueurs sont en millimètres, les angles en
 radians sauf mention contraire.
 
 La géométrie reprend le hexapode SmallpTsai/hexapod-v2-7697 (servos MG92B,
-2 PCA9685 en 0x40 et 0x41), pièces agrandies à 150 %. Pour d'autres pièces,
+2 PCA9685 en 0x40 et 0x41, câblage dans WIRING), pièces agrandies à 150 %. Pour d'autres pièces,
 modifie seulement DIMENSIONS ci-dessous : tout le reste en découle.
 """
 
@@ -147,15 +147,16 @@ LEG_NAMES = ("RF", "RM", "RR", "LF", "LM", "LR")
 # Adresse I²C de chaque carte PCA9685 (index = « carte » dans WIRING).
 I2C_ADDRESSES = (0x40, 0x41)
 
-# Câblage de hexapod-v2-7697 : (carte, premier canal) ; coxa, fémur, tibia
-# sur trois canaux consécutifs. Carte 0 = 0x40 (droite), 1 = 0x41 (gauche).
+# Câblage : (carte, premier canal) ; coxa, fémur, tibia sur trois canaux
+# consécutifs. Carte 0 = 0x40 : pattes avant et milieu gauche ;
+# carte 1 = 0x41 (pont A0 soudé) : milieu droite et pattes arrière.
 WIRING = {
     "RF": (0, 5),
-    "RM": (0, 2),
-    "RR": (0, 8),
-    "LF": (1, 5),
-    "LM": (1, 2),
-    "LR": (1, 8),
+    "LF": (0, 2),
+    "LM": (0, 8),
+    "RM": (1, 2),
+    "RR": (1, 8),
+    "LR": (1, 5),
 }
 
 

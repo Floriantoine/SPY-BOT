@@ -31,19 +31,19 @@ Si tu as agrandi des pièces, mesure ensuite les longueurs d'axe à axe et repor
 
 ```
               ┌────────────┐        I²C (4 fils)        ┌──────────────────┐
-  USB PC ─────┤   ESP32    ├─ GPIO21 ─ SDA ─┬───────────┤ PCA9685 0x40     │  pattes DROITES
+  USB PC ─────┤   ESP32    ├─ GPIO21 ─ SDA ─┬───────────┤ PCA9685 0x40     │  avant G/D, milieu G
               │            ├─ GPIO22 ─ SCL ─┼─┬─────────┤ (A0 ouvert)      │
               │            ├─ 3V3 ─── VCC ──┼─┼─┬───────┤                  │
               │            ├─ GND ─── GND ──┼─┼─┼─┬─────┤                  │
               └────────────┘                │ │ │ │     └──────────────────┘
                                             │ │ │ │     ┌──────────────────┐
-                                            └─┴─┴─┴─────┤ PCA9685 0x41     │  pattes GAUCHES
+                                            └─┴─┴─┴─────┤ PCA9685 0x41     │  milieu D, arrière G/D
                                                         │ (pont A0 soudé)  │
   Alim. servos 5-6 V ── V+ / GND (borniers des deux cartes, GND commun avec l'ESP32)
 ```
 
 - Les deux PCA9685 partagent le même bus I²C (en chaîne ou en étoile).
-- **Adresse** : laisse la carte des pattes droites telle quelle (0x40) ; sur celle des pattes gauches, **soude le pont A0** pour obtenir 0x41.
+- **Adresse** : laisse la 1ʳᵉ carte telle quelle (0x40, pattes avant et milieu gauche) ; sur la 2ᵉ (milieu droite et pattes arrière), **soude le pont A0** pour obtenir 0x41.
 - **Alimentation** : les servos ne doivent jamais être alimentés par l'ESP32. Branche l'alimentation 5-6 V sur le bornier V+ / GND des PCA9685, et relie sa masse à celle de l'ESP32.
 
 ## 3. Brancher les servos
@@ -53,11 +53,11 @@ Fil marron (ou noir) côté **GND**, rouge au milieu, orange (ou jaune) côté *
 | Patte | Carte | Coxa | Fémur | Tibia |
 | --- | --- | --- | --- | --- |
 | Avant droite (RF) | 0x40 | canal 5 | canal 6 | canal 7 |
-| Milieu droite (RM) | 0x40 | canal 2 | canal 3 | canal 4 |
-| Arrière droite (RR) | 0x40 | canal 8 | canal 9 | canal 10 |
-| Avant gauche (LF) | 0x41 | canal 5 | canal 6 | canal 7 |
-| Milieu gauche (LM) | 0x41 | canal 2 | canal 3 | canal 4 |
-| Arrière gauche (LR) | 0x41 | canal 8 | canal 9 | canal 10 |
+| Avant gauche (LF) | 0x40 | canal 2 | canal 3 | canal 4 |
+| Milieu gauche (LM) | 0x40 | canal 8 | canal 9 | canal 10 |
+| Milieu droite (RM) | 0x41 | canal 2 | canal 3 | canal 4 |
+| Arrière gauche (LR) | 0x41 | canal 5 | canal 6 | canal 7 |
+| Arrière droite (RR) | 0x41 | canal 8 | canal 9 | canal 10 |
 
 Les canaux 0, 1 et 11 à 15 restent libres. La droite et la gauche se comprennent robot vu de dessus, avant vers le haut. Ce câblage est celui de hexapod-v2-7697 ; pour un autre, modifie `WIRING` dans `hexapod/config.py`.
 
