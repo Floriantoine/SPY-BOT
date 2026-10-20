@@ -769,8 +769,9 @@ const recentToasts = new Map();
 function toast(text, kind = "") {
   // Un même message répété (ex. MOVE refusé 10 fois par seconde) ne s'affiche qu'une fois.
   const now = performance.now();
-  if (now - (recentToasts.get(text) || -1e9) < 3500) return;
-  recentToasts.set(text, now);
+  const key = text.replace(/\d+/g, "#"); // « 14 écritures perdues » puis « 48 … » : même message
+  if (now - (recentToasts.get(key) || -1e9) < 3500) return;
+  recentToasts.set(key, now);
   const el = document.createElement("div");
   el.className = "toast " + kind;
   el.textContent = text;

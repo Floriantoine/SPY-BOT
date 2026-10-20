@@ -33,6 +33,24 @@ def reset_cause():
     return str(cause)
 
 
+def read_commands(ctrl, poll, buf):
+    """Lit les caractères reçus du PC et exécute chaque ligne complète."""
+    while poll.poll(0):
+        ch = sys.stdin.read(1)
+        if not ch:  # fin de flux (seulement en test sur PC)
+            poll.unregister(sys.stdin)
+            break
+        if ch in "\r\n":
+            if buf:
+                reply = ctrl.handle(buf)
+                if reply:
+                    print(reply)
+            buf = ""
+        elif len(buf) < 120:
+            buf += ch
+    return buf
+
+
 def main():
     driver = PCA9685Driver()
     ctrl = Controller(default_config(), driver, "calib.json")
@@ -44,27 +62,27 @@ def main():
     for address in driver.missing:
         print("ERR carte PCA9685 0x%02x absente : ses servos sont ignores" % address)
     last = time.ticks_ms()
+    reported_errors = 0
+    reported_at = last
     try:
         while True:
             start = time.ticks_ms()
-            while poll.poll(0):
-                ch = sys.stdin.read(1)
-                if not ch:  # fin de flux (seulement en test sur PC)
-                    poll.unregister(sys.stdin)
-                    break
-                if ch in "\r\n":
-                    if buf:
-                        reply = ctrl.handle(buf)
-                        if reply:
-                            print(reply)
-                    buf = ""
-                elif len(buf) < 120:
-                    buf += ch
-            dt = time.ticks_diff(start, last) / 1000.0
-            last = start
-            line = ctrl.tick(dt)
-            if line:
-                print(line)
+            try:
+                buf = read_commands(ctrl, poll, buf)
+                dt = time.ticks_diff(start, last) / 1000.0
+                last = start
+                line = ctrl.tick(dt)
+                if line:
+                    print(line)
+            except Exception as e:  # noqa: BLE001
+                # Une erreur ne doit jamais arrêter le robot en silence :
+                # on la signale au PC et la boucle continue.
+                print("ERR interne : %r" % (e,))
+                last = start
+            if driver.errors != reported_errors and time.ticks_diff(start, reported_at) > 1000:
+                reported_errors = driver.errors
+                reported_at = start
+                print("ERR I2C : %d écritures perdues (câbles SDA/SCL, parasites ?)" % reported_errors)
             time.sleep_ms(max(0, LOOP_MS - time.ticks_diff(time.ticks_ms(), start)))
     finally:
         # Quoi qu'il arrive (Ctrl-C, erreur), on relâche les servos.

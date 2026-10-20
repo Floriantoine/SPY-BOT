@@ -78,11 +78,12 @@ class PCA9685Driver:
         if i2c is None:
             from machine import I2C, Pin
 
-            i2c = I2C(0, sda=Pin(sda), scl=Pin(scl), freq=400000)
+            i2c = I2C(0, sda=Pin(sda), scl=Pin(scl), freq=100000)  # 100 kHz : plus tolérant aux parasites des servos
         # Une carte absente ne bloque pas le démarrage : ses servos sont
         # ignorés et `missing` la signale au PC.
         self.boards = []
         self.missing = []
+        self.errors = 0  # écritures I²C échouées
         for a in addresses:
             try:
                 self.boards.append(PCA9685(i2c, a))
@@ -98,11 +99,19 @@ class PCA9685Driver:
         us = self.center_us + (deg - 90.0) * self.us_per_deg
         us = max(self.min_us, min(self.max_us, us))
         if self.boards[board]:
-            self.boards[board].set_pulse_us(channel, us)
+            try:
+                self.boards[board].set_pulse_us(channel, us)
+            except OSError:
+                # Écriture I²C perdue (parasites des servos) : la consigne
+                # suivante, 20 ms plus tard, la remplace.
+                self.errors += 1
 
     def relax(self):
         for board in self.boards:
             if not board:
                 continue
             for channel in range(16):
-                board.off(channel)
+                try:
+                    board.off(channel)
+                except OSError:
+                    pass
