@@ -19,6 +19,20 @@ from hexapod.servo import PCA9685Driver
 LOOP_MS = 20  # 50 Hz
 
 
+def reset_cause():
+    """Pourquoi l'ESP32 a (re)démarré : aide à repérer les chutes de tension."""
+    try:
+        import machine
+
+        cause = machine.reset_cause()
+    except (ImportError, AttributeError):
+        return "?"
+    for name in ("PWRON_RESET", "HARD_RESET", "WDT_RESET", "DEEPSLEEP_RESET", "SOFT_RESET", "BROWNOUT_RESET"):
+        if getattr(machine, name, None) == cause:
+            return name
+    return str(cause)
+
+
 def main():
     driver = PCA9685Driver()
     ctrl = Controller(default_config(), driver, "calib.json")
@@ -26,6 +40,7 @@ def main():
     poll.register(sys.stdin, select.POLLIN)
     buf = ""
     print("HELLO SPY-BOT")
+    print("OK BOOT " + reset_cause())
     for address in driver.missing:
         print("ERR carte PCA9685 0x%02x absente : ses servos sont ignores" % address)
     last = time.ticks_ms()
