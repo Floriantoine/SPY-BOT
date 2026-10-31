@@ -1,32 +1,24 @@
 # SPY-BOT V2 : 10 pistes d'amélioration
 
-## Le diagnostic d'abord
+## Le point de départ
 
-Les pièces de hexapod-v2-7697 ont été agrandies à 150 %, **mais pas les servos**.
-Toutes les interfaces avec le servo sont donc fausses :
+Ton robot mélange deux échelles (fichiers dans `../pieces_reelles/`) :
+le coxa (`joint_*1.5x`) et le tibia (`foot_top/bottom/ground1.5x`) sont allongés
+de 50 % en gardant les fixations d'origine, tout le reste est à 100 %, y compris
+les pièces qui tiennent les servos. Les servos rentrent donc bien.
 
-| Interface | Prévu (100 %) | Imprimé (150 %) | Servo MG92B réel |
-|---|---|---|---|
-| Logement du corps de servo | 23,8 x 13 mm | 35,7 x 19,5 mm | 22,8 x 12 mm |
-| Plaque qui porte la bride | 3 mm | 4,5 mm | bride de 32,5 mm de long |
-| Trous de vis | 2,1 mm (M2) | 3,15 mm | vis M2 |
-| Logement hexagonal des articulations | 7,4 mm sur plats | 11,1 mm | — |
-
-La bride du servo (32,5 mm) passe à travers le logement de 35,7 mm : le servo
-n'est plus tenu par sa bride. C'est pour ça que tu dois visser les palonniers en
-plastique sur les pièces imprimées. Et la charge est 2,4 kg·cm sur le servo de
-fémur en marche tripode (robot de ~850 g, pied à 8,6 cm), soit ~78 % du MG92B.
+Avec un tibia de 135 mm, le servo de fémur porte environ 2,4 kg·cm en marche
+tripode (robot de ~850 g, pied à 8,6 cm), soit ~78 % du MG92B : c'est la vraie
+limite du robot.
 
 ## Les 10 pistes
 
 Classées de la plus utile à la moins urgente. **(V2)** = pièce déjà dessinée dans `stl/`.
 
-1. **Manchon de servo (V2)** : `manchon_servo.stl` x18. Il remplit le logement
-   agrandi et ramène l'ouverture à la taille du MG92B, avec les avant-trous des
-   vis de bride (M2 auto-taraudeuses). Le servo retrouve un appui franc sans palonnier.
-2. **Vis M3 au lieu de M2** : à 150 % les trous font 3,15 mm, donc les vis
-   d'assemblage d'origine deviennent des M3 (M2x30 → M3x45, M2x10 → M3x16).
-   Avec des M2 dans des trous de 3 mm, tout prend du jeu.
+1. **Pièces de coxa et de tibia à revoir** : les versions « 1.5x » ont des trous
+   de 3 mm là où l'original avait du M2 : vis M3, ou trous refaits en 2,1 mm.
+2. **Vis et inserts** : inserts à chaud M2/M3 au lieu des écrous et des vis qui
+   taraudent le plastique, pour pouvoir démonter sans abîmer les trous.
 3. **Pivot opposé sur roulement** : de l'autre côté de l'axe du servo, un
    roulement 3x10x4 (623) ou MR63 avec une vis M3 en axe. Le servo ne porte plus
    l'effort de flexion de la patte, seulement le couple. C'est la plus grosse
@@ -38,8 +30,8 @@ Classées de la plus utile à la moins urgente. **(V2)** = pièce déjà dessin�
    tibia vertical, le couple du fémur tombe sous 50 % du MG92B. Réglage logiciel
    (posture) d'abord, pièce plus courte ensuite si besoin.
 6. **Support électronique (V2)** : `support_electronique.stl`. Plateau vissé sur
-   les 4 trous existants de `body_top` (entraxe 60 x 51 mm, vis M3
-   auto-taraudeuses), entretoises pour les 2 PCA9685 (vis M2.5), berceau ESP32
+   les 4 trous existants de `body_top` (entraxe 60 x 51 mm à 150 %, à régler
+   si ton corps est à 100 %), entretoises pour les 2 PCA9685 (vis M2.5), berceau ESP32
    tenu par 2 colliers, fentes de colliers pour les faisceaux.
 7. **Verrou des prises servo (V2)** : `verrou_connecteurs.stl` x2. Une barrette
    qui appuie sur les 16 prises d'une PCA9685 et se visse par les 2 trous de la
@@ -57,9 +49,8 @@ Classées de la plus utile à la moins urgente. **(V2)** = pièce déjà dessin�
 
 ## Ce qu'il faut vérifier avant d'imprimer les pièces V2
 
-- Mesure ton MG92B au pied à coulisse (corps et entraxe des trous de bride) et
-  ajuste `SERVO_L`, `SERVO_W`, `SERVO_HOLE_PITCH` dans `generer_pieces_v2.py`.
-- Imprime **un seul** manchon et essaie-le dans une pièce avant d'en faire 18.
+- Vérifie l'échelle de ton `body_top` : trous de fixation à 60 x 51 mm (150 %)
+  ou 40 x 34 mm (100 %), à régler dans `MOUNT_X` / `MOUNT_Y`.
 - Mesure ta carte ESP32 (`ESP_L`, `ESP_W`) et l'entraxe des trous de tes
   PCA9685 (`PCA_HOLE_X`, `PCA_HOLE_Y`) : les clones varient.
 - Mesure la hauteur du haut des prises servo branchées (`PLUG_H`).

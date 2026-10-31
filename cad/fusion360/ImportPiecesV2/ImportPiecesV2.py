@@ -24,7 +24,6 @@ GROUPS = [
     ("V2", [
         ("support_electronique", 1),
         ("verrou_connecteurs", 2),
-        ("manchon_servo", 18),
         ("clip_cables", 12),
     ]),
 ]
@@ -52,7 +51,7 @@ def run(context):
     ui = app.userInterface
     try:
         stl_dir = DEFAULT_STL_DIR
-        if not os.path.isfile(os.path.join(stl_dir, "manchon_servo.stl")):
+        if not os.path.isfile(os.path.join(stl_dir, "support_electronique.stl")):
             stl_dir = ask_stl_dir(ui)
             if not stl_dir:
                 return

@@ -1,4 +1,7 @@
-"""Importe les pièces du hexapode (hexapod-v2-7697 à 150 %) dans Fusion 360.
+"""Importe les pièces réellement imprimées du hexapode dans Fusion 360.
+
+Coxa (joint_*) et tibia (foot_top/bottom/ground) en version « 1.5x », le reste
+à 100 % comme hexapod-v2-7697.
 
 Crée un nouveau design avec un composant par pièce, rangés en deux groupes
 (Corps, Patte) et posés côte à côte sur le plan XY. Chaque pièce est importée
@@ -15,9 +18,9 @@ import traceback
 import adsk.core
 import adsk.fusion
 
-# Dossier des STL : par défaut cad/pieces_150 du dépôt (deux niveaux au-dessus).
+# Dossier des STL : par défaut cad/pieces_reelles du dépôt (deux niveaux au-dessus).
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_STL_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "pieces_150"))
+DEFAULT_STL_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "pieces_reelles"))
 
 # Pièces et quantités à imprimer (BOM de hexapod-v2-7697).
 GROUPS = [
@@ -33,14 +36,14 @@ GROUPS = [
     ("Patte", [
         ("thigh_top", 6),
         ("thigh_bottom", 6),
-        ("joint_cross", 6),
-        ("joint_top", 12),
-        ("joint_bottom", 12),
+        ("joint_cross1.5x", 6),
+        ("joint_top1.5x", 12),
+        ("joint_bottom1.5x", 12),
         ("leg_top", 6),
         ("leg_bottom", 6),
-        ("foot_top", 6),
-        ("foot_bottom", 6),
-        ("foot_ground", 6),
+        ("foot_top1.5x", 6),
+        ("foot_bottom1.5x", 6),
+        ("foot_ground1.5x", 6),
         ("foot_tip", 6),
     ]),
 ]
@@ -51,7 +54,7 @@ ROW_WIDTH_CM = 45.0  # largeur max d'une rangée avant de passer à la suivante
 
 def ask_stl_dir(ui):
     dlg = ui.createFolderDialog()
-    dlg.title = "Dossier contenant les STL du hexapode (pieces_150)"
+    dlg.title = "Dossier contenant les STL du hexapode (pieces_reelles)"
     if dlg.showDialog() != adsk.core.DialogResults.DialogOK:
         return None
     return dlg.folder
