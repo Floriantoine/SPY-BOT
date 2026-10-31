@@ -183,6 +183,40 @@ def body_bottom_v11(tm):
     return to_trimesh(m), top
 
 
+# Palonnier 1 bras du MG92B (estimé sur photo, à confirmer avec la plaque de test).
+HORN_HUB_D = 6.0  # moyeu rond (mesuré : Ø6)
+HORN_ARM_LEN = 17.5  # centre -> bout du bras
+HORN_ARM_W0, HORN_ARM_W1 = 4.2, 3.2  # largeur du bras près du moyeu, au bout
+TEST_FITS = (0.1, 0.2, 0.3)  # jeux essayés, par côté
+
+
+def contour_palonnier(jeu):
+    """Contour 2D du palonnier (axe du servo en 0,0, bras vers +x), grossi de `jeu`."""
+    from shapely.geometry import Point, Polygon
+    hub = Point(0, 0).buffer(HORN_HUB_D / 2, 64)
+    arm = Polygon([(0, -HORN_ARM_W0 / 2), (HORN_ARM_LEN - HORN_ARM_W1 / 2, -HORN_ARM_W1 / 2),
+                   (HORN_ARM_LEN - HORN_ARM_W1 / 2, HORN_ARM_W1 / 2), (0, HORN_ARM_W0 / 2)])
+    tip = Point(HORN_ARM_LEN - HORN_ARM_W1 / 2, 0).buffer(HORN_ARM_W1 / 2, 32)
+    return unary_union([hub, arm, tip]).buffer(jeu, 32)
+
+
+def plaque_test_palonnier():
+    """Plaque de 2 mm avec 3 empreintes (jeux 0,1 / 0,2 / 0,3 mm) ; 1, 2 ou 3 encoches repèrent le jeu."""
+    pitch = 12.0
+    w = HORN_ARM_LEN + HORN_HUB_D / 2 + 8
+    h = pitch * len(TEST_FITS) + 4
+    plate = Manifold.cube([w, h, 2.0]).translate([-HORN_HUB_D / 2 - 4, -pitch / 2 - 2, 0])
+    for i, jeu in enumerate(TEST_FITS):
+        y = i * pitch
+        poly = contour_palonnier(jeu)
+        ext = trimesh.creation.extrude_polygon(poly, 1.6)
+        ext.apply_translation([0, y, 0.4])
+        plate = plate - to_manifold(ext) - cyl(2.4, 5, 0, y, -1)
+        for k in range(i + 1):
+            plate = plate - Manifold.cube([1.0, 1.5, 5]).translate([-HORN_HUB_D / 2 - 4 - 0.01, y - 3 + k * 2.0, -1])
+    return to_trimesh(plate)
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -197,6 +231,7 @@ def main():
     bb, top = body_bottom_v11(load(os.path.join(PIECES, "body_bottom1.5x.stl")))
     print("body_bottom : plaque de {:.1f} mm, croisillons élargis de {} mm par côté".format(top, BRACE_GROW))
     save("body_bottom1.5x_v1.1", bb)
+    save("test_palonnier", plaque_test_palonnier())
     for name in ("leg_top", "thigh_top"):
         src = os.path.join(PIECES, name + ".stl")
         if not os.path.isfile(src):
