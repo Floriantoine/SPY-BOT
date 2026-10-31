@@ -31,6 +31,7 @@ SERVO_CLEAR = 0.2  # jeu par côté autour du corps
 POCKET_L, POCKET_W, PLATE_T = 23.8 * 1.5, 13.0 * 1.5, 3.0 * 1.5
 FIT = 0.15  # jeu par côté entre manchon et logement
 LIP_T, LIP_OVER = 1.2, 1.5  # rebord posé sur la plaque, côtés courts seulement
+LIP_W = 17.0  # largeur du rebord : laisse passer les bossages de leg_top (à ±8,77 mm de l'axe)
 PILOT_D = 1.7  # avant-trou pour vis auto-taraudeuse M2 (vis de la bride)
 
 # --- Plateau électronique ---------------------------------------------------
@@ -75,7 +76,7 @@ def union(parts):
 
 def manchon_servo():
     outer = box(POCKET_L - 2 * FIT, POCKET_W - 2 * FIT, PLATE_T)
-    lip = box(POCKET_L - 2 * FIT + 2 * LIP_OVER, POCKET_W - 2 * FIT, LIP_T, z0=PLATE_T)
+    lip = box(POCKET_L - 2 * FIT + 2 * LIP_OVER, LIP_W, LIP_T, z0=PLATE_T)
     body = outer + lip
     hole = box(SERVO_L + 2 * SERVO_CLEAR, SERVO_W + 2 * SERVO_CLEAR, 20, z0=-5)
     pilots = [cyl(PILOT_D, 20, cx=s * SERVO_HOLE_PITCH / 2, z0=-5) for s in (-1, 1)]
@@ -112,7 +113,11 @@ def support_electronique():
     for x in (-TRAY_X / 2 + 4, TRAY_X / 2 - 4):
         for y in (TRAY_Y0 + TRAY_Y / 2 - 12, TRAY_Y0 - TRAY_Y / 2 + 12):
             cuts.append(box(TIE_L, TIE_W, 10, x, y, -1))
-    return (plate + union(adds)) - union(cuts)
+    # cuts[:8] = trous et lamages de fixation ; les évidements suivants ne
+    # doivent pas mordre dessus.
+    keep = union([cyl(11.0, 20, x, y, -5) for x, y in mounts])
+    windows = union(cuts[8:]) - keep
+    return (plate + union(adds)) - union(cuts[:8]) - windows
 
 
 def verrou_connecteurs():
