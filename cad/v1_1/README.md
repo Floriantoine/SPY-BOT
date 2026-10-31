@@ -8,7 +8,7 @@ STL dans `stl/`, régénérés par `python cad/v1_1/generer_pieces_v1_1.py`.
 | `leg_top_v1.1` | 6 | Les 8 cache-vis qui dépassaient de 1,5 mm et frottaient sur `joint_top` sont supprimés ; lamage Ø4,2 x 1,6 mm pour que la tête de vis M2 soit à fleur. |
 | `thigh_top_v1.1` | 6 | Même correction (2 trous). |
 | `body_top1.5x_v1.1` | 1 | Corps à 150 %. 12 trous de fixation des pattes à Ø3,0 pour inserts M2 x4, 4 trous du support électronique à Ø4,0 pour inserts M3 x4. |
-| `body_bottom1.5x_v1.1` | 1 | Corps à 150 %, croisillons centraux élargis de 1,5 mm par côté. Cadre et encoches de clipsage inchangés. |
+| `body_bottom1.5x_v1.1` | 1 | Corps à 150 %. Trous des 12 plots de fixation des pattes agrandis de Ø2,7 à Ø3,3 mm (vis M3), croisillons centraux élargis de 1,5 mm par côté. Cadre et encoches de clipsage inchangés. |
 
 ## À vérifier avant d'imprimer
 

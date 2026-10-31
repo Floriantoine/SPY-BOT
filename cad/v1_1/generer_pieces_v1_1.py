@@ -36,6 +36,9 @@ HEAD_D, HEAD_DEPTH = 4.2, 1.6  # lamage pour tête de vis M2 (bombée ou cylindr
 BOSS_CLEAR_R = 5.0  # rayon (dans le plan) autour d'un trou où l'on rase les bossages
 
 BRACE_GROW = 1.5  # élargissement des croisillons de body_bottom, par côté
+# Trous transversaux des 12 plots de fixation des pattes sous body_bottom :
+# Ø2,7 mm à 150 % (trop petits pour une vis M3) -> Ø3,3 mm, axe à z = 9 mm.
+POST_HOLE_D, POST_HOLE_Z = 3.3, 9.0
 
 
 def load(path):
@@ -159,6 +162,24 @@ def body_bottom_v11(tm):
     m = to_manifold(tm)
     if add is not None:
         m = m + add
+    # Plots de fixation des pattes : petits blocs au-dessus de la plaque.
+    n_posts = 0
+    for post in section(tm, top + 1.0):
+        if post.area > 60:
+            continue
+        rect = post.minimum_rotated_rectangle
+        pts = np.array(rect.exterior.coords)[:4]
+        e1, e2 = pts[1] - pts[0], pts[2] - pts[1]
+        short = e1 if np.linalg.norm(e1) < np.linalg.norm(e2) else e2
+        u = short / np.linalg.norm(short)
+        c = np.array([post.centroid.x, post.centroid.y])
+        hole = Manifold.cylinder(12, POST_HOLE_D / 2, POST_HOLE_D / 2, SEG).translate([0, 0, -6])
+        # Cylindre d'axe z -> axe u dans le plan horizontal.
+        ang = np.degrees(np.arctan2(u[1], u[0]))
+        hole = hole.rotate([0, 90, 0]).rotate([0, 0, ang]).translate([c[0], c[1], POST_HOLE_Z])
+        m = m - hole
+        n_posts += 1
+    print("body_bottom : {} plots, trous agrandis à Ø{} mm".format(n_posts, POST_HOLE_D))
     return to_trimesh(m), top
 
 
