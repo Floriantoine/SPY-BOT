@@ -34,6 +34,7 @@ class PCA9685:
         self.i2c = i2c
         self.address = address
         self.freq = freq
+        self._last = {}  # dernière valeur écrite par voie
         self._write(self.MODE1, 0x00)
         self.set_freq(freq)
 
@@ -57,11 +58,16 @@ class PCA9685:
 
     def set_pulse_us(self, channel, us):
         off = int(us * self.freq * 4096 / 1000000)
+        if self._last.get(channel) == off:
+            return  # inchangé : moins de trafic I²C, moins de risque de parasite
+        self._last.pop(channel, None)  # si l'écriture échoue, on réessaiera
         data = bytes([0, 0, off & 0xFF, off >> 8])
         self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, data)
+        self._last[channel] = off
 
     def off(self, channel):
         # Bit « full off » : le servo n'est plus alimenté en consigne.
+        self._last.pop(channel, None)
         self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, bytes([0, 0, 0, 0x10]))
 
 
