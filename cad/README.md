@@ -2,9 +2,11 @@
 
 - `pieces_reelles/` : les pièces réellement imprimées, en mm, d'après
   [hexapod-v2-7697](https://github.com/SmallpTsai/hexapod-v2-7697/tree/master/mechanism)
-  (SmallpTsai, licence GPL, voir `pieces_reelles/LICENSE`). Coxa (`joint_*1.5x`) et
-  tibia (`foot_top/bottom/ground1.5x`) allongés de 50 % en gardant les fixations
-  d'origine ; tout le reste à 100 %, servos compris.
+  (SmallpTsai, licence GPL, voir `pieces_reelles/LICENSE`). Corps (`body_*1.5x`, simple
+  agrandissement à 150 %), coxa (`joint_*1.5x`) et tibia (`foot_top/bottom/ground1.5x`)
+  allongés de 50 % en gardant les fixations d'origine ; les pièces qui tiennent les
+  servos (`thigh_*`, `leg_*`) et `foot_tip` à 100 %.
+- `v1_1/` : corrections pour faire marcher le robot actuel (voir `v1_1/README.md`).
 - `v2/` : pièces V2 (support électronique, verrou des prises, clips câbles) et les 10 pistes d'amélioration dans `v2/AMELIORATIONS.md`.
 - `fusion360/ImportPiecesHexapode/` : script Fusion 360 qui crée un design avec une
   pièce par composant, rangées en deux groupes (Corps, Patte), avec la quantité à

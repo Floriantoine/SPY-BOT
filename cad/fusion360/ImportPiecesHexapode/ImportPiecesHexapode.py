@@ -1,7 +1,7 @@
 """Importe les pièces réellement imprimées du hexapode dans Fusion 360.
 
-Coxa (joint_*) et tibia (foot_top/bottom/ground) en version « 1.5x », le reste
-à 100 % comme hexapod-v2-7697.
+Corps, coxa (joint_*) et tibia (foot_top/bottom/ground) en version « 1.5x »,
+le reste (pièces qui tiennent les servos) à 100 % comme hexapod-v2-7697.
 
 Crée un nouveau design avec un composant par pièce, rangés en deux groupes
 (Corps, Patte) et posés côte à côte sur le plan XY. Chaque pièce est importée
@@ -25,12 +25,12 @@ DEFAULT_STL_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "pieces_
 # Pièces et quantités à imprimer (BOM de hexapod-v2-7697).
 GROUPS = [
     ("Corps", [
-        ("body_top", 1),
-        ("body_bottom", 1),
-        ("body_center", 1),
-        ("body_side_wall", 2),
-        ("body_back_wall", 1),
-        ("battery_lock", 1),
+        ("body_top1.5x", 1),
+        ("body_bottom1.5x", 1),
+        ("body_center1.5x", 1),
+        ("body_side_wall1.5x", 2),
+        ("body_back_wall1.5x", 1),
+        ("battery_lock1.5x", 1),
         ("tools_mount", 1),
     ]),
     ("Patte", [
