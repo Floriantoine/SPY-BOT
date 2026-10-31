@@ -99,7 +99,7 @@ class Controller:
                 self.mode = STAND
         elif self.mode == SITTING:
             r.command = GaitCommand()
-            if r.gait.at_rest and r.tuck_settled:  # tous les pieds au sol
+            if r.at_rest and r.tuck_settled:  # tous les pieds posés au neutre
                 self.height = max(-self.sit_drop, self.height - self.sit_drop / RISE_TIME * dt)
                 if self.height == -self.sit_drop:
                     self.mode = SIT
@@ -340,7 +340,7 @@ class Controller:
         self.mode = WAKE
         self.height = -self.sit_drop
         self.robot.command = GaitCommand()
-        self.robot.gait.reset()
+        self.robot.reset_gait()
         self._apply_pose()
         self.wake_to = self.robot.solve()
         self._wake_tick(0.0)

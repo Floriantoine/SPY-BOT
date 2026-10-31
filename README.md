@@ -103,7 +103,7 @@ Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Nor
 
 - **Démarrage en douceur** : à la mise sous tension, les pattes s'activent l'une après l'autre (moins d'appel de courant), puis le robot se lève.
 - **Servos en butée** : un servo qui arrive au bout de sa course passe en rouge dans la 3D, avec son étiquette carte · canal.
-- **Traces des pieds** (bouton en haut à droite de la vue) : le sol défile sous le robot et chaque pied y laisse sa trace, verte au sol, bleue en l'air. Un pied qui glisse laisse un trait au lieu d'un point. Le défilement est estimé d'après les consignes, sans capteur.
+- **Traces des pieds** (bouton en haut à droite de la vue) : le sol défile sous le robot et chaque pied y laisse sa trace, verte au sol, bleue en l'air. Un pied qui glisse laisse un trait au lieu d'un point. Le défilement est calculé d'après les pieds posés (il suit exactement la démarche), sans capteur.
 - **Animations** : révérence, danse, pompes... et un éditeur pour créer les tiennes à partir des poses de l'onglet **Corps**. Elles sont enregistrées dans le navigateur.
 - **Marche à 4 pattes** (onglet **Pilotage**, **Démarche**) : les pattes du milieu se replient et les 4 pattes des coins avancent une à une, le corps se décalant avant chaque pas pour rester en équilibre. Plus lent qu'à 6 pattes ; à changer robot arrêté.
 - **Servo à l'envers** : si une patte réelle part dans le sens opposé à la 3D pendant **Tester ce servo**, **Inverser le sens** corrige ce servo (enregistré avec les trims).

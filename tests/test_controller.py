@@ -105,9 +105,9 @@ class ControllerTest(unittest.TestCase):
         c.handle("STAND")
         run(c, 4.0)
         c.handle("MOVE 60 0 0")
-        run(c, 2.0)
+        run(c, 4.0)  # 0,5 s sans MOVE, puis un pas par patte pour revenir au neutre
         self.assertTrue(c.robot.command.is_zero)
-        self.assertIn(c.robot.gait.phase, (0.0, 0.5))
+        self.assertTrue(c.robot.at_rest)
 
     def test_move_refused_when_not_standing(self):
         self.assertTrue(self.ctrl.handle("MOVE 10 0 0").startswith("ERR"))

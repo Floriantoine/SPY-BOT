@@ -1,4 +1,4 @@
-"""Générateurs de démarche.
+"""Rythme des démarches : quelle patte est en l'air, et où elle en est.
 
 Tripode (6 pattes) : deux trépieds alternent ; pendant que l'un pousse au sol
 (appui), l'autre se lève et revient vers l'avant (transfert). Trois pieds
@@ -6,6 +6,11 @@ touchent donc toujours le sol, ce qui rend la marche statiquement stable.
 
 4 pattes : les pattes des coins se lèvent une à une, les pattes du milieu
 restent repliées (voir QuadGait).
+
+Les positions des pieds sont calculées par Hexapod (robot.py) : un pied au
+sol recule exactement à la vitesse du robot, un pied en l'air va de là où il
+s'est levé jusqu'à son point de pose. Les pieds ne glissent donc jamais,
+même quand la consigne change.
 """
 
 import math
@@ -35,68 +40,50 @@ class GaitCommand:
         return self.vx == 0 and self.vy == 0 and self.yaw_rate == 0
 
 
+def ground_velocity(foot, command):
+    """Vitesse (mm/s) d'un pied posé, vue du corps : l'inverse du mouvement
+    du corps (translation et rotation autour de son centre)."""
+    return (-(command.vx - command.yaw_rate * foot[1]), -(command.vy + command.yaw_rate * foot[0]))
+
+
 class TripodGait:
     def __init__(self, period=1.4, step_height=30.0, max_stride=60.0):
         self.period = period  # durée d'un cycle complet (s)
         self.step_height = step_height  # hauteur de levée du pied (mm)
         self.max_stride = max_stride  # longueur de pas maximale (mm)
         self.phase = 0.0  # 0..1
+        self.shift = (0.0, 0.0)  # pas de balancement du corps
 
-    def advance(self, dt, command):
-        """Fait avancer la phase ; reste immobile si la consigne est nulle."""
-        new_phase = self.phase + dt / self.period
-        if command.is_zero:
-            # On ne s'arrête qu'au moment où tous les pieds sont posés au
-            # neutre (début ou milieu de cycle), jamais une patte en l'air.
-            if self.phase in (0.0, 0.5):
-                return
-            rest = 0.5 if self.phase < 0.5 else 1.0
-            new_phase = min(new_phase, rest)
-        self.phase = new_phase % 1.0
+    @property
+    def stance_time(self):
+        """Durée (s) pendant laquelle un pied pousse au sol à chaque cycle."""
+        return self.period / 2
 
     @property
     def at_rest(self):
-        """Tous les pieds au sol, à l'arrêt possible."""
+        """Tous les pieds au sol : on peut s'arrêter là."""
         return self.phase in (0.0, 0.5)
 
     def reset(self):
         self.phase = 0.0
 
-    def stride(self, neutral_foot, command):
-        """Vecteur de pas (dx, dy) d'un pied pendant une phase d'appui."""
-        return _stride(neutral_foot, command, self.period / 2, self.max_stride)
+    def advance(self, dt, moving):
+        """Avance la phase. Sans mouvement, s'arrête au prochain instant où
+        tous les pieds sont posés (début ou milieu de cycle)."""
+        new_phase = self.phase + dt / self.period
+        if not moving:
+            if self.at_rest:
+                return
+            new_phase = min(new_phase, 0.5 if self.phase < 0.5 else 1.0)
+        self.phase = new_phase % 1.0
 
-    def foot_offset(self, leg_name, neutral_foot, command):
-        """Décalage (dx, dy, dz) du pied par rapport à sa position neutre."""
+    def swing(self, leg_name):
+        """Avancement (0..1) du pas de `leg_name`, ou None si le pied est au sol."""
         phase = self.phase if leg_name in TRIPOD_A else (self.phase + 0.5) % 1.0
-        sx, sy = self.stride(neutral_foot, command)
-        if phase < 0.5:
-            # Transfert : le pied revient de l'arrière vers l'avant, en l'air.
-            s = phase / 0.5
-            k = s - 0.5
-            dz = self.step_height * math.sin(math.pi * s)
-        else:
-            # Appui : le pied glisse de l'avant vers l'arrière, au sol.
-            s = (phase - 0.5) / 0.5
-            k = 0.5 - s
-            dz = 0.0
-        return sx * k, sy * k, dz
+        return phase / 0.5 if phase < 0.5 else None
 
     def feet_on_ground(self):
-        swinging = TRIPOD_A if 0.0 < self.phase < 0.5 else TRIPOD_B if self.phase > 0.5 else ()
-        return [n for n in TRIPOD_A + TRIPOD_B if n not in swinging]
-
-
-def _stride(neutral_foot, command, stance_time, max_stride):
-    """Déplacement d'un pied au sol pendant `stance_time` secondes d'appui,
-    pour suivre la consigne (translation et rotation autour du centre)."""
-    px, py = neutral_foot[0], neutral_foot[1]
-    sx = (command.vx - command.yaw_rate * py) * stance_time
-    sy = (command.vy + command.yaw_rate * px) * stance_time
-    n = math.sqrt(sx * sx + sy * sy)
-    if n > max_stride:
-        sx, sy = sx * max_stride / n, sy * max_stride / n
-    return sx, sy
+        return [n for n in TRIPOD_A + TRIPOD_B if self.swing(n) is None or self.swing(n) == 0.0]
 
 
 QUAD_SHIFT = 0.35  # part de chaque quart de cycle où le corps se décale, 4 pieds au sol
@@ -117,16 +104,20 @@ class QuadGait:
         self.period = period  # durée d'un cycle complet : chaque patte fait un pas
         self.step_height = step_height
         self.max_stride = max_stride
+        self.sway = sway
         self.phase = 0.0
         self.shift = (0.0, 0.0)  # décalage du corps (mm) dans le plan du sol
+        # Hexapod peut fournir plan(slot) -> décalage visé, calculé d'après la
+        # position réelle des pieds ; sinon on vise d'après leur position neutre.
+        self.plan = None
+        self._target = None
         self._slot = 0
         self._shift_from = self.shift
         self._targets = {}
-        for name in QUAD_ORDER:
+        for i, name in enumerate(QUAD_ORDER):
             # Le pied qui se lève est sur une diagonale ; l'autre diagonale
             # devient un bord du triangle d'appui. On s'en écarte vers le pied
             # opposé à celui qui se lève.
-            i = QUAD_ORDER.index(name)
             partner = neutral_feet[_diagonal(name)]
             a, b = [neutral_feet[n] for n in QUAD_ORDER if n not in (name, _diagonal(name))]
             dx, dy = a[0] - b[0], a[1] - b[1]
@@ -137,24 +128,29 @@ class QuadGait:
             n = math.sqrt(px * px + py * py) or 1.0
             self._targets[i] = (sway * px / n, sway * py / n)
 
-    def reset(self):
-        self.phase = 0.0
-        self._slot = 0
-        self.shift = self._shift_from = (0.0, 0.0)
-
     @property
-    def swing(self):
+    def swing_part(self):
         """Part du cycle pendant laquelle une patte est en l'air."""
         return (1.0 - QUAD_SHIFT) / 4
+
+    @property
+    def stance_time(self):
+        return (1.0 - self.swing_part) * self.period
 
     @property
     def at_rest(self):
         q = self.phase * 4
         return abs(q - round(q)) < 1e-9
 
-    def advance(self, dt, command):
-        if command.is_zero and self.at_rest:
-            # Arrêté : le corps revient doucement au centre.
+    def reset(self):
+        self.phase = 0.0
+        self._slot = 0
+        self._target = None
+        self.shift = self._shift_from = (0.0, 0.0)
+
+    def advance(self, dt, moving):
+        if not moving and self.at_rest:
+            # Arrêté : le corps revient doucement au centre, pieds au sol.
             step = 60.0 * dt
             x, y = self.shift
             n = math.sqrt(x * x + y * y)
@@ -162,18 +158,19 @@ class QuadGait:
             self.shift = self._shift_from = (x * k, y * k)
             return
         new_phase = self.phase + dt / self.period
-        if command.is_zero:
+        if not moving:
             # Arrêt au prochain quart : tous les pieds au sol.
             new_phase = min(new_phase, (int(self.phase * 4 + 1e-9) + 1) / 4.0)
         self.phase = new_phase % 1.0
         if abs(self.phase - 1.0) < 1e-9:
             self.phase = 0.0
         slot = int(self.phase * 4 + 1e-9) % 4
-        if slot != self._slot:
+        if slot != self._slot or self._target is None:
             self._slot = slot
             self._shift_from = self.shift
+            self._target = self.plan(slot) if self.plan else self._targets[slot]
         u = min(1.0, max(0.0, self.phase * 4 - slot))
-        tx, ty = self._targets[slot]
+        tx, ty = self._target
         if u < QUAD_SHIFT:
             s = u / QUAD_SHIFT
             s = s * s * (3 - 2 * s)
@@ -182,31 +179,15 @@ class QuadGait:
         else:
             self.shift = (tx, ty)
 
-    def stride(self, neutral_foot, command):
-        return _stride(neutral_foot, command, (1.0 - self.swing) * self.period, self.max_stride)
-
-    def foot_offset(self, leg_name, neutral_foot, command):
+    def swing(self, leg_name):
         if leg_name not in QUAD_ORDER:
-            return 0.0, 0.0, 0.0  # patte repliée : gérée par Hexapod
-        w = self.swing
-        start = (QUAD_ORDER.index(leg_name) + QUAD_SHIFT) / 4
-        u = (self.phase - start) % 1.0
-        sx, sy = self.stride(neutral_foot, command)
-        if u < w:
-            s = u / w
-            k = s - 0.5
-            dz = self.step_height * math.sin(math.pi * s)
-        else:
-            s = (u - w) / (1.0 - w)
-            k = 0.5 - s
-            dz = 0.0
-        # Le corps avance de `shift` : vus du corps, les pieds reculent d'autant.
-        return sx * k - self.shift[0], sy * k - self.shift[1], dz
+            return None  # patte repliée : gérée par Hexapod
+        w = self.swing_part
+        u = (self.phase - (QUAD_ORDER.index(leg_name) + QUAD_SHIFT) / 4) % 1.0
+        return u / w if u < w - 1e-9 else None
 
     def feet_on_ground(self):
-        w = self.swing
-        return [n for n in QUAD_ORDER
-                if (self.phase - (QUAD_ORDER.index(n) + QUAD_SHIFT) / 4) % 1.0 >= w - 1e-9]
+        return [n for n in QUAD_ORDER if self.swing(n) is None or self.swing(n) == 0.0]
 
 
 def _diagonal(name):

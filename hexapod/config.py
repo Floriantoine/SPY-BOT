@@ -209,6 +209,6 @@ def default_config(dimensions=None):
         # Longueur de pas et levée proportionnelles à la taille de la patte.
         # Pas jusqu'à 0,8 tibia (108 mm ici) : reste dans la course des servos
         # dans toutes les directions (vérifié par les tests).
-        step_height=0.28 * d["tibia"],
+        step_height=0.25 * d["tibia"],
         max_stride=0.8 * d["tibia"],
     )

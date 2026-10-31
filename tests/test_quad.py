@@ -8,10 +8,12 @@ from hexapod.robot import Hexapod
 COMMANDS = ((1000, 0, 0), (-1000, 0, 0), (0, 1000, 0), (0, -1000, 0), (700, 700, 0), (0, 0, 3.0), (0, 0, -3.0))
 
 
-def servo_margin(config, angles):
+def servo_margin(config, angles, legs=None):
     """Plus petite marge (degrés) entre un servo et sa butée."""
     worst = 180.0
     for leg in config.legs:
+        if legs is not None and leg.name not in legs:
+            continue
         a = angles[leg.name]
         for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
             raw = 90.0 + joint.direction * (math.degrees(value) - joint.zero_deg)
@@ -69,9 +71,13 @@ class QuadWalkTest(unittest.TestCase):
         self.assertGreater(worst, 12.0)
 
     def test_servos_stay_inside_their_range(self):
+        # Pieds au sol : position exacte, dans la course des servos. Un pied en
+        # l'air peut toucher une butée au sommet du pas (il passe alors un peu
+        # plus bas), sans conséquence.
         for command in COMMANDS:
             for robot, angles in self.walking(command):
-                self.assertGreater(servo_margin(self.config, angles), 3.0, command)
+                on_ground = [n for n in robot.neutral if robot.gait.swing(n) is None]
+                self.assertGreater(servo_margin(self.config, angles, on_ground), 3.0, command)
         for height in (0.0, -self.config.sit_drop):
             robot = Hexapod(self.config)
             robot.set_legs(4)

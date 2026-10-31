@@ -327,8 +327,7 @@ const sendGait = throttle(() => send(`GAIT ${$("#period").value} ${$("#step").va
 $("#period").addEventListener("input", sendGait);
 $("#step").addEventListener("input", sendGait);
 
-// Marche à 6 ou 4 pattes. À 4 pattes, le robot avance moins vite que la
-// consigne : pas plus courts et une seule patte levée à la fois.
+// Marche à 6 ou 4 pattes.
 function showLegs(n) {
   state.legs = n;
   for (const b of $$("#legs-mode button")) b.classList.toggle("active", Number(b.dataset.legs) === n);
@@ -340,14 +339,6 @@ for (const b of $$("#legs-mode button")) {
     if (drive.vx || drive.vy || drive.yaw) return toast("Arrête le robot avant de changer de démarche", "err");
     send(`LEGS ${n}`, true);
   };
-}
-function quadSpeedFactor(v) {
-  // Même calcul que QuadGait : cycle = 2 × durée d'un pas, pied au sol 84 % du cycle.
-  const period = 2 * Number($("#period").value);
-  const stance = (1 - 0.65 / 4) * period;
-  const maxStride = Math.min(0.8, 0.52) * (state.geom?.tibia || 135);
-  const want = Math.abs(v) * stance;
-  return (want > maxStride ? maxStride / want : 1) * stance / period;
 }
 
 // Préréglages de vitesse : règlent d'un coup vitesse, rotation et démarche.
@@ -850,17 +841,8 @@ $("#cam-follow").onclick = () => {
   view.resetCamera(topView);
 };
 
-let lastFrame = performance.now();
 function frame() {
-  const now = performance.now();
-  const dt = Math.min(0.5, (now - lastFrame) / 1000);
-  lastFrame = now;
   drive = readDrive();
-  // Le sol défile sous le robot à la vitesse demandée (estimation, pas de capteur).
-  if (state.mode === "stand") {
-    const k = state.legs === 4 ? quadSpeedFactor(Math.hypot(drive.vx, drive.vy) + Math.abs(drive.yaw) * 4) : 1;
-    view.move(drive.vx * k, drive.vy * k, (drive.yaw * k * Math.PI) / 180, dt);
-  }
   stickMove.render();
   stickTurn.render();
   $("#r-vx").textContent = drive.vx;

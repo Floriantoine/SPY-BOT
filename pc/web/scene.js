@@ -83,8 +83,9 @@ export class RobotView {
     scene.add(this.ground);
 
     // Repère du sol : le robot reste au centre de la vue et c'est le sol qui
-    // défile quand il marche (odométrie d'après les consignes). La grille et les
-    // traces des pieds y sont accrochées.
+    // défile quand il marche. Son déplacement est déduit des pieds posés, qui
+    // ne glissent pas : il suit donc exactement la démarche (balancement du
+    // corps à 4 pattes compris). La grille et les traces des pieds y sont accrochées.
     this.odo = { x: 0, y: 0, th: 0 };
     this.track = new THREE.Group();
     this.track.matrixAutoUpdate = false;
@@ -445,8 +446,9 @@ export class RobotView {
     const footR = 4.5 * this.k;
     const lowest = Math.min(...tips.map((p) => p.y)) - footR;
     this.ground.position.y = lowest;
-    this._updateTrack(lowest);
     const tolerance = Math.max(1.5, 0.02 * this.geom.tibia);
+    this._odometry(tips.map((p, i) => (p.y - footR - lowest < tolerance ? this.robot.worldToLocal(p.clone()) : null)));
+    this._updateTrack(lowest);
     const sel = this.selection;
 
     this.legs.forEach((leg, i) => {
@@ -470,12 +472,59 @@ export class RobotView {
     });
   }
 
-  /** Avance le robot sur le sol : vx, vy en mm/s (repère robot), lacet en rad/s. */
-  move(vx, vy, yawRate, dt) {
+  /** Déplacement du corps d'après les pieds posés (fixes au sol) entre deux images.
+   * `feet` : position de chaque pied dans le repère robot, ou null s'il est en l'air. */
+  _odometry(feet) {
+    const prev = this._feet;
+    this._feet = feet;
+    if (!prev) return;
+    const pairs = feet.map((p, i) => p && prev[i] && [prev[i], p]).filter(Boolean);
+    if (!pairs.length) return;
+    let fit = this._rigidFit(pairs);
+    // Un pied qui s'est levé et reposé entre deux images (image lente) ne
+    // suit pas les autres : s'il y en a un, on l'écarte.
+    if (pairs.length >= 3 && this._worstError(fit, pairs) > 1) {
+      for (let i = 0; i < pairs.length; i++) {
+        const rest = pairs.filter((_, j) => j !== i);
+        const f = this._rigidFit(rest);
+        if (this._worstError(f, rest) < this._worstError(fit, pairs)) fit = { ...f, rest };
+      }
+    }
+    const { dx, dy, dth } = fit;
+    // Saut (reconnexion, pieds réinitialisés) : les pieds ne bougent plus
+    // ensemble, ou bien trop loin pour une image, même lente.
+    if (this._worstError(fit, pairs) > 5 || Math.hypot(dx, dy) > this.geom.tibia || Math.abs(dth) > 0.6) return;
     const o = this.odo;
-    o.th += yawRate * dt;
-    o.x += (Math.cos(o.th) * vx - Math.sin(o.th) * vy) * dt;
-    o.y += (Math.sin(o.th) * vx + Math.cos(o.th) * vy) * dt;
+    o.x += Math.cos(o.th) * dx - Math.sin(o.th) * dy;
+    o.y += Math.sin(o.th) * dx + Math.cos(o.th) * dy;
+    o.th += dth;
+  }
+
+  _worstError(fit, pairs) {
+    const c = Math.cos(fit.dth), s = Math.sin(fit.dth);
+    const set = fit.rest || pairs;
+    return Math.max(...set.map(([a, b]) => Math.hypot(fit.dx + c * b.x - s * b.y - a.x, fit.dy + s * b.x + c * b.y - a.y)));
+  }
+
+  /** Mouvement du corps (dx, dy, dth) qui explique au mieux le déplacement
+   * des pieds posés `pairs` = [[avant, après], ...], vus du robot. */
+  _rigidFit(pairs) {
+    const n = pairs.length;
+    const mean = (k) => pairs.reduce((s, pr) => [s[0] + pr[k].x / n, s[1] + pr[k].y / n], [0, 0]);
+    const [ax, ay] = mean(0);
+    const [bx, by] = mean(1);
+    // Rotation des pieds vus du robot = -rotation du robot (au moins 2 pieds posés).
+    let cross = 0;
+    let dot = 0;
+    for (const [a, b] of pairs) {
+      const ux = a.x - ax, uy = a.y - ay, vx = b.x - bx, vy = b.y - by;
+      cross += ux * vy - uy * vx;
+      dot += ux * vx + uy * vy;
+    }
+    const dth = n >= 2 && dot > 0 ? -Math.atan2(cross, dot) : 0;
+    // Pied fixe au sol : a = d + R(dth)·b  ->  d = a - R(dth)·b (repère robot précédent).
+    const c = Math.cos(dth), s = Math.sin(dth);
+    return { dx: ax - (c * bx - s * by), dy: ay - (s * bx + c * by), dth };
   }
 
   _updateTrack(groundY) {

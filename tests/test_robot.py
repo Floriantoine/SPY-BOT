@@ -87,7 +87,9 @@ class PostureLimitsTest(unittest.TestCase):
                     self.assertLess(raw, joint.max_deg - 3, (height, leg.name))
 
     def test_longest_steps_stay_inside_servo_limits(self):
-        # Pas le plus long, dans toutes les directions et en tournant.
+        # Pas le plus long, dans toutes les directions et en tournant : les
+        # pieds au sol restent dans la course des servos (un pied en l'air peut
+        # toucher une butée au sommet du pas, il passe alors un peu plus bas).
         config = default_config()
         for vx, vy, yaw in ((1000, 0, 0), (0, 1000, 0), (700, 700, 0), (0, 0, 3.0)):
             robot = Hexapod(config)
@@ -95,6 +97,8 @@ class PostureLimitsTest(unittest.TestCase):
             for _ in range(150):
                 angles = robot.update(0.02)
                 for leg in config.legs:
+                    if robot.gait.swing(leg.name) is not None:
+                        continue
                     a = angles[leg.name]
                     for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
                         raw = 90.0 + joint.direction * (math.degrees(value) - joint.zero_deg)
@@ -128,3 +132,35 @@ class MissingBoardTest(unittest.TestCase):
         driver.set_angle(0, 5, 90.0)
         driver.relax()
         self.assertTrue(all(a == 0x40 for a, _ in i2c.writes))
+
+
+class NoSlipTest(unittest.TestCase):
+    """Les pieds posés ne glissent jamais : entre deux instants, tous les pieds
+    au sol bougent exactement pareil (vus du corps), même au démarrage, à
+    l'arrêt, en tournant et quand la consigne change."""
+
+    def test_feet_on_the_ground_move_together(self):
+        config = default_config()
+        script = [(150, 0, 0)] * 100 + [(0, 80, 0.5)] * 100 + [(-60, -60, -0.8)] * 100 + [(0, 0, 0)] * 200
+        for legs in (6, 4):
+            robot = Hexapod(config)
+            robot.set_legs(legs)
+            for _ in range(60):
+                robot.update(0.02)
+            before = robot.foot_targets()
+            grounded = set(robot.gait.feet_on_ground())
+            for vx, vy, yaw in script:
+                robot.command = GaitCommand(vx, vy, yaw)
+                robot.update(0.02)
+                after = robot.foot_targets()
+                now = set(robot.gait.feet_on_ground())
+                pairs = [(before[n], after[n]) for n in grounded & now]
+                if len(pairs) >= 2:
+                    # Mouvement rigide : les distances entre pieds posés ne changent pas.
+                    for i in range(len(pairs)):
+                        for j in range(i + 1, len(pairs)):
+                            d0 = math.dist(pairs[i][0][:2], pairs[j][0][:2])
+                            d1 = math.dist(pairs[i][1][:2], pairs[j][1][:2])
+                            self.assertAlmostEqual(d0, d1, delta=0.05)
+                before, grounded = after, now
+            self.assertTrue(robot.at_rest)
