@@ -1,7 +1,7 @@
 """Importe les pièces réellement imprimées du hexapode dans Fusion 360.
 
-Corps, coxa (joint_*) et tibia (foot_top/bottom/ground) en version « 1.5x »,
-le reste (pièces qui tiennent les servos) à 100 % comme hexapod-v2-7697.
+Toutes les pièces en version « 1.5x » quand elle existe ; foot_tip et
+tools_mount à 100 % comme hexapod-v2-7697.
 
 Crée un nouveau design avec un composant par pièce, rangés en deux groupes
 (Corps, Patte) et posés côte à côte sur le plan XY. Chaque pièce est importée
@@ -34,13 +34,13 @@ GROUPS = [
         ("tools_mount", 1),
     ]),
     ("Patte", [
-        ("thigh_top", 6),
-        ("thigh_bottom", 6),
+        ("thigh_top1.5x", 6),
+        ("thigh_bottom1.5x", 6),
         ("joint_cross1.5x", 6),
         ("joint_top1.5x", 12),
         ("joint_bottom1.5x", 12),
-        ("leg_top", 6),
-        ("leg_bottom", 6),
+        ("leg_top1.5x", 6),
+        ("leg_bottom1.5x", 6),
         ("foot_top1.5x", 6),
         ("foot_bottom1.5x", 6),
         ("foot_ground1.5x", 6),

@@ -4,7 +4,7 @@
   * trous de fixation des pattes prêts pour inserts M2 (Ø3,0 mm),
   * 4 trous du support électronique prêts pour inserts M3 (Ø4,0 mm),
   * croisillons de body_bottom élargis.
-- leg_top / thigh_top : les cache-vis qui dépassent de la plaque et frottent
+- leg_top1.5x / thigh_top1.5x : les cache-vis qui dépassent de la plaque et frottent
   sur joint_top sont supprimés ; lamage pour que la tête de vis M2 soit à fleur.
   La fonction marche sur n'importe quelle version (100 % ou « 1.5x ») : donne-lui
   le STL réellement imprimé.
@@ -39,10 +39,21 @@ BRACE_GROW = 1.5  # élargissement des croisillons de body_bottom, par côté
 # Trous transversaux des 12 plots de fixation des pattes sous body_bottom :
 # Ø2,7 mm à 150 % (trop petits pour une vis M3) -> Ø3,3 mm, axe à z = 9 mm.
 POST_HOLE_D, POST_HOLE_Z = 3.3, 9.0
+# Jeu par côté entre les plots et la languette (9 mm) de thigh_bottom1.5x.
+TAB_CLEAR = 0.2
+
+
+def rect_sides(poly):
+    r = np.array(poly.minimum_rotated_rectangle.exterior.coords)[:4]
+    return np.linalg.norm(r[1] - r[0]), np.linalg.norm(r[2] - r[1])
 
 
 def load(path):
-    return trimesh.load(path)
+    tm = trimesh.load(path)
+    if not tm.is_watertight:
+        # Certains remix « 1.5x » traînent des éclats plats à côté de la pièce.
+        tm = max(tm.split(only_watertight=False), key=lambda p: p.area)
+    return tm
 
 
 def to_manifold(tm):
@@ -162,11 +173,29 @@ def body_bottom_v11(tm):
     m = to_manifold(tm)
     if add is not None:
         m = m + add
-    # Plots de fixation des pattes : petits blocs au-dessus de la plaque.
-    n_posts = 0
-    for post in section(tm, top + 1.0):
-        if post.area > 60:
+    # Plots de fixation des pattes : petits blocs au-dessus de la plaque, par paires.
+    posts = [p for p in section(tm, top + 1.0) if p.area <= 60]
+    hi = tm.bounds[1][2]
+    n_pairs = 0
+    for i, a in enumerate(posts):
+        ca = np.array([a.centroid.x, a.centroid.y])
+        j = min((k for k in range(len(posts)) if k != i),
+                key=lambda k: np.hypot(posts[k].centroid.x - ca[0], posts[k].centroid.y - ca[1]))
+        if j < i:
             continue
+        cb = np.array([posts[j].centroid.x, posts[j].centroid.y])
+        u = (cb - ca) / np.linalg.norm(cb - ca)
+        gap = np.linalg.norm(cb - ca) - min(rect_sides(a))
+        # La languette de thigh_bottom1.5x fait la largeur exacte de l'écart : on rogne
+        # les faces intérieures des plots pour lui laisser du jeu.
+        w = gap + 2 * TAB_CLEAR
+        cut = Manifold.cube([w, 20, hi], center=True).rotate([0, 0, np.degrees(np.arctan2(u[1], u[0]))])
+        c = (ca + cb) / 2
+        m = m - cut.translate([c[0], c[1], top + 0.01 + hi / 2])
+        n_pairs += 1
+    print("body_bottom : {} paires de plots, écart {:.1f} -> {:.1f} mm".format(n_pairs, gap, w))
+    n_posts = 0
+    for post in posts:
         rect = post.minimum_rotated_rectangle
         pts = np.array(rect.exterior.coords)[:4]
         e1, e2 = pts[1] - pts[0], pts[2] - pts[1]
@@ -233,7 +262,7 @@ def main():
     print("body_bottom : plaque de {:.1f} mm, croisillons élargis de {} mm par côté".format(top, BRACE_GROW))
     save("body_bottom1.5x_v1.1", bb)
     save("test_palonnier", plaque_test_palonnier())
-    for name in ("leg_top", "thigh_top"):
+    for name in ("leg_top1.5x", "thigh_top1.5x"):
         src = os.path.join(PIECES, name + ".stl")
         if not os.path.isfile(src):
             continue
