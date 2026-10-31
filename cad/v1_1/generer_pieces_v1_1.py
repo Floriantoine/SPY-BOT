@@ -218,6 +218,7 @@ HORN_ARM_LEN = 20.0 - HORN_HUB_D / 2  # longueur totale 20 mm (bord du moyeu -> 
 HORN_ARM_W0, HORN_ARM_W1 = 7.0, 5.0  # largeur du bras : 7 mm au moyeu, 5 mm avant l'arrondi du bout
 HORN_FIT = 0.1  # plaque v2 : l'empreinte à 0,1 mm de jeu se clipse parfaitement
 HORN_ARM_T, HORN_HUB_T = 3.0, 5.5  # épaisseurs : bras 3 mm, moyeu 5,5 mm
+HORN_HUB_ABOVE = 1.0  # le moyeu dépasse de 1 mm au-dessus du bras (côté pièce), 1,5 mm en dessous (côté servo)
 TEST_FITS = (0.1, 0.2, 0.3)  # jeux essayés, par côté
 
 
