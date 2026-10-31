@@ -1,0 +1,10 @@
+{
+	"autodeskProduct": "Fusion360",
+	"type": "script",
+	"author": "SPY-BOT",
+	"description": {
+		"": "Importe les pièces du hexapode (hexapod-v2-7697 à 150 %) dans un nouveau design"
+	},
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}
