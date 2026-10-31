@@ -187,6 +187,7 @@ def body_bottom_v11(tm):
 HORN_HUB_D = 6.0  # moyeu rond (mesuré : Ø6)
 HORN_ARM_LEN = 20.0 - HORN_HUB_D / 2  # longueur totale 20 mm (bord du moyeu -> bout du bras)
 HORN_ARM_W0, HORN_ARM_W1 = 6.0, 4.0  # largeur du bras : 6 mm au moyeu, 4 mm avant l'arrondi du bout
+HORN_ARM_T, HORN_HUB_T = 3.0, 5.5  # épaisseurs : bras 3 mm, moyeu 5,5 mm
 TEST_FITS = (0.1, 0.2, 0.3)  # jeux essayés, par côté
 
 
