@@ -39,15 +39,14 @@ class HexapodTest(unittest.TestCase):
                 self.assertAlmostEqual(a, b)
 
     def test_standby_pose_matches_reference_robot(self):
-        # Posture debout de hexapod-v2-7697 : fémur relevé de 30°, tibia
-        # incliné de 15° vers l'extérieur, soit coxa 0°, fémur +15° et
-        # tibia -15° par rapport au milieu des servos.
+        # Posture debout : fémur relevé de 30° et tibia vertical, soit coxa 0°,
+        # fémur +15° et tibia -30° par rapport au milieu des servos.
         self.robot.update(0.0)
         for leg in self.robot.config.legs:
             servos = self.robot.driver.angles
             self.assertAlmostEqual(servos[(leg.coxa.board, leg.coxa.channel)], 90.0)
             self.assertAlmostEqual(servos[(leg.femur.board, leg.femur.channel)], 75.0)
-            self.assertAlmostEqual(servos[(leg.tibia.board, leg.tibia.channel)], 75.0)
+            self.assertAlmostEqual(servos[(leg.tibia.board, leg.tibia.channel)], 60.0)
 
     def test_eighteen_distinct_channels(self):
         c = self.robot.config

@@ -26,10 +26,10 @@ DIMENSIONS = {
     "tibia": 135.0,  # axe tibia -> bout du pied (mesuré, 133,6 calculé)
 }
 
-# Posture debout : fémur relevé de 30°, tibia incliné de 15° vers l'extérieur
-# (posture « standby » de hexapod-v2-7697).
+# Posture debout : fémur relevé de 30°, tibia vertical (pieds proches du corps :
+# bras de levier sur le servo de fémur de 51 mm au lieu de 86 mm avec 15°)
 STAND_FEMUR_DEG = 30.0
-STAND_TIBIA_OUT_DEG = 15.0
+STAND_TIBIA_OUT_DEG = 0.0
 
 
 class JointServo:
@@ -99,7 +99,7 @@ class HexapodConfig:
         self.stance_radius = stance_radius
         self.stance_height = stance_height
         # Limité pour que le fémur reste dans la course de son servo (~60° de levée).
-        self.sit_drop = 0.3 * stance_height if sit_drop is None else sit_drop
+        self.sit_drop = 0.25 * stance_height if sit_drop is None else sit_drop
         self.step_height = step_height
         self.max_stride = max_stride
 
@@ -207,8 +207,8 @@ def default_config(dimensions=None):
         stance_radius=stance_radius,
         stance_height=stance_height,
         # Longueur de pas et levée proportionnelles à la taille de la patte.
-        # Pas jusqu'à 0,8 tibia (108 mm ici) : reste dans la course des servos
+        # Pas jusqu'à 0,6 tibia (81 mm ici) : reste dans la course des servos
         # dans toutes les directions (vérifié par les tests).
         step_height=0.25 * d["tibia"],
-        max_stride=0.8 * d["tibia"],
+        max_stride=0.6 * d["tibia"],
     )
