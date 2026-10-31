@@ -78,7 +78,6 @@ def run(context):
         # Mode direct : pas d'historique, on peut placer librement les maillages.
         design.designType = adsk.fusion.DesignTypes.DirectDesignType
         root = design.rootComponent
-        root.name = "SPY-BOT hexapode (150 %)"
 
         missing = []
         y_cursor = 0.0
