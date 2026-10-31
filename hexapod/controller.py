@@ -16,6 +16,8 @@ Commandes (une par ligne, PC -> robot) :
                                   à renvoyer au moins toutes les 0,5 s
     POSE x y z roll pitch yaw     décalage du corps en mm et degrés
     GAIT period step_height       durée du cycle (s) et hauteur de pas (mm)
+    LEGS 6|4                      marche à 6 pattes, ou à 4 (pattes du milieu
+                                  repliées) ; seulement à l'arrêt
     CAL                           pose de calibration : fémur à plat, tibia vertical (+ trim)
     TEST leg joint                fait osciller un seul servo pendant 3 s (vérif. câblage),
                                   les autres en pose de calibration ; refusé debout
@@ -97,7 +99,7 @@ class Controller:
                 self.mode = STAND
         elif self.mode == SITTING:
             r.command = GaitCommand()
-            if r.gait.phase in (0.0, 0.5):  # tous les pieds au sol
+            if r.gait.at_rest and r.tuck_settled:  # tous les pieds au sol
                 self.height = max(-self.sit_drop, self.height - self.sit_drop / RISE_TIME * dt)
                 if self.height == -self.sit_drop:
                     self.mode = SIT
@@ -203,10 +205,24 @@ class Controller:
         return None
 
     def cmd_gait(self, period, step_height):
-        gait = self.robot.gait
-        gait.period = max(0.4, min(3.0, float(period)))
-        gait.step_height = max(5.0, min(80.0, float(step_height)))
-        return "OK GAIT %.2f %.0f" % (gait.period, gait.step_height)
+        r = self.robot
+        r.tripod.period = max(0.4, min(3.0, float(period)))
+        r.tripod.step_height = r.quad.step_height = max(5.0, min(80.0, float(step_height)))
+        # À 4 pattes, chaque patte fait son pas à tour de rôle : cycle deux fois plus long.
+        r.quad.period = 2 * r.tripod.period
+        return "OK GAIT %.2f %.0f" % (r.tripod.period, r.tripod.step_height)
+
+    def cmd_legs(self, n):
+        r = self.robot
+        if int(n) != r.legs and not r.command.is_zero:
+            return "ERR LEGS : arrêter le robot d'abord"
+        try:
+            r.set_legs(int(n))
+        except ValueError as e:
+            if str(e) == "4 ou 6 pattes":
+                raise
+            return "ERR LEGS : attendre que les pieds soient posés"
+        return "OK LEGS %d" % r.legs
 
     def cmd_cal(self):
         """Pose de calibration, choisie pour être facile à vérifier à l'œil :
@@ -324,7 +340,7 @@ class Controller:
         self.mode = WAKE
         self.height = -self.sit_drop
         self.robot.command = GaitCommand()
-        self.robot.gait.phase = 0.0
+        self.robot.gait.reset()
         self._apply_pose()
         self.wake_to = self.robot.solve()
         self._wake_tick(0.0)

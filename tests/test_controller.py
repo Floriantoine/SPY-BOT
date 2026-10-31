@@ -209,3 +209,23 @@ class InvertTest(unittest.TestCase):
         again = Controller(default_config(), DryRunDriver(), path)
         self.assertTrue(again.robot.config.leg("RF").femur.inverted)
         self.assertFalse(again.robot.config.leg("RM").femur.inverted)
+
+
+class LegsCommandTest(unittest.TestCase):
+    def test_walk_on_four_legs(self):
+        c = Controller(default_config(), DryRunDriver(), os.path.join(tempfile.mkdtemp(), "c.json"))
+        c.handle("STAND")
+        for _ in range(250):
+            c.tick(0.02)
+        self.assertEqual(c.handle("LEGS 4"), "OK LEGS 4")
+        for _ in range(100):
+            c.handle("MOVE 100 0 0")
+            c.tick(0.02)
+        self.assertNotEqual(c.robot.gait.phase, 0.0)
+        self.assertTrue(c.handle("LEGS 6").startswith("ERR"))  # en marche
+        c.handle("SIT")
+        for _ in range(400):
+            c.tick(0.02)
+        self.assertEqual(c.mode, SIT)
+        self.assertEqual(c.handle("LEGS 6"), "OK LEGS 6")
+        self.assertTrue(c.handle("LEGS 5").startswith("ERR"))

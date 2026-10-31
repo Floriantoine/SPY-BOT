@@ -105,6 +105,7 @@ Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Nor
 - **Servos en butée** : un servo qui arrive au bout de sa course passe en rouge dans la 3D, avec son étiquette carte · canal.
 - **Traces des pieds** (bouton en haut à droite de la vue) : le sol défile sous le robot et chaque pied y laisse sa trace, verte au sol, bleue en l'air. Un pied qui glisse laisse un trait au lieu d'un point. Le défilement est estimé d'après les consignes, sans capteur.
 - **Animations** : révérence, danse, pompes... et un éditeur pour créer les tiennes à partir des poses de l'onglet **Corps**. Elles sont enregistrées dans le navigateur.
+- **Marche à 4 pattes** (onglet **Pilotage**, **Démarche**) : les pattes du milieu se replient et les 4 pattes des coins avancent une à une, le corps se décalant avant chaque pas pour rester en équilibre. Plus lent qu'à 6 pattes ; à changer robot arrêté.
 - **Servo à l'envers** : si une patte réelle part dans le sens opposé à la 3D pendant **Tester ce servo**, **Inverser le sens** corrige ce servo (enregistré avec les trims).
 - **Calibration** : **Exporter** télécharge les trims dans un fichier, **Importer** les recharge (par exemple après avoir reflashé l'ESP32), puis **Enregistrer** les garde dans le robot.
 
@@ -114,7 +115,7 @@ Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Nor
 | --- | --- |
 | `hexapod/leg_ik.py` | IK et FK d'une patte 3 DDL (solution « genou en haut »). |
 | `hexapod/body_ik.py` | IK du corps : translation et roulis/tangage/lacet, pieds fixes au sol. |
-| `hexapod/gait.py` | Démarche tripode pilotée par `vx`, `vy`, `yaw_rate`, arrêt toujours pieds posés. |
+| `hexapod/gait.py` | Démarches tripode (6 pattes) et pas à pas (4 pattes) pilotées par `vx`, `vy`, `yaw_rate`, arrêt toujours pieds posés. |
 | `hexapod/servo.py` | Angle IK → angle servo (milieu, sens, trim, butées) et pilote PCA9685 pour MicroPython. |
 | `hexapod/controller.py` | États du robot (relâché, assis, debout, calibration) et protocole texte avec le PC. |
 | `hexapod/config.py` | Dimensions, posture debout, câblage. |
@@ -135,4 +136,4 @@ micropython tests/micropython_smoke.py    # même code sous MicroPython
 
 ## Protocole série
 
-Une commande par ligne à 115200 bauds, documentée en tête de `hexapod/controller.py` : `POWER 1|0`, `STAND`, `SIT`, `MOVE vx vy yaw`, `POSE x y z roll pitch yaw`, `GAIT période hauteur`, `CAL`, `TEST patte articulation`, `TRIM patte articulation degrés`, `INVERT patte articulation 1|0`, `SAVE`, `GETCAL`, `GEOM`. Le robot renvoie `OK …`, `ERR …` et une ligne de télémétrie `T …` 20 fois par seconde.
+Une commande par ligne à 115200 bauds, documentée en tête de `hexapod/controller.py` : `POWER 1|0`, `STAND`, `SIT`, `MOVE vx vy yaw`, `POSE x y z roll pitch yaw`, `GAIT période hauteur`, `LEGS 6|4`, `CAL`, `TEST patte articulation`, `TRIM patte articulation degrés`, `INVERT patte articulation 1|0`, `SAVE`, `GETCAL`, `GEOM`. Le robot renvoie `OK …`, `ERR …` et une ligne de télémétrie `T …` 20 fois par seconde.

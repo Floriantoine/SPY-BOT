@@ -28,6 +28,18 @@ for cmd in ("MOVE 80 0 0", "MOVE 0 40 0", "MOVE 0 0 30", "MOVE 50 0 -20"):
     for _ in range(10):
         ctrl.handle(cmd)
         run(0.1)
+assert ctrl.handle("MOVE 0 0 0") is None
+run(2)
+assert ctrl.handle("LEGS 4") == "OK LEGS 4", "LEGS 4"
+run(1.5)
+for cmd in ("MOVE 80 0 0", "MOVE 0 -40 0", "MOVE 0 0 30"):
+    for _ in range(15):
+        ctrl.handle(cmd)
+        run(0.1)
+ctrl.handle("MOVE 0 0 0")
+run(3)
+assert ctrl.handle("LEGS 6") == "OK LEGS 6", "LEGS 6"
+run(1.5)
 ctrl.handle("POSE 5 -5 10 5 -5 10")
 run(1)
 ctrl.handle("SIT")
