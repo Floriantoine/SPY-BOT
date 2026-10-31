@@ -183,10 +183,10 @@ def body_bottom_v11(tm):
     return to_trimesh(m), top
 
 
-# Palonnier 1 bras du MG92B (estimé sur photo, à confirmer avec la plaque de test).
+# Palonnier 1 bras du MG92B (mesuré par l'utilisateur ; la plaque de test confirme le jeu).
 HORN_HUB_D = 6.0  # moyeu rond (mesuré : Ø6)
-HORN_ARM_LEN = 17.5  # centre -> bout du bras
-HORN_ARM_W0, HORN_ARM_W1 = 4.2, 3.2  # largeur du bras près du moyeu, au bout
+HORN_ARM_LEN = 20.0 - HORN_HUB_D / 2  # longueur totale 20 mm (bord du moyeu -> bout du bras)
+HORN_ARM_W0, HORN_ARM_W1 = 6.0, 4.0  # largeur du bras : 6 mm au moyeu, 4 mm avant l'arrondi du bout
 TEST_FITS = (0.1, 0.2, 0.3)  # jeux essayés, par côté
 
 
