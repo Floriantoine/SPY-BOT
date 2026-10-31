@@ -215,7 +215,8 @@ def body_bottom_v11(tm):
 # Palonnier 1 bras du MG92B (mesuré par l'utilisateur ; la plaque de test confirme le jeu).
 HORN_HUB_D = 7.0  # moyeu rond (plaque de test v1 trop juste : Ø7)
 HORN_ARM_LEN = 20.0 - HORN_HUB_D / 2  # longueur totale 20 mm (bord du moyeu -> bout du bras)
-HORN_ARM_W0, HORN_ARM_W1 = 6.4, 4.4  # largeur du bras (plaque v2 : 1 mm de jeu avec 7 -> 5) : 6,4 mm au moyeu, 4,4 mm avant l'arrondi du bout
+HORN_ARM_W0, HORN_ARM_W1 = 7.0, 5.0  # largeur du bras : 7 mm au moyeu, 5 mm avant l'arrondi du bout
+HORN_FIT = 0.1  # plaque v2 : l'empreinte à 0,1 mm de jeu se clipse parfaitement
 HORN_ARM_T, HORN_HUB_T = 3.0, 5.5  # épaisseurs : bras 3 mm, moyeu 5,5 mm
 TEST_FITS = (0.1, 0.2, 0.3)  # jeux essayés, par côté
 
