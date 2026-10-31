@@ -3,6 +3,7 @@
 - `pieces_150/` : les 18 STL de [hexapod-v2-7697](https://github.com/SmallpTsai/hexapod-v2-7697/tree/master/mechanism)
   (SmallpTsai, licence GPL, voir `pieces_150/LICENSE`) déjà mis à l'échelle 150 %, en mm.
   Ils s'impriment tels quels, sans réglage d'échelle dans le slicer.
+- `v2/` : pièces V2 (manchon servo, support électronique, verrou des prises, clips câbles) et les 10 pistes d'amélioration dans `v2/AMELIORATIONS.md`.
 - `fusion360/ImportPiecesHexapode/` : script Fusion 360 qui crée un design avec une
   pièce par composant, rangées en deux groupes (Corps, Patte), avec la quantité à
   imprimer dans le nom (ex. `joint_top (x12)`).
