@@ -7,6 +7,10 @@ from .gait import QUAD_TUCKED, GaitCommand, QuadGait, TripodGait
 from .leg_ik import LegAngles, leg_fk, leg_ik
 from .servo import DryRunDriver, ik_to_servo_deg
 
+# La consigne de marche change progressivement : un démarrage ou un arrêt
+# brusque ferait sauter les pieds d'un coup (jusqu'à la moitié d'un pas).
+ACCEL = 250.0  # mm/s²
+YAW_ACCEL = 1.5  # rad/s²
 TUCK_TIME = 1.0  # s pour replier ou déplier les pattes du milieu
 # Patte repliée : fémur relevé de 65°, tibia replié (pied ~6 cm au-dessus du
 # sol debout, ~3 cm assis), dans la course des servos.
@@ -27,7 +31,8 @@ class Hexapod:
         self.gait = self.tripod
         self.legs = 6  # pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
         self.tuck = 0.0  # 0 = pattes du milieu au sol, 1 = repliées
-        self.command = GaitCommand()
+        self.command = GaitCommand()  # consigne demandée
+        self.current = GaitCommand()  # consigne suivie, qui rejoint la demandée en douceur
         self.pose = BodyPose()
 
     def set_legs(self, n):
@@ -36,7 +41,7 @@ class Hexapod:
             raise ValueError("4 ou 6 pattes")
         if n == self.legs:
             return
-        if not (self.command.is_zero and self.gait.at_rest):
+        if not (self.command.is_zero and self.current.is_zero and self.gait.at_rest):
             raise ValueError("arrêter le robot d'abord")
         self.legs = n
         self.gait = self.quad if n == 4 else self.tripod
@@ -51,7 +56,7 @@ class Hexapod:
         targets = {}
         for leg in self.config.legs:
             neutral = self.config.neutral_foot(leg)
-            dx, dy, dz = self.gait.foot_offset(leg.name, neutral, self.command)
+            dx, dy, dz = self.gait.foot_offset(leg.name, neutral, self.current)
             targets[leg.name] = (neutral[0] + dx, neutral[1] + dy, neutral[2] + dz)
         return targets
 
@@ -85,10 +90,21 @@ class Hexapod:
         step = dt / TUCK_TIME
         self.tuck = min(goal, self.tuck + step) if goal > self.tuck else max(goal, self.tuck - step)
         # Pas de marche tant que les pattes du milieu bougent.
-        self.gait.advance(dt, self.command if self.tuck_settled else GaitCommand())
+        target = self.command if self.tuck_settled else GaitCommand()
+        c = self.current
+        self.current = GaitCommand(_approach(c.vx, target.vx, ACCEL * dt),
+                                   _approach(c.vy, target.vy, ACCEL * dt),
+                                   _approach(c.yaw_rate, target.yaw_rate, YAW_ACCEL * dt))
+        self.gait.advance(dt, self.current)
         angles = self.solve()
         for leg in self.config.legs:
             a = angles[leg.name]
             for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
                 self.driver.set_angle(joint.board, joint.channel, ik_to_servo_deg(value, joint))
         return angles
+
+
+def _approach(value, target, step):
+    if value < target:
+        return min(target, value + step)
+    return max(target, value - step)

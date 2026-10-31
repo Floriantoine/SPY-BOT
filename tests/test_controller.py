@@ -229,3 +229,26 @@ class LegsCommandTest(unittest.TestCase):
         self.assertEqual(c.mode, SIT)
         self.assertEqual(c.handle("LEGS 6"), "OK LEGS 6")
         self.assertTrue(c.handle("LEGS 5").startswith("ERR"))
+
+
+class SmoothStartStopTest(unittest.TestCase):
+    def test_no_servo_jump_when_starting_or_stopping(self):
+        # Démarrer ou s'arrêter d'un coup faisait sauter les pieds d'un
+        # demi-pas : la consigne suit maintenant la demande en douceur.
+        for legs in ("6", "4"):
+            driver = DryRunDriver()
+            c = Controller(default_config(), driver, os.path.join(tempfile.mkdtemp(), "c.json"))
+            c.handle("STAND")
+            for _ in range(250):
+                c.tick(0.02)
+            c.handle("LEGS " + legs)
+            for _ in range(60):
+                c.tick(0.02)
+            prev = dict(driver.angles)
+            for i in range(600):
+                c.handle("MOVE 150 0 0" if i < 300 else "MOVE 0 0 0")
+                c.tick(0.02)
+                for key, value in driver.angles.items():
+                    self.assertLess(abs(value - prev[key]), 8.0, (legs, i, key))
+                prev = dict(driver.angles)
+            self.assertTrue(c.robot.gait.at_rest)
