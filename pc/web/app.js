@@ -344,9 +344,9 @@ for (const b of $$("#legs-mode button")) {
 // Préréglages de vitesse : règlent d'un coup vitesse, rotation et démarche.
 const PRESET_VALUES = {
   // Longueur d'un pas = vitesse × période / 2 : de grands pas plutôt que des pas rapides.
-  slow: { speed: 50, turn: 15, period: 1.6, step: 30 },
-  normal: { speed: 100, turn: 30, period: 1.4, step: 35 },
-  fast: { speed: 150, turn: 50, period: 1.0, step: 40 },
+  slow: { speed: 30, turn: 15, period: 1.6, step: 15 },
+  normal: { speed: 60, turn: 30, period: 1.4, step: 19 },
+  fast: { speed: 100, turn: 50, period: 1.0, step: 19 },
 };
 function markPreset() {
   for (const b of $$("#presets button")) {

@@ -6,6 +6,7 @@ from hexapod import BodyPose, GaitCommand, Hexapod, default_config
 from hexapod.body_ik import leg_to_body_frame
 from hexapod.leg_ik import leg_fk
 from hexapod.servo import ik_to_servo_deg
+from hexapod.config import tibia_fold_limit
 
 
 class HexapodTest(unittest.TestCase):
@@ -39,14 +40,14 @@ class HexapodTest(unittest.TestCase):
                 self.assertAlmostEqual(a, b)
 
     def test_standby_pose_matches_reference_robot(self):
-        # Posture debout : fémur relevé de 30° et tibia vertical, soit coxa 0°,
-        # fémur +15° et tibia -30° par rapport au milieu des servos.
+        # Posture debout de la V1.5 : fémur relevé de 28,5° (corps à 50 mm du
+        # sol) et tibia vertical, donc replié de 28,5° vers le corps.
         self.robot.update(0.0)
         for leg in self.robot.config.legs:
             servos = self.robot.driver.angles
             self.assertAlmostEqual(servos[(leg.coxa.board, leg.coxa.channel)], 90.0)
-            self.assertAlmostEqual(servos[(leg.femur.board, leg.femur.channel)], 75.0)
-            self.assertAlmostEqual(servos[(leg.tibia.board, leg.tibia.channel)], 60.0)
+            self.assertAlmostEqual(servos[(leg.femur.board, leg.femur.channel)], 61.55, places=2)
+            self.assertAlmostEqual(servos[(leg.tibia.board, leg.tibia.channel)], 118.45, places=2)
 
     def test_eighteen_distinct_channels(self):
         c = self.robot.config
@@ -54,14 +55,14 @@ class HexapodTest(unittest.TestCase):
         self.assertEqual(len(channels), 18)
 
     def test_scaled_dimensions_stay_reachable(self):
-        robot = Hexapod(default_config({"femur": 85.2, "tibia": 178.1, "coxa": 56.0}))
+        robot = Hexapod(default_config({"femur": 85.2, "tibia": 178.1, "coxa": 56.0, "stand_height": 150.0}))
         robot.command = GaitCommand(vx=120.0, yaw_rate=0.5)
         for _ in range(100):
             robot.update(0.02)
 
     def test_servo_mapping_clamps(self):
         joint = default_config().leg("RF").coxa
-        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 135.0)
+        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 150.0)
         self.assertEqual(ik_to_servo_deg(0.0, joint), 90.0)
 
 
@@ -163,3 +164,31 @@ class NoSlipTest(unittest.TestCase):
                             self.assertAlmostEqual(d0, d1, delta=0.05)
                 before, grounded = after, now
             self.assertTrue(robot.at_rest)
+
+
+class CollisionTest(unittest.TestCase):
+    """Le tibia ne se replie jamais jusqu'à toucher la coxa, la flasque ou la
+    batterie (limites relevées dans Fusion), debout, assis, replié ou en marche."""
+
+    def check(self, angles, where):
+        for name, a in angles.items():
+            femur = math.degrees(a.femur)
+            fold = -math.degrees(a.tibia) - 90.0  # + = pied vers le corps
+            self.assertLess(fold, tibia_fold_limit(femur) - 2.0, (where, name, round(femur, 1)))
+            self.assertGreater(femur, -90.0, (where, name))
+
+    def test_no_collision(self):
+        config = default_config()
+        for legs in (6, 4):
+            for height in (0.0, -config.sit_drop):
+                robot = Hexapod(config)
+                robot.set_legs(legs)
+                robot.tuck = 1.0 if legs == 4 else 0.0
+                robot.pose = BodyPose(0, 0, height)
+                self.check(robot.solve(), (legs, height))
+            for command in ((1000, 0, 0), (-1000, 0, 0), (0, 1000, 0), (700, 700, 0), (0, 0, 3.0), (0, 0, -3.0)):
+                robot = Hexapod(config)
+                robot.set_legs(legs)
+                robot.command = GaitCommand(*command)
+                for _ in range(400):
+                    self.check(robot.update(0.02), (legs, command))

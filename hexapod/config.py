@@ -4,32 +4,52 @@ Repère du corps : x vers l'avant, y vers la gauche, z vers le haut, origine au
 centre du châssis. Toutes les longueurs sont en millimètres, les angles en
 radians sauf mention contraire.
 
-La géométrie reprend le hexapode SmallpTsai/hexapod-v2-7697 (servos MG92B,
-2 PCA9685 en 0x40 et 0x41, câblage dans WIRING), pièces agrandies à 150 %. Pour d'autres pièces,
-modifie seulement DIMENSIONS ci-dessous : tout le reste en découle.
+La géométrie est celle de l'araignée V1.5 dessinée dans Fusion 360 (document
+« hexa », servos MG92B, 2 PCA9685 en 0x40 et 0x41, câblage dans WIRING). Pour
+d'autres pièces, modifie seulement DIMENSIONS ci-dessous : tout le reste en
+découle.
 """
 
 import math
 
 DIMENSIONS = {
-    # Robot de l'utilisateur : pièces de hexapod-v2-7697 imprimées à 150 %.
-    # Les valeurs mesurées sur le robot remplacent celles calculées
-    # (origine × 1,5 entre parenthèses).
-    # Fixation des pattes sur le châssis.
-    "mount_middle_y": 43.85,  # pattes du milieu : écart latéral au centre (mesuré : corps de 87,7 de large)
-    "mount_corner_x": 83.12,  # pattes avant/arrière : écart longitudinal (55,41 × 1,5)
-    "mount_corner_y": 33.62,  # pattes avant/arrière : écart latéral (22,41 × 1,5)
-    # Segments d'une patte.
-    "root_to_coxa": 31.13,  # fixation châssis -> axe du servo de coxa (20,75 × 1,5)
-    "coxa": 45.0,  # axe coxa -> axe fémur (mesuré, 42 calculé)
-    "femur": 59.0,  # axe fémur -> axe tibia (mesuré, 63,9 calculé)
-    "tibia": 135.0,  # axe tibia -> bout du pied (mesuré, 133,6 calculé)
+    # Araignée V1.5 (cotes relevées dans Fusion le 2 novembre 2026).
+    # Axes des coxas sur un cercle de 78 mm, une patte tous les 60°.
+    "mount_middle_y": 78.0,  # pattes du milieu : écart latéral au centre
+    "mount_corner_x": 67.55,  # pattes avant/arrière : écart longitudinal
+    "mount_corner_y": 39.0,  # pattes avant/arrière : écart latéral
+    "corner_angle": 30.0,  # pattes avant/arrière : angle par rapport à l'axe avant/arrière (°)
+    "root_to_coxa": 0.0,  # bord du châssis -> axe du servo de coxa (pour l'affichage)
+    # Segments d'une patte, d'axe à axe (coxa et fémur à la même hauteur).
+    "coxa": 30.0,  # axe coxa -> axe fémur
+    "femur": 55.0,  # axe fémur -> axe tibia
+    "tibia": 94.5,  # axe tibia -> contact au sol (pied PLA ; 94,8 en TPU)
+    # Hauteur debout : axes des fémurs -> sol. Dessous du corps 18,3 mm sous
+    # les axes, à 50 mm du sol ; la batterie descend 38,3 mm sous les axes.
+    "stand_height": 68.3,
 }
 
-# Posture debout : fémur relevé de 30°, tibia vertical (pieds proches du corps :
-# bras de levier sur le servo de fémur de 51 mm au lieu de 86 mm avec 15°)
-STAND_FEMUR_DEG = 30.0
+# Posture debout : tibia vertical (pied proche du corps, peu de bras de levier
+# sur le servo de fémur) ; le fémur se lève de ce qu'il faut pour la hauteur
+# demandée (28,5° pour la V1.5).
 STAND_TIBIA_OUT_DEG = 0.0
+
+# Repli maximal du tibia vers le corps (°, 0 = perpendiculaire au fémur) selon
+# l'angle du fémur (°, + = pied vers le haut) avant de toucher la coxa, la
+# flasque ou la batterie (relevé dans Fusion). Vérifié par les tests.
+TIBIA_FOLD_LIMITS = ((-90, 6), (-75, 20), (-60, 44), (-45, 51), (-30, 57), (-15, 62),
+                     (0, 64), (15, 59), (30, 56), (75, 56), (90, 58))
+
+
+def tibia_fold_limit(femur_deg):
+    """Repli maximal du tibia (°) pour un fémur à `femur_deg`, interpolé."""
+    pts = TIBIA_FOLD_LIMITS
+    if femur_deg <= pts[0][0]:
+        return pts[0][1]
+    for (f0, t0), (f1, t1) in zip(pts, pts[1:]):
+        if femur_deg <= f1:
+            return t0 + (t1 - t0) * (femur_deg - f0) / (f1 - f0)
+    return pts[-1][1]
 
 
 class JointServo:
@@ -164,14 +184,15 @@ def default_config(dimensions=None):
     d = dict(DIMENSIONS)
     d.update(dimensions or {})
 
+    ca = d["corner_angle"]
     mounts = {
         # nom : (x, y, angle en degrés) du point de fixation sur le châssis
-        "RF": (d["mount_corner_x"], -d["mount_corner_y"], -45.0),
+        "RF": (d["mount_corner_x"], -d["mount_corner_y"], -ca),
         "RM": (0.0, -d["mount_middle_y"], -90.0),
-        "RR": (-d["mount_corner_x"], -d["mount_corner_y"], -135.0),
-        "LF": (d["mount_corner_x"], d["mount_corner_y"], 45.0),
+        "RR": (-d["mount_corner_x"], -d["mount_corner_y"], ca - 180.0),
+        "LF": (d["mount_corner_x"], d["mount_corner_y"], ca),
         "LM": (0.0, d["mount_middle_y"], 90.0),
-        "LR": (-d["mount_corner_x"], d["mount_corner_y"], 135.0),
+        "LR": (-d["mount_corner_x"], d["mount_corner_y"], 180.0 - ca),
     }
     legs = []
     for name in LEG_NAMES:
@@ -187,18 +208,24 @@ def default_config(dimensions=None):
                 mount_angle=a,
                 body_x=x,
                 body_y=y,
-                coxa=JointServo(board, ch, min_deg=45.0, max_deg=135.0),
-                # Servo de fémur monté à l'envers, milieu = fémur relevé de 15°.
-                femur=JointServo(board, ch + 1, zero_deg=15.0, direction=-1),
-                # Milieu = tibia perpendiculaire au fémur.
-                tibia=JointServo(board, ch + 2, zero_deg=-90.0),
+                # Les 6 pattes sont la même pièce, tournée (pas de symétrie
+                # gauche/droite). Servos au milieu : coxa dans l'axe de la
+                # patte, fémur à plat, tibia perpendiculaire au fémur. Vus
+                # côté axe, coxa + = sens trigo, fémur + (pied vers le haut)
+                # = sens horaire, tibia + (pied vers le corps) = sens trigo.
+                # Sens à confirmer sur le robot (bouton « Inverser le sens »).
+                # Coxa : ±60°, le corps l'arrête à ±64°.
+                coxa=JointServo(board, ch, min_deg=30.0, max_deg=150.0),
+                femur=JointServo(board, ch + 1, zero_deg=0.0, direction=-1),
+                # Tibia : butée sur la coxa à +56° vers le corps.
+                tibia=JointServo(board, ch + 2, zero_deg=-90.0, direction=-1, max_deg=145.0),
             )
         )
 
-    femur_a = STAND_FEMUR_DEG * math.pi / 180.0
     tibia_a = STAND_TIBIA_OUT_DEG * math.pi / 180.0
+    stance_height = d["stand_height"]
+    femur_a = math.asin((d["tibia"] * math.cos(tibia_a) - stance_height) / d["femur"])
     stance_radius = d["coxa"] + d["femur"] * math.cos(femur_a) + d["tibia"] * math.sin(tibia_a)
-    stance_height = d["tibia"] * math.cos(tibia_a) - d["femur"] * math.sin(femur_a)
     return HexapodConfig(
         legs=legs,
         coxa_length=d["coxa"],
@@ -207,8 +234,9 @@ def default_config(dimensions=None):
         stance_radius=stance_radius,
         stance_height=stance_height,
         # Longueur de pas et levée proportionnelles à la taille de la patte.
-        # Pas jusqu'à 0,6 tibia (81 mm ici) : reste dans la course des servos
-        # dans toutes les directions (vérifié par les tests).
-        step_height=0.25 * d["tibia"],
-        max_stride=0.6 * d["tibia"],
+        # Pas jusqu'à 0,55 tibia (52 mm), pied levé de 19 mm : reste dans la
+        # course des servos sans que le tibia touche la coxa
+        # (vérifié par les tests, dans toutes les directions).
+        step_height=0.2 * d["tibia"],
+        max_stride=0.55 * d["tibia"],
     )

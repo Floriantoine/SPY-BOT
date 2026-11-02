@@ -37,13 +37,16 @@ Autre câblage ou autres broches : `WIRING` dans `hexapod/config.py`, `sda`/`scl
 
 ### Dimensions
 
-Toutes les longueurs sont dans `DIMENSIONS`, en haut de `hexapod/config.py` (en mm ; actuellement les pièces de hexapod-v2-7697 imprimées à 150 %, avec la coxa, le fémur et le tibia mesurés sur le robot). Si tes pièces sont agrandies, change uniquement ces valeurs : la posture debout, la longueur de pas et la vue 3D s'adaptent toutes seules. Mesure d'axe à axe :
+Toutes les longueurs sont dans `DIMENSIONS`, en haut de `hexapod/config.py` (en mm ; actuellement l'araignée V1.5 dessinée dans Fusion 360). Si tes pièces changent, change uniquement ces valeurs : la posture debout, la longueur de pas et la vue 3D s'adaptent toutes seules. Mesure d'axe à axe :
 
-- `root_to_coxa` : bord du châssis → axe du servo de coxa
+- `root_to_coxa` : bord du châssis → axe du servo de coxa (affichage seulement)
 - `coxa` : axe coxa → axe fémur
 - `femur` : axe fémur → axe tibia
-- `tibia` : axe tibia → bout du pied
-- `mount_*` : position des fixations des pattes par rapport au centre du châssis
+- `tibia` : axe tibia → contact du pied au sol
+- `mount_*`, `corner_angle` : position et orientation des axes de coxa par rapport au centre du châssis
+- `stand_height` : hauteur des axes de fémur au-dessus du sol, debout
+
+Les replis du tibia qui le feraient toucher la coxa, la flasque ou la batterie sont dans `TIBIA_FOLD_LIMITS` ; les tests vérifient que la marche, la position assise et les pattes repliées restent en dessous.
 
 ## Installation
 

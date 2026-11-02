@@ -1,11 +1,12 @@
 import json
+import math
 import os
 import tempfile
 import unittest
 
 from hexapod import default_config
 from hexapod.controller import CALIBRATION, OFF, SIT, STAND, WAKE, Controller
-from hexapod.servo import DryRunDriver
+from hexapod.servo import DryRunDriver, ik_to_servo_deg
 
 
 class RelaxDriver(DryRunDriver):
@@ -119,13 +120,12 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(len(line), 3 + 18)
 
     def test_calibration_pose_is_easy_to_check(self):
-        # Fémur à plat et tibia vertical : le servo de fémur (milieu = fémur
-        # relevé de 15°, monté à l'envers) est à 105°, les autres au milieu.
+        # Fémur à plat et tibia vertical : tous les servos au milieu.
         self.ctrl.handle("CAL")
         for leg in self.ctrl.robot.config.legs:
             angle = lambda j: self.driver.angles[(j.board, j.channel)]
             self.assertAlmostEqual(angle(leg.coxa), 90.0)
-            self.assertAlmostEqual(angle(leg.femur), 105.0)
+            self.assertAlmostEqual(angle(leg.femur), 90.0)
             self.assertAlmostEqual(angle(leg.tibia), 90.0)
 
     def test_calibration_round_trip(self):
@@ -134,9 +134,9 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(c.mode, CALIBRATION)
         leg = c.robot.config.leg("LM")
         before = self.driver.angles[(leg.femur.board, leg.femur.channel)]
-        self.assertAlmostEqual(before, 105.0)
+        self.assertAlmostEqual(before, 90.0)
         self.assertEqual(c.handle("TRIM lm femur -4.5"), "OK TRIM LM femur -4.5")
-        self.assertAlmostEqual(self.driver.angles[(leg.femur.board, leg.femur.channel)], 100.5)
+        self.assertAlmostEqual(self.driver.angles[(leg.femur.board, leg.femur.channel)], 85.5)
         c.handle("SAVE")
         with open(self.calib) as f:
             self.assertEqual(json.load(f)["LM"], [0.0, -4.5, 0.0])
@@ -178,7 +178,7 @@ class ControllerTest(unittest.TestCase):
     def test_geometry(self):
         geom = json.loads(self.ctrl.handle("GEOM")[5:])
         self.assertEqual(len(geom["legs"]), 6)
-        self.assertAlmostEqual(geom["tibia"], 135.0)
+        self.assertAlmostEqual(geom["tibia"], 94.5)
         self.assertEqual(geom["addresses"], [0x40, 0x41])
         rf = next(leg for leg in geom["legs"] if leg["name"] == "RF")
         self.assertEqual(rf["servos"], [[0, 5], [0, 6], [0, 7]])
@@ -197,13 +197,14 @@ class InvertTest(unittest.TestCase):
         driver = DryRunDriver()
         ctrl = Controller(default_config(), driver, path)
         ctrl.handle("CAL")
-        ctrl.tick(0.02)
+        ctrl.handle("TRIM RF femur 15")
         leg = ctrl.robot.config.leg("RF")
         key = (leg.femur.board, leg.femur.channel)
         self.assertAlmostEqual(driver.angles[key], 105.0, places=3)
         self.assertEqual(ctrl.handle("INVERT RF femur 1"), "OK INVERT RF femur 1")
-        # Même pose, sens opposé autour du milieu : 90 + 15 devient 90 - 15.
-        self.assertAlmostEqual(driver.angles[key], 75.0, places=3)
+        self.assertTrue(leg.femur.inverted)
+        # Sens opposé : un fémur relevé de 10° passe de 80° à 100° (+ trim).
+        self.assertAlmostEqual(ik_to_servo_deg(math.radians(10), leg.femur), 115.0, places=3)
         self.assertEqual(ctrl.calibration()["invert"]["RF"], [0, 1, 0])
         ctrl.handle("SAVE")
         again = Controller(default_config(), DryRunDriver(), path)

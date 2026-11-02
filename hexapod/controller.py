@@ -198,16 +198,18 @@ class Controller:
 
     def cmd_pose(self, x, y, z, roll, pitch, yaw):
         self.user_pose = BodyPose(
-            _clamp(float(x), 30), _clamp(float(y), 30), _clamp(float(z), 30),
-            _clamp(float(roll), 20) * DEG, _clamp(float(pitch), 20) * DEG,
-            _clamp(float(yaw), 25) * DEG,
+            _clamp(float(x), 20), _clamp(float(y), 20), _clamp(float(z), 15),
+            _clamp(float(roll), 8) * DEG, _clamp(float(pitch), 8) * DEG,
+            _clamp(float(yaw), 20) * DEG,
         )
         return None
 
     def cmd_gait(self, period, step_height):
         r = self.robot
         r.tripod.period = max(0.4, min(3.0, float(period)))
-        r.tripod.step_height = r.quad.step_height = max(5.0, min(80.0, float(step_height)))
+        # Pas plus haut que prévu par la config : le tibia toucherait la coxa.
+        top = self.robot.config.step_height
+        r.tripod.step_height = r.quad.step_height = max(5.0, min(top, float(step_height)))
         # À 4 pattes, chaque patte fait son pas à tour de rôle : cycle deux fois plus long.
         r.quad.period = 2 * r.tripod.period
         return "OK GAIT %.2f %.0f" % (r.tripod.period, r.tripod.step_height)

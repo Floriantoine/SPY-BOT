@@ -12,9 +12,10 @@ ACCEL = 250.0  # mm/s²
 YAW_ACCEL = 1.5  # rad/s²
 SETTLED = 0.5  # mm : pied considéré revenu à sa position neutre
 TUCK_TIME = 1.0  # s pour replier ou déplier les pattes du milieu
-# Patte repliée : fémur relevé de 65°, tibia replié (pied ~6 cm au-dessus du
-# sol debout, ~3 cm assis), dans la course des servos.
-TUCK_ANGLES = LegAngles(0.0, math.radians(65), math.radians(-110))
+# Patte repliée : fémur relevé de 55°, tibia replié de 15° vers le corps (pied
+# ~4 cm au-dessus du sol debout, ~2 cm assis), dans la course des servos et
+# sans toucher la coxa.
+TUCK_ANGLES = LegAngles(0.0, math.radians(55), math.radians(-105))
 
 
 class Hexapod:
@@ -35,8 +36,8 @@ class Hexapod:
         # À 4 pattes, le corps se balance (sway) en plus du pas : pas plus
         # courts pour rester dans la course des servos (vérifié par les tests).
         self.quad = QuadGait(self.neutral, period=2 * self.tripod.period, step_height=config.step_height,
-                             max_stride=min(config.max_stride, 0.42 * config.tibia_length),
-                             sway=0.27 * config.tibia_length)
+                             max_stride=min(config.max_stride, 0.36 * config.tibia_length),
+                             sway=0.3 * config.tibia_length)
         self.quad.plan = self._plan_sway
         self.gait = self.tripod
         self.legs = 6  # pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
