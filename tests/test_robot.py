@@ -192,3 +192,32 @@ class CollisionTest(unittest.TestCase):
                 robot.command = GaitCommand(*command)
                 for _ in range(400):
                     self.check(robot.update(0.02), (legs, command))
+
+
+class SmoothWalkTest(unittest.TestCase):
+    """En marche régulière, le corps avance à vitesse constante : aucun pied
+    n'arrive au bout de sa course avant de se lever (sinon petites pauses)."""
+
+    def test_no_pause(self):
+        config = default_config()
+        for legs in (6, 4):
+            for command in ((60, 0, 0), (100, 0, 0), (0, 0, 0.52), (40, 0, 0.3), (70, 40, 0.5)):
+                robot = Hexapod(config)
+                robot.set_legs(legs)
+                robot.command = GaitCommand(*command)
+                for _ in range(300):
+                    robot.update(0.02)
+                speeds = []
+                for _ in range(300):
+                    # Position des pieds sans le balancement du corps à 4 pattes.
+                    before = dict(robot.offsets)
+                    grounded = [n for n in robot.walking_legs() if robot.gait.swing(n) is None]
+                    robot.update(0.02)
+                    after = robot.offsets
+                    still = [n for n in grounded if robot.gait.swing(n) is None]
+                    if not still:
+                        continue  # relève des pattes
+                    # Pied posé le plus éloigné du centre : sa vitesse suit celle du corps.
+                    n = max(still, key=lambda m: math.hypot(*robot.neutral[m][:2]))
+                    speeds.append(math.dist(before[n][:2], after[n][:2]))
+                self.assertGreater(min(speeds), 0.5 * max(speeds), (legs, command))

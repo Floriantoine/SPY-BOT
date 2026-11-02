@@ -106,7 +106,7 @@ class ControllerTest(unittest.TestCase):
         c.handle("STAND")
         run(c, 4.0)
         c.handle("MOVE 60 0 0")
-        run(c, 4.0)  # 0,5 s sans MOVE, puis un pas par patte pour revenir au neutre
+        run(c, 4.5)  # 1 s sans MOVE, puis un pas par patte pour revenir au neutre
         self.assertTrue(c.robot.command.is_zero)
         self.assertTrue(c.robot.at_rest)
 

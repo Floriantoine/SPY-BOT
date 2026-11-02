@@ -166,15 +166,19 @@ class Hexapod:
 
     def _command_in_reach(self):
         """Consigne réduite si besoin pour que le pas le plus long ne dépasse
-        pas max_stride (même réduction pour tous les pieds : pas de glissement)."""
+        pas 90 % de max_stride (même réduction pour tous les pieds : pas de
+        glissement). La marge évite qu'un pied arrive au bout de sa course
+        juste avant de se lever (en tournant, ou à cause du pas de temps) : le
+        corps marquerait alors une petite pause."""
         g, cmd = self.gait, self.current
         longest = 0.0
         for n in self.walking_legs():
             vx, vy = ground_velocity(self.neutral[n], cmd)
             longest = max(longest, math.sqrt(vx * vx + vy * vy) * g.stance_time)
-        if longest <= g.max_stride:
+        reach = 0.9 * g.max_stride
+        if longest <= reach:
             return cmd
-        k = g.max_stride / longest
+        k = reach / longest
         return GaitCommand(cmd.vx * k, cmd.vy * k, cmd.yaw_rate * k)
 
     def _move_feet(self, dt):
@@ -204,6 +208,11 @@ class Hexapod:
         # Au sol, les pieds reculent à la vitesse du corps. Si l'un d'eux
         # arrive au bout de sa course (accélération en plein pas), le corps
         # ralentit un instant : même réduction pour tous, aucun pied ne glisse.
+        # Au démarrage, un pied qui ne se lèvera que dans longtemps (le
+        # dernier de la série à 4 pattes) n'aurait pas la place de reculer
+        # jusque-là : le corps avance alors juste assez lentement pour qu'il
+        # arrive au bout de sa course au moment de se lever, au lieu de
+        # s'arrêter net quand il y arrive.
         moves = {}
         k = 1.0
         for n in stance:
@@ -211,6 +220,9 @@ class Hexapod:
             p = self.neutral[n]
             vx, vy = ground_velocity((p[0] + dx, p[1] + dy), cmd)
             moves[n] = (vx * dt, vy * dt)
+            lift = g.time_to_lift(n)
+            if lift > dt:
+                k = min(k, _fraction_inside(dx, dy, vx * lift, vy * lift, half))
             k = min(k, _fraction_inside(dx, dy, vx * dt, vy * dt, half))
         for n in stance:
             dx, dy, _ = self.offsets[n]

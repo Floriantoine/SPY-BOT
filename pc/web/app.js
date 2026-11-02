@@ -273,7 +273,7 @@ setInterval(() => {
     return;
   }
   const { vx, vy, yaw } = drive;
-  // Le robot s'arrête seul s'il ne reçoit plus de MOVE pendant 0,5 s.
+  // Le robot s'arrête seul s'il ne reçoit plus de MOVE pendant 1 s.
   if (vx || vy || yaw) {
     send(`MOVE ${vx} ${vy} ${yaw}`, true);
     moving = true;

@@ -13,7 +13,7 @@ Commandes (une par ligne, PC -> robot) :
     STAND                         se lever (alimente d'abord les servos si besoin)
     SIT                           s'asseoir (finit le pas en cours)
     MOVE vx vy yaw                consigne de marche en mm/s, mm/s, deg/s ;
-                                  à renvoyer au moins toutes les 0,5 s
+                                  à renvoyer au moins toutes les 1 s
     POSE x y z roll pitch yaw     décalage du corps en mm et degrés
     GAIT period step_height       durée du cycle (s) et hauteur de pas (mm)
     LEGS 6|4                      marche à 6 pattes, ou à 4 (pattes du milieu
@@ -63,7 +63,7 @@ RISE_TIME = 2.0  # s pour se lever ou s'asseoir
 # et rejoignent la posture assise en douceur quand leur position est connue.
 WAKE_STAGGER = 0.25  # s entre deux pattes dont la position est inconnue
 WAKE_BLEND = 1.0  # s pour rejoindre la posture assise depuis une position connue
-WATCHDOG = 0.5  # s sans MOVE -> arrêt
+WATCHDOG = 1.0  # s sans MOVE -> arrêt (assez long pour ne pas couper la marche si une commande arrive en retard)
 TELEMETRY_PERIOD = 0.05  # s
 TEST_DURATION = 3.0  # s
 TEST_AMPLITUDE = 20.0 * math.pi / 180.0

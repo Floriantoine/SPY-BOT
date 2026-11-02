@@ -82,6 +82,11 @@ class TripodGait:
         phase = self.phase if leg_name in TRIPOD_A else (self.phase + 0.5) % 1.0
         return phase / 0.5 if phase < 0.5 else None
 
+    def time_to_lift(self, leg_name):
+        """Temps (s) avant que ce pied posé ne se lève."""
+        phase = self.phase if leg_name in TRIPOD_A else (self.phase + 0.5) % 1.0
+        return (1.0 - phase) * self.period
+
     def feet_on_ground(self):
         return [n for n in TRIPOD_A + TRIPOD_B if self.swing(n) is None or self.swing(n) == 0.0]
 
@@ -185,6 +190,10 @@ class QuadGait:
         w = self.swing_part
         u = (self.phase - (QUAD_ORDER.index(leg_name) + QUAD_SHIFT) / 4) % 1.0
         return u / w if u < w - 1e-9 else None
+
+    def time_to_lift(self, leg_name):
+        u = (self.phase - (QUAD_ORDER.index(leg_name) + QUAD_SHIFT) / 4) % 1.0
+        return (1.0 - u) * self.period
 
     def feet_on_ground(self):
         return [n for n in QUAD_ORDER if self.swing(n) is None or self.swing(n) == 0.0]
