@@ -1,12 +1,14 @@
-// Vue 3D du robot, dessinée d'après les pièces de hexapod-v2-7697 : châssis
-// en croix, servos MG92B, cuisse, fémur à deux servos et tibia en treillis.
-// Les pièces suivent les longueurs reçues (GEOM) : si le robot est agrandi,
-// le modèle l'est aussi. Les pattes bougent avec les angles de la télémétrie
+// Vue 3D du robot. Si les pièces de l'araignée V1.5 sont là (web/models/*.stl,
+// exportées de Fusion 360 en position montée), elles sont affichées telles
+// quelles ; sinon le robot est dessiné d'après les pièces de hexapod-v2-7697
+// (châssis en croix, servos MG92B, fémur à deux servos, tibia en treillis),
+// à l'échelle des longueurs reçues (GEOM). Les pattes bougent avec les angles de la télémétrie
 // (même convention que hexapod/leg_ik.py).
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
 const REF_TIBIA = 89.07; // longueur du tibia de hexapod-v2-7697, sert d'échelle
 const TRACE_POINTS = 150; // ~2,5 s d'historique par pied à 60 images/s
@@ -130,6 +132,22 @@ export class RobotView {
 
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
+
+    // Pièces réelles : corps (repère robot), puis pour une patte coxa, fémur et
+    // tibia, chacun dans le repère de son articulation, tous les servos au milieu.
+    this.models = null;
+    const loader = new STLLoader();
+    const names = ["corps", "coxa", "femur", "tibia"];
+    Promise.all(names.map((n) => loader.loadAsync(`models/${n}.stl`)))
+      .then((geos) => {
+        this.models = {};
+        names.forEach((n, i) => {
+          geos[i].computeVertexNormals();
+          this.models[n] = geos[i];
+        });
+        if (this.geom) this.setGeometry(this.geom, false);
+      })
+      .catch(() => {}); // pas de pièces : dessin générique
   }
 
   span() {
@@ -148,7 +166,7 @@ export class RobotView {
 
   // ------------------------------------------------------------- construction
 
-  setGeometry(geom) {
+  setGeometry(geom, resetCamera = true) {
     this.geom = geom;
     this.robot.clear();
     this.parts = [];
@@ -156,10 +174,11 @@ export class RobotView {
     const k = geom.tibia / REF_TIBIA;
     this.k = k;
 
-    this._buildBody(geom, k);
+    if (this.models) this._add(this.robot, new THREE.Mesh(this.models.corps, this.mats.frame), { leg: null, link: -1, role: "frame" });
+    else this._buildBody(geom, k);
     this.legs = geom.legs.map((g) => this._buildLeg(geom, g, k));
     this._styleKey = "";
-    this.resetCamera();
+    if (resetCamera) this.resetCamera();
   }
 
   _add(parent, mesh, info) {
@@ -234,6 +253,54 @@ export class RobotView {
     tibiaJ.add(tip);
     Object.assign(leg, { root, joints: [coxaJ, femurJ, tibiaJ], tip });
 
+    if (this.models) {
+      // Chaque pièce bouge avec le servo de son articulation (sélection, butée).
+      const part = (parent, geo, link) => this._add(parent, new THREE.Mesh(geo, this.mats.frame), { leg: g.name, link, servo: link, role: "part" });
+      part(coxaJ, this.models.coxa, 0);
+      part(femurJ, this.models.femur, 1);
+      // Le tibia est exporté vertical (servo au milieu, tibia à -90° du fémur).
+      part(tibiaJ, this.models.tibia, 2).rotation.y = -Math.PI / 2;
+    } else {
+      this._drawLeg(geom, g, k, root, coxaJ, femurJ, tibiaJ, tip);
+    }
+
+    // Repère au sol sous le pied.
+    leg.contact = new THREE.Mesh(new THREE.RingGeometry(5 * k, 9 * k, 28), this.mats.contact);
+    leg.contact.rotation.x = -Math.PI / 2;
+    this.scene.add(leg.contact);
+
+    // Trace du pied : les dernières positions, vertes au sol, bleues en l'air.
+    const traceGeo = new THREE.BufferGeometry();
+    traceGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS * 3), 3));
+    traceGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS * 3), 3));
+    traceGeo.setDrawRange(0, 0);
+    leg.trace = new THREE.Line(traceGeo, this.mats.trace);
+    leg.trace.frustumCulled = false;
+    leg.trace.visible = false;
+    leg.traceCount = 0;
+    this.track.add(leg.trace);
+
+    leg.halo = new THREE.Mesh(new THREE.SphereGeometry(20 * k, 24, 16), this.mats.halo);
+    leg.halo.visible = false;
+    this.robot.add(leg.halo);
+
+    // Étiquettes carte · canal, posées sur l'axe de chaque servo.
+    const hex = (n) => "0x" + n.toString(16);
+    leg.labels = leg.joints.map((joint, j) => {
+      const [board, channel] = g.servos[j];
+      const el = document.createElement("div");
+      el.className = "servo-label";
+      el.innerHTML = `<b>${hex(geom.addresses[board])}</b> · ${channel}`;
+      const label = new CSS2DObject(el);
+      label.position.set(0, 0, 24 * k);
+      joint.add(label);
+      return label;
+    });
+    return leg;
+  }
+
+  /** Patte dessinée d'après hexapod-v2-7697 (quand les pièces réelles manquent). */
+  _drawLeg(geom, g, k, root, coxaJ, femurJ, tibiaJ, tip) {
     const t = 3 * k;
     const info = (link) => ({ leg: g.name, link, role: "frame" });
     const X = new THREE.Vector3(1, 0, 0);
@@ -321,40 +388,6 @@ export class RobotView {
     tipBar.position.set(L - 3 * k, 0, 0);
     const foot = this._add(tip, new THREE.Mesh(new THREE.SphereGeometry(4.5 * k, 16, 12), this.mats.rubber), { leg: g.name, link: 2, role: "rubber" });
     foot.scale.set(1.2, 1, 1);
-
-    // Repère au sol sous le pied.
-    leg.contact = new THREE.Mesh(new THREE.RingGeometry(5 * k, 9 * k, 28), this.mats.contact);
-    leg.contact.rotation.x = -Math.PI / 2;
-    this.scene.add(leg.contact);
-
-    // Trace du pied : les dernières positions, vertes au sol, bleues en l'air.
-    const traceGeo = new THREE.BufferGeometry();
-    traceGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS * 3), 3));
-    traceGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS * 3), 3));
-    traceGeo.setDrawRange(0, 0);
-    leg.trace = new THREE.Line(traceGeo, this.mats.trace);
-    leg.trace.frustumCulled = false;
-    leg.trace.visible = false;
-    leg.traceCount = 0;
-    this.track.add(leg.trace);
-
-    leg.halo = new THREE.Mesh(new THREE.SphereGeometry(20 * k, 24, 16), this.mats.halo);
-    leg.halo.visible = false;
-    this.robot.add(leg.halo);
-
-    // Étiquettes carte · canal, posées sur l'axe de chaque servo.
-    const hex = (n) => "0x" + n.toString(16);
-    leg.labels = leg.joints.map((joint, j) => {
-      const [board, channel] = g.servos[j];
-      const el = document.createElement("div");
-      el.className = "servo-label";
-      el.innerHTML = `<b>${hex(geom.addresses[board])}</b> · ${channel}`;
-      const label = new CSS2DObject(el);
-      label.position.set(0, 0, 24 * k);
-      joint.add(label);
-      return label;
-    });
-    return leg;
   }
 
   /** Servo MG92B : axe de sortie le long de `axis` passant par `at`, boîtier allongé vers `bodyDir`. */
@@ -422,6 +455,7 @@ export class RobotView {
       const atLimit = p.servo !== undefined && this.limits.has(p.leg + ":" + p.servo);
       let mat;
       if (p.role === "frame") mat = dimmed ? m.frameDim : lit ? m.frameSel : m.frame;
+      else if (p.role === "part") mat = dimmed ? m.frameDim : atLimit ? m.servoLimit : lit ? m.frameSel : m.frame;
       else if (p.role === "servo" && atLimit && !dimmed) mat = m.servoLimit;
       else if (p.role === "servo" || p.role === "horn") mat = dimmed ? (p.role === "horn" ? m.hornDim : m.servoDim) : lit ? m.servoSel : m[p.role];
       else if (p.role === "rubber") mat = dimmed ? m.darkDim : m.rubber;

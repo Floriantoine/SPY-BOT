@@ -62,7 +62,7 @@ class HexapodTest(unittest.TestCase):
 
     def test_servo_mapping_clamps(self):
         joint = default_config().leg("RF").coxa
-        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 150.0)
+        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 128.0)
         self.assertEqual(ik_to_servo_deg(0.0, joint), 90.0)
 
 

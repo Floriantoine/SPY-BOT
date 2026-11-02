@@ -46,6 +46,8 @@ Toutes les longueurs sont dans `DIMENSIONS`, en haut de `hexapod/config.py` (en 
 - `mount_*`, `corner_angle` : position et orientation des axes de coxa par rapport au centre du châssis
 - `stand_height` : hauteur des axes de fémur au-dessus du sol, debout
 
+La vue 3D affiche les vraies pièces de la V1.5 (`pc/web/models/*.stl`, exportées de Fusion en position montée : le corps dans le repère robot, puis coxa, fémur et tibia d'une patte chacun dans le repère de son articulation, servos au milieu). Sans ces fichiers, elle dessine un robot générique à la bonne taille.
+
 Les replis du tibia qui le feraient toucher la coxa, la flasque ou la batterie sont dans `TIBIA_FOLD_LIMITS` ; les tests vérifient que la marche, la position assise et les pattes repliées restent en dessous.
 
 ## Installation
