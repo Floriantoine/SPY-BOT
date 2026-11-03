@@ -62,7 +62,7 @@ class HexapodTest(unittest.TestCase):
 
     def test_servo_mapping_clamps(self):
         joint = default_config().leg("RF").coxa
-        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 150.0)
+        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 145.0)
         self.assertEqual(ik_to_servo_deg(0.0, joint), 90.0)
 
 
@@ -183,6 +183,9 @@ class CollisionTest(unittest.TestCase):
             fold = -math.degrees(a.tibia) - 90.0  # + = pied vers le corps
             self.assertLess(fold, tibia_fold_limit(femur) - 2.0, (where, name, round(femur, 1)))
             self.assertGreater(femur, -90.0, (where, name))
+            # Fémur levé : la coxa doit moins tourner (bord de la plaque du haut).
+            coxa_max = 55.0 if femur <= 45 else 55.0 - (femur - 45.0) / 3.0
+            self.assertLess(abs(math.degrees(a.coxa)), coxa_max, (where, name, round(femur, 1)))
 
     def test_no_collision(self):
         config = default_config()

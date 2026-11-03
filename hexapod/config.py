@@ -214,10 +214,10 @@ def default_config(dimensions=None):
                 # côté axe, coxa + = sens trigo, fémur + (pied vers le haut)
                 # = sens horaire, tibia + (pied vers le corps) = sens trigo.
                 # Sens à confirmer sur le robot (bouton « Inverser le sens »).
-                # Coxa : ±60°, le corps l'arrête à ±65°. Deux pattes voisines se
-                # touchent si elles se rapprochent de 74° à elles deux
-                # (vérifié par les tests : 70° au plus).
-                coxa=JointServo(board, ch, min_deg=30.0, max_deg=150.0),
+                # Coxa : ±55°, le corps l'arrête à ±65° (moins fémur levé, voir
+                # les tests). Deux pattes voisines se touchent si elles se
+                # rapprochent de 74° à elles deux (vérifié par les tests : 70°).
+                coxa=JointServo(board, ch, min_deg=35.0, max_deg=145.0),
                 femur=JointServo(board, ch + 1, zero_deg=0.0, direction=-1),
                 # Tibia : butée sur la coxa à +56° vers le corps.
                 tibia=JointServo(board, ch + 2, zero_deg=-90.0, direction=-1, max_deg=145.0),
