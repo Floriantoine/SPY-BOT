@@ -62,7 +62,7 @@ class HexapodTest(unittest.TestCase):
 
     def test_servo_mapping_clamps(self):
         joint = default_config().leg("RF").coxa
-        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 128.0)
+        self.assertEqual(ik_to_servo_deg(math.radians(200), joint), 150.0)
         self.assertEqual(ik_to_servo_deg(0.0, joint), 90.0)
 
 
@@ -170,7 +170,14 @@ class CollisionTest(unittest.TestCase):
     """Le tibia ne se replie jamais jusqu'à toucher la coxa, la flasque ou la
     batterie (limites relevées dans Fusion), debout, assis, replié ou en marche."""
 
+    # Pattes dans l'ordre du sens trigonométrique (coxa + = vers la suivante).
+    AROUND = ("LF", "LM", "LR", "RR", "RM", "RF")
+
     def check(self, angles, where):
+        for i, name in enumerate(self.AROUND):
+            nxt = self.AROUND[(i + 1) % 6]
+            closing = math.degrees(angles[name].coxa - angles[nxt].coxa)
+            self.assertLess(closing, 70.0, (where, name, nxt))
         for name, a in angles.items():
             femur = math.degrees(a.femur)
             fold = -math.degrees(a.tibia) - 90.0  # + = pied vers le corps
