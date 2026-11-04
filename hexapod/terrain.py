@@ -60,23 +60,56 @@ def describe():
     return "TERRAINMAP %d %s %d %s" % (len(WAVES), w, len(ROCKS), r)
 
 
-def rest_on(feet, odom):
+def rest_on(feet, odom, swing=()):
     """Plan sur lequel le robot repose, d'après ses pieds posés.
 
     `feet` : pieds au sol, dans le repère du corps (mm), `odom` = (x, y, cap).
+    Le z de chaque pied est sa hauteur par rapport au pied posé normal (un
+    pied allongé de 10 mm : z = -10). `swing` : pieds en l'air ; s'il y en a
+    un qui touche le terrain (caillou), le robot s'appuie aussi dessus.
     Retourne (a, b, c, roulis, tangage, en_l_air) : plan z = a + b·x + c·y sur
     le sol, assiette qu'il donne au robot (rad, repère corps), et pour chaque
-    pied la hauteur dont il est au-dessus du terrain (0 = il touche).
+    pied posé la hauteur dont il est au-dessus du terrain (0 = il touche).
     """
     x0, y0, th = odom
     c, s = math.cos(th), math.sin(th)
-    pts = []
-    for fx, fy, _ in feet:
-        wx, wy = x0 + c * fx - s * fy, y0 + s * fx + c * fy
-        pts.append((wx, wy, height(wx, wy)))
+
+    def point(f):
+        wx, wy = x0 + c * f[0] - s * f[1], y0 + s * f[0] + c * f[1]
+        # Hauteur que ce pied impose au plan des pieds normaux.
+        return (wx, wy, height(wx, wy) - f[2])
+
+    pts = [point(f) for f in feet]
     if len(pts) < 3:
         h = height(x0, y0)
         return h, 0.0, 0.0, 0.0, 0.0, [0.0] * len(pts)
+    a, b, cc = _fit(pts)
+    # Un pied en l'air qui rentrerait dans le terrain le touche : le robot
+    # bascule aussi sur lui (on l'ajoute, au plus 3 fois).
+    others = [point(f) for f in swing]
+    support = list(pts)
+    for _ in range(3):
+        worst, below = None, 0.5
+        for p in others:
+            d = p[2] - (a + b * p[0] + cc * p[1])
+            if d > below:
+                worst, below = p, d
+        if worst is None:
+            break
+        others.remove(worst)
+        support.append(worst)
+        a, b, cc = _fit(support)
+    # Aucun pied ne s'enfonce : le robot monte jusqu'à toucher le plus haut.
+    a += max(p[2] - (a + b * p[0] + cc * p[1]) for p in support)
+    air = [a + b * p[0] + cc * p[1] - p[2] for p in pts]
+    ahead, left = c * b + s * cc, -s * b + c * cc
+    # Sol qui monte devant : nez vers le haut (tangage négatif) ;
+    # sol qui monte à gauche : côté gauche plus haut (roulis positif).
+    return a, b, cc, math.atan(left), -math.atan(ahead), air
+
+
+def _fit(pts):
+    """Plan z = a + b·x + c·y des moindres carrés (exact avec 3 points)."""
     # Moindres carrés (exact avec 3 pieds), coordonnées centrées.
     n = len(pts)
     mx = sum(p[0] for p in pts) / n
@@ -93,11 +126,4 @@ def rest_on(feet, odom):
     else:
         b = (sxz * syy - syz * sxy) / det
         cc = (syz * sxx - sxz * sxy) / det
-    a = mz - b * mx - cc * my
-    # Aucun pied ne s'enfonce : le robot monte jusqu'à toucher le plus haut.
-    a += max(p[2] - (a + b * p[0] + cc * p[1]) for p in pts)
-    air = [a + b * p[0] + cc * p[1] - p[2] for p in pts]
-    ahead, left = c * b + s * cc, -s * b + c * cc
-    # Sol qui monte devant : nez vers le haut (tangage négatif) ;
-    # sol qui monte à gauche : côté gauche plus haut (roulis positif).
-    return a, b, cc, math.atan(left), -math.atan(ahead), air
+    return mz - b * mx - cc * my, b, cc

@@ -38,9 +38,15 @@ Commandes (une par ligne, PC -> robot) :
     NAV [STOP]                    -> NAV off|follow|goto x y ; STOP reprend la main
                                   (un MOVE aussi)
     PERSON x y                    (simulation) la personne virtuelle marche jusque-là
-    IMU                           -> IMU present 0|1 level 0|1 : gyroscope MPU6050
+    IMU                           -> IMU present 0|1 level 0|1 feel 0|1 : gyroscope MPU6050
     LEVEL 1|0                     auto-équilibrage : le corps reste horizontal
                                   (à l'assiette de POSE) même sur une pente
+    FEEL 1|0                      sol deviné au gyroscope : un pied qui tape un
+                                  caillou s'arrête, un pied au-dessus d'un trou
+                                  s'allonge, la marche ralentit si ça bascule vite
+                                  -> IMU present 0|1 level 0|1 feel 0|1
+                                  -> TILT 1|0 (spontané) : corps penché de plus de
+                                  20° (arrêt de sécurité) / de nouveau droit
     TILT roll pitch               (simulation) pente du sol en degrés
     TERRAIN [1|0]                 (simulation) terrain accidenté (bosses, cailloux,
                                   trous) : le robot repose sur ses pieds posés
@@ -120,6 +126,13 @@ WAKE_STAGGER = 0.25  # s entre deux pattes dont la position est inconnue
 WAKE_BLEND = 1.0  # s pour rejoindre la posture assise depuis une position connue
 WATCHDOG = 1.0  # s sans MOVE -> arrêt (assez long pour ne pas couper la marche si une commande arrive en retard)
 TELEMETRY_PERIOD = 0.05  # s
+TILT_STOP = 20 * math.pi / 180  # rad : au-delà, arrêt de sécurité
+TILT_OK = 12 * math.pi / 180  # rad : il repart quand il est revenu en dessous
+# Démarche ralentie quand le corps bascule vite (avec FEEL)
+SLOW_RATE = 0.3  # rad/s : en dessous, vitesse normale
+SLOW_SPAN = 0.6  # rad/s : de SLOW_RATE à SLOW_RATE + SLOW_SPAN, de 100 % à SLOW_MIN
+SLOW_MIN = 0.3
+SLOW_RECOVER = 1.5  # 1/s : retour à la vitesse normale
 TEST_DURATION = 3.0  # s
 TEST_AMPLITUDE = 20.0 * math.pi / 180.0
 JOINTS = ("coxa", "femur", "tibia")
@@ -144,6 +157,8 @@ class Controller:
         self.height = -self.sit_drop  # hauteur de base du corps (0 = debout)
         self.user_pose = BodyPose()
         self.pose_limited = False  # pose réduite pour rester dans la course des servos
+        self.tilted = False  # corps trop penché : arrêt de sécurité
+        self._upright_time = 0.0
         self._free_time = 0.0
         self._went = 0.0  # mm parcourus depuis la dernière ligne M
         self._tick_us = 0  # plus long tick depuis la dernière ligne M
@@ -176,6 +191,8 @@ class Controller:
             elif self.since_move > WATCHDOG:
                 self.wanted = GaitCommand()
             r.command = self._filter(self.wanted, lines)
+            if self.tilted:
+                r.command = GaitCommand()  # arrêt de sécurité : trop penché
         elif self.mode == STANDING:
             self.height = min(0.0, self.height + self.sit_drop / RISE_TIME * dt)
             if self.height == 0.0:
@@ -221,13 +238,17 @@ class Controller:
                 lines.append("LIMIT pose 0")
 
         if self.imu is not None:
-            self.imu.update(dt, self.robot.applied, self.odom, self._stance_feet())
+            self.imu.update(dt, self.robot.applied, self.odom, *self._sim_feet())
             att = self.imu.attitude
             if self.mode == STAND and att.ready:
                 u = self.user_pose
                 self.leveler.update(dt, (att.roll, att.pitch), (u.roll, u.pitch))
+                r.feel(dt, *att.rate)
+                self._govern(dt, att)
+                self._tilt_guard(dt, att, lines)
             else:
                 self.leveler.relax(dt)
+                r.time_scale = 1.0
         if hasattr(self.scanner.ranger, "tick"):
             self.scanner.ranger.tick(dt)  # simulation : la personne marche
         if self.mode != OFF:  # servos relâchés : le balayage attend
@@ -462,7 +483,16 @@ class Controller:
             self._pending.append(self.scanner.status())
 
     def cmd_imu(self):
-        return "IMU present %d level %d" % (self.imu is not None, self.leveler.enabled)
+        return "IMU present %d level %d feel %d" % (self.imu is not None, self.leveler.enabled,
+                                                    self.robot.feel_ground)
+
+    def cmd_feel(self, on):
+        if on == "1" and self.imu is None:
+            return "ERR FEEL : pas de gyroscope"
+        self.robot.feel_ground = on == "1"
+        if not self.robot.feel_ground:
+            self.robot.time_scale = 1.0
+        return self.cmd_imu()
 
     def cmd_level(self, on):
         if on == "1" and self.imu is None:
@@ -488,13 +518,48 @@ class Controller:
             self._pending.append(describe())  # l'appli dessine le même terrain
         return "TERRAIN %d" % self.imu.terrain
 
-    def _stance_feet(self):
-        """Pieds posés (repère corps), pour le terrain de la simulation."""
+    def _govern(self, dt, att):
+        """Corps qui bascule vite (pied qui tape, trou) : la démarche ralentit
+        le temps que ça se calme, puis reprend sa vitesse."""
+        r = self.robot
+        if not r.feel_ground:
+            r.time_scale = 1.0
+            return
+        rate = math.sqrt(att.rate[0] ** 2 + att.rate[1] ** 2)
+        goal = max(SLOW_MIN, min(1.0, 1.0 - (rate - SLOW_RATE) / SLOW_SPAN))
+        if goal < r.time_scale:
+            r.time_scale = goal
+        else:
+            r.time_scale = min(goal, r.time_scale + SLOW_RECOVER * dt)
+
+    def _tilt_guard(self, dt, att, lines):
+        """Arrêt de sécurité : corps penché de plus de TILT_STOP, le robot
+        s'arrête ; il repart quand il est revenu sous TILT_OK depuis 1 s."""
+        tilt = max(abs(att.roll), abs(att.pitch))
+        if tilt > TILT_STOP:
+            self._upright_time = 0.0
+            if not self.tilted:
+                self.tilted = True
+                lines.append("TILT 1")
+        elif self.tilted:
+            self._upright_time = self._upright_time + dt if tilt < TILT_OK else 0.0
+            if self._upright_time >= 1.0:
+                self.tilted = False
+                lines.append("TILT 0")
+
+    def _sim_feet(self):
+        """Pieds posés et pieds en l'air (repère corps, z par rapport au pied
+        posé normal), pour le terrain de la simulation."""
         if not getattr(self.imu, "terrain", False):
-            return None
+            return None, ()
         r = self.robot
         targets = r.foot_targets()
-        return [targets[n] for n in r.walking_legs() if r.offsets[n][2] < 0.5]
+        stance, swing = [], []
+        for n in r.walking_legs():
+            x, y, z = targets[n]
+            foot = (x, y, z - r.neutral[n][2])
+            (stance if r.offsets[n][2] < 0.5 else swing).append(foot)
+        return stance, swing
 
     def cmd_obst(self, *args):
         ranger = self.scanner.ranger

@@ -14,6 +14,13 @@ YAW_ACCEL = 1.5  # rad/s²
 # Au lâcher, le robot freine plus fort qu'il n'accélère (le pied en l'air
 # vise alors sa place), et il s'arrête dès que tous les pieds sont posés à
 # moins de STOP_TOL de leur place (pas de pas de plus juste pour les recentrer).
+# Sol deviné au gyroscope (feel)
+TOUCH_FROM = 0.5  # le pied touche peut-être à partir de la moitié de son pas
+TOUCH_RATE = 0.1  # rad/s : vitesse de bascule qui trahit un contact (~6 °/s)
+FEEL_SMOOTH = 0.06  # s : lissage de la vitesse de bascule
+SINK_WINDOW = 0.5  # part du début de l'appui où un pied peut s'allonger (trou)
+EXTEND_SPEED = 150.0  # mm/s : vitesse d'allongement d'un pied au-dessus d'un trou
+GROUND_MAX = 25.0  # mm : écart de sol maximal deviné
 DECEL = 600.0  # mm/s²
 YAW_DECEL = 4.0  # rad/s²
 STOP_TOL = 20.0  # mm
@@ -90,6 +97,13 @@ class Hexapod:
         self.applied = BodyPose()  # pose réellement appliquée
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}  # pied - neutre (mm)
         self._lift = {}  # pieds en l'air : position (dx, dy) au moment de se lever
+        # Hauteur du sol sous chaque pied, devinée au gyroscope (feel) : + = plus
+        # haut que prévu (caillou), - = plus bas (trou). Ajoutée au pied.
+        self.ground = {n: 0.0 for n in self.neutral}
+        self._ground_lift = {}  # hauteur du sol quand le pied s'est levé
+        self._touched = set()  # pieds en l'air qui ont déjà touché quelque chose
+        self.feel_ground = False
+        self.time_scale = 1.0  # < 1 : la démarche ralentit (corps qui bascule trop vite)
         self.travel = (0.0, 0.0, 0.0)  # déplacement du corps au dernier update (mm, mm, rad, repère corps)
         # Place de chaque pied selon la pose (décalage par rapport au neutre) :
         # `home` = là où il se pose, `home_goal` = la meilleure place pour la pose actuelle.
@@ -134,6 +148,51 @@ class Hexapod:
         self.home = {n: (0.0, 0.0) for n in self.neutral}
         self.home_goal = {n: (0.0, 0.0) for n in self.neutral}
         self._home_key = {n: (0.0,) * 6 for n in self.neutral}
+        self._forget_ground()
+
+    def _forget_ground(self):
+        self.ground = {n: 0.0 for n in self.neutral}
+        self._ground_lift = {}
+        self._touched = set()
+        self._feel_rate = (0.0, 0.0)
+
+    def feel(self, dt, roll_rate, pitch_rate):
+        """Devine au gyroscope où le sol n'est pas à la hauteur prévue.
+
+        Un pied qui descend et touche un caillou soulève son coin du corps :
+        on arrête sa descente là. Un pied qui vient de se poser au-dessus
+        d'un trou laisse son coin s'enfoncer : on l'allonge jusqu'à ce que ça
+        cesse. Avec 3 pieds qui bougent ensemble, on attribue la bascule au
+        pied le plus du côté qui monte (ou qui descend)."""
+        if not self.feel_ground:
+            return
+        # Lissé sur ~2 ticks : les vibrations des servos ne font pas croire à un contact.
+        fr, fp = self._feel_rate
+        k = min(1.0, dt / FEEL_SMOOTH) if dt else 1.0
+        roll_rate, pitch_rate = fr + (roll_rate - fr) * k, fp + (pitch_rate - fp) * k
+        self._feel_rate = (roll_rate, pitch_rate)
+        g = self.gait
+        push, sink = None, None
+        for n in self.walking_legs():
+            x, y = self.neutral[n][0], self.neutral[n][1]
+            # > 0 : le coin de ce pied monte.
+            score = (roll_rate * y - pitch_rate * x) / math.sqrt(x * x + y * y)
+            s = g.swing(n)
+            if s is not None and s > TOUCH_FROM and n not in self._touched:
+                if score > TOUCH_RATE and (push is None or score > push[1]):
+                    push = (n, score)
+            elif s is None and g.time_to_lift(n) > (1.0 - SINK_WINDOW) * g.stance_time:
+                if score < -TOUCH_RATE and (sink is None or score < sink[1]):
+                    sink = (n, score)
+        if push:
+            n = push[0]
+            self._touched.add(n)
+            dx, dy, dz = self.offsets[n]
+            self.ground[n] = min(GROUND_MAX, self.ground[n] + dz)
+            self.offsets[n] = (dx, dy, 0.0)
+        if sink:
+            n = sink[0]
+            self.ground[n] = max(-GROUND_MAX, self.ground[n] - EXTEND_SPEED * dt)
 
     @property
     def at_rest(self):
@@ -152,7 +211,8 @@ class Hexapod:
         (pieds en l'air levés à `lift` × la hauteur de pas)."""
         sx, sy = self.gait.shift  # le corps se décale : vus du corps, les pieds reculent
         return {
-            n: (p[0] + self.offsets[n][0] - sx, p[1] + self.offsets[n][1] - sy, p[2] + lift * self.offsets[n][2])
+            n: (p[0] + self.offsets[n][0] - sx, p[1] + self.offsets[n][1] - sy,
+                p[2] + lift * self.offsets[n][2] + self.ground[n])
             for n, p in self.neutral.items()
         }
 
@@ -207,8 +267,10 @@ class Hexapod:
         self._home_wait -= dt
         if self._home_wait <= 0.0 and self._refresh_home():
             self._home_wait = HOME_PERIOD
-        self.gait.advance(dt, not (self.current.is_zero and self._feet_settled()))
-        self._move_feet(dt)
+        # Démarche ralentie si le corps bascule trop vite (gyroscope).
+        gdt = dt * self.time_scale
+        self.gait.advance(gdt, not (self.current.is_zero and self._feet_settled()))
+        self._move_feet(gdt)
         angles = self.solve_limited(dt)
         for leg in self.config.legs:
             a = angles[leg.name]
@@ -472,6 +534,8 @@ class Hexapod:
             if s is None:
                 self._placed.discard(n)
                 if self._lift.pop(n, None) is not None:
+                    self._touched.discard(n)
+                    self._ground_lift.pop(n, None)
                     # Il vient de se poser : il finit son pas sur le point visé.
                     vx, vy = ground_velocity(p, cmd)
                     hx, hy = self.home[n]
@@ -488,8 +552,14 @@ class Hexapod:
                 hx, hy = self.home[n]
                 tx, ty = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
                 k = s * s * (3 - 2 * s)
-                self.offsets[n] = (lx + (tx - lx) * k, ly + (ty - ly) * k,
-                                   g.step_height * math.sin(math.pi * s))
+                if n in self._touched:
+                    z = 0.0  # posé sur ce qu'il a touché : il n'y descend plus
+                else:
+                    # Il redescend vers le sol prévu (le plan des pieds).
+                    g0 = self._ground_lift.setdefault(n, self.ground[n])
+                    self.ground[n] = g0 * (1.0 - k)
+                    z = g.step_height * math.sin(math.pi * s)
+                self.offsets[n] = (lx + (tx - lx) * k, ly + (ty - ly) * k, z)
         # Au sol, les pieds reculent à la vitesse du corps. Si l'un d'eux
         # arrive au bout de sa course (accélération en plein pas), le corps
         # ralentit un instant : même réduction pour tous, aucun pied ne glisse.

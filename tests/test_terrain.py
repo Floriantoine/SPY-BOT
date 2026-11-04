@@ -21,6 +21,21 @@ class TerrainTest(unittest.TestCase):
         for v in air:
             self.assertAlmostEqual(v, 0.0, places=6)
 
+    def test_foot_height_and_swing_contact(self):
+        feet = [(120, 80, 0), (-120, 80, 0), (0, -140, 0)]
+        odom = (600, 300, 0.3)
+        a, b, c, roll, pitch, _ = terrain.rest_on(feet, odom)
+        # Un pied allongé de 10 mm soulève son coin : l'assiette change.
+        longer = [(120, 80, -10)] + feet[1:]
+        r2 = terrain.rest_on(longer, odom)
+        self.assertGreater(abs(r2[3] - roll) + abs(r2[4] - pitch), math.radians(1))
+        # Un pied en l'air bien au-dessus du terrain ne change rien...
+        high = terrain.rest_on(feet, odom, [(0, 140, 60)])
+        self.assertAlmostEqual(high[3], roll, places=9)
+        # ...mais s'il rentrerait dans le terrain, le robot s'appuie dessus.
+        low = terrain.rest_on(feet, odom, [(0, 140, -40)])
+        self.assertNotAlmostEqual(low[3], roll, places=3)
+
     def test_flat_start(self):
         self.assertLess(abs(terrain.height(0, 0)), 40)
 

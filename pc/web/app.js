@@ -180,7 +180,7 @@ events.onmessage = (e) => {
   } else if (kind === "IMU") {
     const f = rest.split(" ");
     const value = (key) => Number(f[f.indexOf(key) + 1]);
-    Object.assign(state.imu, { present: value("present") === 1, level: value("level") === 1 });
+    Object.assign(state.imu, { present: value("present") === 1, level: value("level") === 1, feel: value("feel") === 1 });
     renderImu();
   } else if (kind === "NAV") {
     if (rest === "arrived") toast("Arrivé au point", "ok");
@@ -197,6 +197,9 @@ events.onmessage = (e) => {
   } else if (kind === "TERRAIN") {
     $("#terrain").checked = rest.trim() === "1";
     if (rest.trim() !== "1") view.setTerrain(null);
+  } else if (kind === "TILT") {
+    if (rest.trim() === "1") toast("Arrêt de sécurité : le corps penche de plus de 20°", "err");
+    else toast("Le robot est de nouveau droit : il peut repartir", "ok");
   } else if (kind === "LIMIT") {
     // Le robot réduit lui-même la pose du corps pour garder ses servos dans leur course.
     if (rest === "pose 1") toast("Pose du corps réduite : les pattes n'ont pas la course pour la tenir en marchant", "");
@@ -787,6 +790,9 @@ function renderImu() {
   const box = $("#imu-level");
   box.disabled = !connected || !present;
   box.checked = connected && level;
+  const feel = $("#imu-feel");
+  feel.disabled = !connected || !present;
+  feel.checked = connected && state.imu.feel;
 }
 
 function drawImu() {
@@ -860,6 +866,7 @@ function drawImu() {
 }
 
 $("#imu-level").onchange = (e) => send(`LEVEL ${e.target.checked ? 1 : 0}`);
+$("#imu-feel").onchange = (e) => send(`FEEL ${e.target.checked ? 1 : 0}`);
 sliders.tiltRoll = bindSlider($("#tilt-roll"), (v) => `${v}°`);
 sliders.tiltPitch = bindSlider($("#tilt-pitch"), (v) => `${v}°`);
 const sendTilt = throttle(() => send(`TILT ${$("#tilt-roll").value} ${$("#tilt-pitch").value}`, true), 150);

@@ -36,6 +36,7 @@ class Attitude:
         self.roll = 0.0
         self.pitch = 0.0
         self.ready = False  # biais mesuré, angles initialisés
+        self.rate = (0.0, 0.0)  # vitesse de roulis et de tangage (rad/s), biais retiré
         self._bias = [0.0, 0.0, 0.0]
         self._bias_n = 0
         self._bias_t = 0.0
@@ -53,6 +54,7 @@ class Attitude:
                 self.ready = True
             return
         gx, gy = gyro[0] - self._bias[0], gyro[1] - self._bias[1]
+        self.rate = (gx, gy)
         roll = self.roll + gx * dt
         pitch = self.pitch + gy * dt
         g = math.sqrt(ax * ax + ay * ay + az * az)
@@ -171,12 +173,12 @@ class SimIMU:
         self.attitude = Attitude()
         self._prev = None
 
-    def update(self, dt, pose, odom=None, feet=None):
+    def update(self, dt, pose, odom=None, feet=None, swing=()):
         sr, sp = self.ground_roll, self.ground_pitch
         if self.terrain and odom is not None and feet:
             from .terrain import rest_on
 
-            a, b, c, roll, pitch, self.air = rest_on(feet, odom)
+            a, b, c, roll, pitch, self.air = rest_on(feet, odom, swing)
             # Le robot bascule sur ses nouveaux pieds posés en un instant
             # bref, pas d'un coup (souplesse des servos et des pièces).
             k = 1.0 if self.plane is None else min(1.0, dt / ROCK_TIME) if dt else 0.0

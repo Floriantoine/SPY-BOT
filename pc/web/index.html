@@ -167,6 +167,8 @@
             </dl>
           </div>
           <label class="toggle"><input type="checkbox" id="imu-level" disabled> Garder le corps horizontal</label>
+          <label class="toggle" title="Un pied qui tape un caillou soulève son coin : il arrête de descendre. Au-dessus d'un trou, le coin s'enfonce : le pied s'allonge. Si ça bascule vite, la marche ralentit."><input type="checkbox" id="imu-feel" disabled> Sentir le sol avec le gyroscope (cailloux, trous)</label>
+          <p class="hint">Arrêt de sécurité : penché de plus de 20°, le robot s'arrête, puis repart revenu sous 12°.</p>
           <div class="sim-only" id="imu-sim" hidden>
             <div class="field"><span>Pente du sol (gauche/droite)</span><output></output>
               <input id="tilt-roll" type="range" min="-12" max="12" step="1" value="0"></div>

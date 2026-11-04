@@ -54,7 +54,7 @@ class LevelTest(unittest.TestCase):
         self.assertEqual(c.handle("TILT 6 -4"), "OK TILT 6 -4")
         run(c, 2.0)
         self.assertAlmostEqual(imu.attitude.roll / DEG, 6, delta=1)
-        self.assertEqual(c.handle("LEVEL 1"), "IMU present 1 level 1")
+        self.assertEqual(c.handle("LEVEL 1"), "IMU present 1 level 1 feel 0")
         lines = run(c, 4.0)
         self.assertLess(abs(imu.attitude.roll / DEG), 0.7)
         self.assertLess(abs(imu.attitude.pitch / DEG), 0.7)
@@ -85,9 +85,48 @@ class LevelTest(unittest.TestCase):
         lines = run(c, 0.2)
         self.assertTrue(any(l.startswith("B ") for l in lines))
 
+    def test_tilt_safety_stop(self):
+        c, imu = self.make()
+        imu.ground_roll = 15 * DEG
+        c.handle("POSE 0 0 0 8 0 0")  # 15 + 8 = 23° > 20°
+        lines = []
+        for _ in range(8):
+            c.handle("MOVE 80 0 0")
+            lines += run(c, 0.25)
+        self.assertIn("TILT 1", lines)
+        self.assertTrue(c.robot.command.is_zero)
+        imu.ground_roll = 0.0
+        c.handle("POSE 0 0 0 0 0 0")
+        lines = []
+        for _ in range(12):
+            c.handle("MOVE 80 0 0")
+            lines += run(c, 0.25)
+        self.assertIn("TILT 0", lines)
+        self.assertFalse(c.robot.command.is_zero)
+
+    def test_feeling_the_ground_helps_on_bumpy_ground(self):
+        def walk(feel):
+            c, imu = self.make()
+            c.handle("TERRAIN 1")
+            c.handle("LEVEL 1")
+            self.assertEqual(c.handle("FEEL %d" % feel), "IMU present 1 level 1 feel %d" % feel)
+            tilt, air = [], []
+            for i in range(750):
+                if i % 25 == 0:
+                    c.handle("MOVE 60 0 0")
+                c.tick(0.02)
+                tilt.append(max(abs(v) for v in (imu.attitude.roll, imu.attitude.pitch)))
+                air.append(sum(1 for h in imu.air if h > 3))
+            return sum(tilt) / len(tilt), sum(air) / len(air), c.robot
+        tilt0, air0, _ = walk(0)
+        tilt1, air1, robot = walk(1)
+        self.assertLess(tilt1, tilt0)
+        self.assertLess(air1, air0)
+        self.assertTrue(any(robot.ground.values()))  # il a bien deviné des hauteurs
+
     def test_absent(self):
         c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
-        self.assertEqual(c.handle("IMU"), "IMU present 0 level 0")
+        self.assertEqual(c.handle("IMU"), "IMU present 0 level 0 feel 0")
         self.assertTrue(c.handle("LEVEL 1").startswith("ERR"))
 
 

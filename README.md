@@ -158,6 +158,23 @@ un pied au-dessus d'un trou reste en l'air. La 3D dessine le terrain. Premier es
 +5° doit se lire +5° ; sinon, corriger `IMU_AXES` dans `hexapod/imu.py`
 (orientation de la carte). Pilote pas encore essayé sur le robot.
 
+- **Sentir le sol avec le gyroscope** (même carte) : sans capteur au pied, le
+  robot devine le sol par la façon dont le corps bascule. Un pied qui descend
+  et tape un caillou soulève son coin : il arrête de descendre là. Juste après
+  la pose, un coin qui s'enfonce trahit un trou : ce pied s'allonge (jusqu'à
+  25 mm). Avec 3 pieds qui se posent ensemble, la bascule est attribuée au
+  pied le plus du côté qui bouge. Si le corps bascule vite, la marche ralentit
+  le temps que ça se calme. Sur le terrain simulé, avec l'auto-équilibrage :
+  corps penché de 1,0° en moyenne au lieu de 1,2°, et 25 % de pieds en moins
+  qui ne touchent pas, y compris avec un gyroscope bruité. Les seuils
+  (`TOUCH_RATE`, `EXTEND_SPEED` dans `hexapod/robot.py`) seront à régler sur
+  le vrai robot : les vibrations des servos peuvent faire croire à un contact.
+- **Arrêt de sécurité** (toujours actif avec le gyroscope) : corps penché de
+  plus de 20°, le robot s'arrête ; il repart revenu sous 12° depuis 1 s.
+- En simulation, un pied en l'air qui rencontre un caillou touche le terrain
+  et fait basculer le robot, et un pied allongé ou raccourci change son
+  appui.
+
 ## Organisation du code
 
 | Fichier | Rôle |
