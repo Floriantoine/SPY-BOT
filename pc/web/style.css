@@ -417,3 +417,23 @@ body.pilot .stick-zone label { display: none; }
 body.pilot .readout { left: 50%; right: auto; transform: translateX(-50%); top: 8px; }
 body.pilot .view-tools { top: 8px; bottom: auto; right: max(10px, env(safe-area-inset-right, 0px)); flex-direction: row; }
 body.pilot #cam-reset, body.pilot #cam-follow { display: grid; }
+
+/* Capteur avant */
+.sensor-card h3 { display: flex; align-items: center; justify-content: space-between; }
+.sensor-state { text-transform: none; letter-spacing: 0; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.sensor-state.idle { color: var(--text); }
+.sensor-state.good { color: var(--ok); background: rgba(52, 211, 153, .12); }
+.sensor-state.bad { color: var(--danger); background: rgba(248, 113, 113, .15); }
+.sensor-card .toggle { margin-bottom: 10px; }
+.sensor-card .toggle:has(input:disabled) { opacity: .5; cursor: default; }
+#radar { display: block; width: 100%; height: 170px; margin-top: 4px; border-radius: 10px; background: rgba(0, 0, 0, .22); border: 1px solid var(--line); }
+.sensor-card .sim-only { margin-top: 10px; }
+.sensor-card .sim-only .row { margin-bottom: 6px; }
+#obst-place.on { border-color: var(--accent); color: var(--accent); }
+.obstacle-alert {
+  position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
+  background: rgba(127, 29, 29, .85); border: 1px solid rgba(248, 113, 113, .6); color: #fee2e2;
+  padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; pointer-events: none;
+  box-shadow: 0 6px 20px rgba(248, 113, 113, .25);
+}
+.obstacle-alert[hidden] { display: none; }

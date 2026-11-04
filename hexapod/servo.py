@@ -87,6 +87,7 @@ class PCA9685Driver:
             i2c = I2C(0, sda=Pin(sda), scl=Pin(scl), freq=100000)  # 100 kHz : plus tolérant aux parasites des servos
         # Une carte absente ne bloque pas le démarrage : ses servos sont
         # ignorés et `missing` la signale au PC.
+        self.i2c = i2c  # partagé avec le capteur avant
         self.boards = []
         self.missing = []
         self.errors = 0  # écritures I²C échouées

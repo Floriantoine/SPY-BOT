@@ -26,6 +26,8 @@ const state = {
   legs: 6, // pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
   invert: {},
   selectedLeg: "RF",
+  sensor: { present: false, on: false, stop: 200, blocked: false },
+  sim: false,
 };
 
 const view = new RobotView($("#view"));
@@ -84,6 +86,17 @@ events.onmessage = (e) => {
     state.angles = [0, 1, 2, 3, 4, 5].map((i) => v.slice(3 * i, 3 * i + 3));
     return;
   }
+  if (kind === "S") {
+    const [angle, dist] = rest.split(" ").map(Number);
+    view.addScan(angle, dist);
+    radar.add(angle, dist);
+    return;
+  }
+  if (kind === "P") {
+    const [x, y, th] = rest.split(" ").map(Number);
+    view.setSimPose(x, y, th / 1000);
+    return;
+  }
   if (line === "OK PONG") return gotPong();
   log(line, kind === "ERR" ? "err" : "");
   if (kind === "GEOM") {
@@ -119,7 +132,24 @@ events.onmessage = (e) => {
     }
     if (cmd === "LEGS") showLegs(Number(leg));
     if (cmd === "SAVE") toast("Calibration enregistrée dans l'ESP32", "ok");
+  } else if (kind === "SENSOR") {
+    const f = rest.split(" ");
+    const value = (key) => Number(f[f.indexOf(key) + 1]);
+    Object.assign(state.sensor, { present: value("present") === 1, on: value("on") === 1, stop: value("stop") });
+    if (!state.sensor.on) state.sensor.blocked = false;
+    renderSensor();
+  } else if (kind === "OBSTACLE") {
+    state.sensor.blocked = rest === "1";
+    renderSensor();
+  } else if (kind === "OBST") {
+    const v = rest.trim() ? rest.trim().split(/\s+/).map(Number) : [];
+    const list = [];
+    for (let i = 0; i + 2 < v.length; i += 3) list.push([v[i], v[i + 1], v[i + 2]]);
+    view.setObstacles(list);
   } else if (kind === "HELLO") {
+    state.sim = rest.includes("simulation");
+    if (state.sim) send("OBST", true);
+    $("#sensor-sim").hidden = !state.sim;
     sendGait(); // le robot démarre avec ses propres réglages : on lui envoie ceux de l'interface
     if (state.legs !== 6) send(`LEGS ${state.legs}`, true);
     toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
@@ -160,7 +190,13 @@ function setConnected(connected, name = "") {
   btn.classList.toggle("connected", connected);
   $("#port").disabled = connected;
   if (connected && name) $("#port").value = name;
+  if (!connected) {
+    state.sim = false;
+    state.placing = false;
+    view.setObstacles([]);
+  }
   updateControls();
+  renderSensor();
 }
 
 function setMode(mode) {
@@ -437,10 +473,147 @@ let downAt = null;
 view.renderer.domElement.addEventListener("pointerdown", (e) => (downAt = [e.clientX, e.clientY]));
 view.renderer.domElement.addEventListener("pointerup", (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  if (state.placing && state.sim) {
+    const p = view.floorPointAt(e.clientX, e.clientY);
+    if (p) send(`OBST ADD ${Math.round(p.x)} ${Math.round(p.y)} 45`);
+    return;
+  }
   if (activeTab !== "cal" && activeTab !== "build") return;
   const hit = view.pick(e.clientX, e.clientY);
   if (hit) select(hit.leg, hit.joint, { turnCamera: false });
 });
+
+// ------------------------------------------------------------ capteur avant
+
+/** Vue radar : les mesures récentes du balayage, robot en bas au centre. */
+const radar = {
+  canvas: $("#radar"),
+  scans: new Map(), // angle -> { dist, t }
+  angle: null,
+  range: 1000, // mm au bord du radar
+  add(angle, dist) {
+    this.angle = angle;
+    this.scans.set(angle, { dist, t: performance.now() });
+  },
+  draw() {
+    const cv = this.canvas;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = cv.clientWidth || 320;
+    const h = Math.round(w * 0.53);
+    if (cv.width !== Math.round(w * dpr)) {
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+      cv.style.height = h + "px";
+    }
+    const ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h - 8, R = h - 16;
+    const k = R / this.range;
+    const on = state.sensor.on;
+    const toXY = (deg, d) => {
+      const a = (deg * Math.PI) / 180;
+      return [cx - Math.sin(a) * d * k, cy - Math.cos(a) * d * k];
+    };
+    // Grille : arcs tous les 25 cm, secteur du balayage (±60°) et champ de vue (±13,5°) en plus.
+    ctx.lineWidth = 1;
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.fillStyle = "#5b6577";
+    for (let d = 250; d <= this.range; d += 250) {
+      ctx.strokeStyle = d === this.range ? "rgba(255,255,255,.16)" : "rgba(255,255,255,.07)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, d * k, Math.PI + 0.1, -0.1);
+      ctx.stroke();
+      ctx.fillText(d / 1000 + " m", cx + 3, cy - d * k + 11);
+    }
+    // Zone d'arrêt devant le robot.
+    if (on) {
+      ctx.fillStyle = state.sensor.blocked ? "rgba(248,113,113,.22)" : "rgba(52,211,153,.10)";
+      const half = 165 * k, len = (state.sensor.stop + 16) * k;
+      ctx.fillRect(cx - half, cy - len, 2 * half, len);
+    }
+    ctx.strokeStyle = "rgba(255,255,255,.1)";
+    for (const deg of [-60, 0, 60]) {
+      const [x, y] = toXY(deg, this.range);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+    const now = performance.now();
+    if (on && this.angle !== null) {
+      // Faisceau actuel.
+      const a = (this.angle * Math.PI) / 180;
+      const half = (13.5 * Math.PI) / 180;
+      ctx.fillStyle = "rgba(248,113,113,.14)";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, R, -Math.PI / 2 - a - half, -Math.PI / 2 - a + half);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Mesures : plus elles sont proches, plus elles sont rouges ; elles pâlissent avec le temps.
+    for (const [deg, { dist, t }] of this.scans) {
+      const age = (now - t) / 4000;
+      if (age > 1 || !on) {
+        this.scans.delete(deg);
+        continue;
+      }
+      if (!(dist > 0)) continue;
+      const [x, y] = toXY(deg, Math.min(dist, this.range));
+      const near = dist < state.sensor.stop + 150;
+      ctx.globalAlpha = 1 - age * 0.8;
+      ctx.fillStyle = dist > this.range ? "#5b6577" : near ? "#f87171" : "#fbbf24";
+      ctx.beginPath();
+      ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Le robot.
+    ctx.fillStyle = "#4f8cff";
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 9);
+    ctx.lineTo(cx - 7, cy + 4);
+    ctx.lineTo(cx + 7, cy + 4);
+    ctx.closePath();
+    ctx.fill();
+    if (!on) {
+      ctx.fillStyle = "#8a94a6";
+      ctx.font = "13px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(state.sensor.present ? "Capteur coupé" : state.connected ? "Pas de capteur détecté" : "Robot non connecté", cx, cy - R / 2);
+      ctx.textAlign = "start";
+    }
+  },
+};
+
+function renderSensor() {
+  const { present, on, stop, blocked } = state.sensor;
+  const connected = state.connected;
+  const el = $("#sensor-state");
+  el.textContent = !connected ? "–" : !present ? "absent" : on ? (blocked ? "obstacle !" : "actif") : "détecté";
+  el.className = "sensor-state " + (!connected || !present ? "" : blocked ? "bad" : on ? "good" : "idle");
+  const box = $("#sensor-on");
+  box.disabled = !connected || !present;
+  box.checked = connected && on;
+  const slider = $("#sensor-stop");
+  if (document.activeElement !== slider) {
+    slider.value = stop;
+    sliders.sensorStop();
+  }
+  $("#obstacle-alert").hidden = !(connected && on && blocked);
+  view.setSensor(connected && present, connected && on);
+}
+
+sliders.sensorStop = bindSlider($("#sensor-stop"), (v) => `${v} mm`);
+$("#sensor-on").onchange = (e) => send(`SENSOR ${e.target.checked ? 1 : 0}`);
+$("#sensor-stop").addEventListener("change", (e) => send(`SENSOR STOP ${e.target.value}`));
+$("#obst-clear").onclick = () => send("OBST CLEAR");
+$("#obst-place").onclick = () => {
+  state.placing = !state.placing;
+  $("#obst-place").classList.toggle("on", state.placing);
+  $("#obst-place").textContent = state.placing ? "Clique sur le sol…" : "Placer un obstacle";
+};
 
 // ----------------------------------------------------------------- montage
 
@@ -852,10 +1025,12 @@ function frame() {
   updateLimits();
   view.update(state.angles);
   view.render();
+  if (activeTab === "drive") radar.draw();
   requestAnimationFrame(frame);
 }
 
 updateControls();
 renderSelection();
+renderSensor();
 refreshPorts();
 requestAnimationFrame(frame);

@@ -114,6 +114,19 @@ Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Nor
 - **Servo à l'envers** : si une patte réelle part dans le sens opposé à la 3D pendant **Tester ce servo**, **Inverser le sens** corrige ce servo (enregistré avec les trims).
 - **Calibration** : **Exporter** télécharge les trims dans un fichier, **Importer** les recharge (par exemple après avoir reflashé l'ESP32), puis **Enregistrer** les garde dans le robot.
 
+## Capteur avant (VL53L1X)
+
+Capteur de distance VL53L1X sur un servo de balayage (MG92B, carte 0x41,
+canal 11), branché sur le même bus I²C que les PCA9685 (adresse 0x29, VIN sur
+le 3,3 V de l'ESP32). Au démarrage, le robot dit s'il l'a trouvé ; dans
+l'onglet **Pilotage**, la carte « Capteur avant » l'active ou le coupe, règle
+la distance d'arrêt et montre une vue radar. Actif, il balaye ±60° (resserré
+autour de la direction suivie en marche) et coupe l'avance si un obstacle est
+dans le couloir des pattes à moins de la distance d'arrêt : tourner et reculer
+restent possibles. En simulation, le capteur est simulé et des obstacles
+virtuels (cylindres) se placent d'un clic sur le sol. Le pilote du vrai
+capteur (`hexapod/sensor.py`) n'a pas encore été essayé sur le robot.
+
 ## Organisation du code
 
 | Fichier | Rôle |

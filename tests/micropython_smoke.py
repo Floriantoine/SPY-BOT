@@ -9,6 +9,7 @@ sys.path.insert(0, ".")
 
 from hexapod import default_config  # noqa: E402
 from hexapod.controller import Controller  # noqa: E402
+from hexapod.sensor import SimRanger  # noqa: E402
 from hexapod.servo import DryRunDriver  # noqa: E402
 
 driver = DryRunDriver()
@@ -54,4 +55,19 @@ assert ctrl.handle("SAVE") == "OK SAVE"
 assert ctrl.handle("GETCAL").startswith("CAL ")
 assert ctrl.handle("GEOM").startswith("GEOM ")
 assert len(driver.angles) == 18
+
+# Capteur avant simulé : un obstacle droit devant arrête l'avance.
+ctrl = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-smoke-calib.json", SimRanger([(400, 0, 40)]))
+assert ctrl.handle("SENSOR 1") == "SENSOR present 1 on 1 stop 200"
+ctrl.handle("STAND")
+run(4)
+out = []
+for _ in range(80):
+    ctrl.handle("MOVE 80 0 0")
+    for _ in range(5):
+        line = ctrl.tick(0.02)
+        if line:
+            out += line.split("\n")
+assert "OBSTACLE 1" in out, "obstacle"
+assert ctrl.odom[0] < 400 - 40 - 150, ctrl.odom
 print("MicroPython OK")

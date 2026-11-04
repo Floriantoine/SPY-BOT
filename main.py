@@ -14,6 +14,7 @@ import time
 
 from hexapod import default_config
 from hexapod.controller import Controller
+from hexapod.sensor import VL53L1X
 from hexapod.servo import PCA9685Driver
 
 LOOP_MS = 20  # 50 Hz
@@ -53,12 +54,15 @@ def read_commands(ctrl, poll, buf):
 
 def main():
     driver = PCA9685Driver()
-    ctrl = Controller(default_config(), driver, "calib.json")
+    # Capteur avant (VL53L1X) sur le même bus I²C, s'il est branché.
+    ranger = VL53L1X.probe(driver.i2c)
+    ctrl = Controller(default_config(), driver, "calib.json", ranger)
     poll = select.poll()
     poll.register(sys.stdin, select.POLLIN)
     buf = ""
     print("HELLO SPY-BOT")
     print("OK BOOT " + reset_cause())
+    print(ctrl.scanner.status())
     for address in driver.missing:
         print("ERR carte PCA9685 0x%02x absente : ses servos sont ignores" % address)
     last = time.ticks_ms()

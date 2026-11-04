@@ -63,6 +63,7 @@
         <label>Rotation sur place</label>
       </div>
       <div id="locked" class="locked">Lève le robot pour le piloter</div>
+      <div id="obstacle-alert" class="obstacle-alert" hidden>Obstacle devant : avance bloquée</div>
 
       <div class="view-tools">
         <button class="icon" id="pilot" title="Mode pilote plein écran">
@@ -114,6 +115,20 @@
             <input id="period" type="range" min="0.4" max="3" step="0.1" value="1.4"></div>
           <div class="field"><span>Levée du pied</span><output></output>
             <input id="step" type="range" min="5" max="19" step="1" value="19"></div>
+        </div>
+        <div class="card sensor-card" id="sensor-card">
+          <h3>Capteur avant <span class="sensor-state" id="sensor-state">–</span></h3>
+          <label class="toggle"><input type="checkbox" id="sensor-on" disabled> Balayage et arrêt devant les obstacles</label>
+          <div class="field"><span>Distance d'arrêt</span><output></output>
+            <input id="sensor-stop" type="range" min="100" max="600" step="25" value="200"></div>
+          <canvas id="radar" width="320" height="170" aria-label="Vue radar du capteur avant"></canvas>
+          <div class="sim-only" id="sensor-sim" hidden>
+            <div class="row">
+              <button class="btn ghost" id="obst-place" title="Puis clique sur le sol de la vue 3D">Placer un obstacle</button>
+              <button class="btn ghost" id="obst-clear">Tout effacer</button>
+            </div>
+            <p class="hint">Obstacles virtuels de la simulation : le capteur simulé les voit comme le vrai.</p>
+          </div>
         </div>
         <div class="card keys">
           <h3>Raccourcis</h3>

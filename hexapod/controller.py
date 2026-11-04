@@ -27,12 +27,24 @@ Commandes (une par ligne, PC -> robot) :
     GETCAL                        -> CAL {"RF": [coxa, femur, tibia], ...,
                                           "invert": {"RF": [0, 1, 0], ...}}
     GEOM                          -> GEOM {...} géométrie du robot (pour la vue 3D)
+    SENSOR                        -> SENSOR present 0|1 on 0|1 stop <mm> : capteur avant
+    SENSOR 1|0                    balayage et arrêt automatique activés / coupés
+    SENSOR STOP mm                distance d'arrêt devant un obstacle
+    OBST                          (simulation) -> OBST x y r x y r ... obstacles virtuels
+    OBST ADD x y r | OBST CLEAR   (simulation) ajoute un cylindre / efface tout
 
 Réponses (robot -> PC) : `OK ...`, `ERR ...`, `CAL {...}`, et ~20 fois par
 seconde une ligne de télémétrie :
 
     T <mode> <phase> <18 angles en milliradians, pattes RF RM RR LF LM LR,
        coxa fémur tibia pour chacune>
+
+Avec le capteur avant activé, en plus :
+
+    S <angle> <distance>          une mesure : angle du balayage (deg, + à
+                                  gauche), distance en mm (0 = rien en vue)
+    OBSTACLE 1|0                  la marche demandée est bloquée / libre
+    P <x> <y> <cap>               (simulation) position du robot (mm, mrad)
 """
 
 import json
@@ -43,6 +55,7 @@ from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
 from .robot import Hexapod
+from .sensor import STOP_RANGE, Scanner
 
 DEG = math.pi / 180.0
 
@@ -71,8 +84,12 @@ JOINTS = ("coxa", "femur", "tibia")
 
 
 class Controller:
-    def __init__(self, config, driver, calib_path="calib.json"):
+    def __init__(self, config, driver, calib_path="calib.json", ranger=None):
         self.robot = Hexapod(config, driver)
+        # Capteur avant : `ranger` = VL53L1X, SimRanger (simulation) ou None (absent).
+        self.scanner = Scanner(ranger, driver)
+        self.wanted = GaitCommand()  # consigne MOVE, avant le filtre d'obstacle
+        self.odom = (0.0, 0.0, 0.0)  # position estimée du robot sur le sol (mm, mm, rad)
         self.driver = driver
         self.calib_path = calib_path
         self.mode = OFF
@@ -89,10 +106,14 @@ class Controller:
     def tick(self, dt):
         """À appeler à ~50 Hz. Retourne la ligne de télémétrie quand il le faut."""
         r = self.robot
+        lines = []
+        if self.mode != STAND:
+            self.wanted = GaitCommand()
         if self.mode == STAND:
             self.since_move += dt
             if self.since_move > WATCHDOG:
-                r.command = GaitCommand()
+                self.wanted = GaitCommand()
+            r.command = self._filter(self.wanted, lines)
         elif self.mode == STANDING:
             self.height = min(0.0, self.height + self.sit_drop / RISE_TIME * dt)
             if self.height == 0.0:
@@ -125,12 +146,19 @@ class Controller:
             except UnreachableError:
                 # On garde la dernière position atteignable.
                 r.command = GaitCommand()
+            self._integrate(r.travel)
+
+        if self.mode != OFF:  # servos relâchés : le balayage attend
+            lines += self.scanner.tick(dt, self.odom, self.wanted)
 
         self.since_telemetry += dt
         if self.since_telemetry >= TELEMETRY_PERIOD:
             self.since_telemetry = 0.0
-            return self.telemetry()
-        return None
+            lines.append(self.telemetry())
+            if self.scanner.enabled and hasattr(self.scanner.ranger, "obstacles"):
+                x, y, th = self.odom
+                lines.append("P %d %d %d" % (round(x), round(y), round(th * 1000)))
+        return "\n".join(lines) if lines else None
 
     def telemetry(self):
         values = []
@@ -192,7 +220,8 @@ class Controller:
     def cmd_move(self, vx, vy, yaw):
         if self.mode != STAND:
             return "ERR MOVE : le robot doit être debout"
-        self.robot.command = GaitCommand(float(vx), float(vy), float(yaw) * DEG)
+        self.wanted = GaitCommand(float(vx), float(vy), float(yaw) * DEG)
+        self.robot.command = self._filter(self.wanted, [])
         self.since_move = 0.0
         return None  # envoyé en continu : pas d'accusé de réception
 
@@ -272,6 +301,31 @@ class Controller:
 
     def cmd_geom(self):
         return "GEOM " + json.dumps(self.robot.config.to_dict())
+
+    def cmd_sensor(self, *args):
+        sc = self.scanner
+        if args and args[0].upper() == "STOP":
+            lo, hi = STOP_RANGE
+            sc.stop_dist = max(lo, min(hi, float(args[1])))
+        elif args:
+            if args[0] == "1" and not sc.present:
+                return "ERR SENSOR : capteur avant absent"
+            sc.enable(args[0] == "1")
+        return sc.status()
+
+    def cmd_obst(self, *args):
+        ranger = self.scanner.ranger
+        if not hasattr(ranger, "obstacles"):
+            return "ERR OBST : seulement en simulation"
+        if args and args[0].upper() == "ADD":
+            x, y, r = float(args[1]), float(args[2]), float(args[3])
+            if len(ranger.obstacles) < 40:
+                ranger.obstacles.append((x, y, max(10.0, min(300.0, r))))
+        elif args and args[0].upper() == "CLEAR":
+            del ranger.obstacles[:]
+        elif args:
+            raise ValueError("ADD x y r ou CLEAR")
+        return "OBST " + " ".join("%d %d %d" % (x, y, r) for x, y, r in ranger.obstacles)
 
     # --- calibration ------------------------------------------------------
 
@@ -374,6 +428,25 @@ class Controller:
 
     def _calibration_angles(self):
         return {leg.name: LegAngles(*CALIBRATION_POSE) for leg in self.robot.config.legs}
+
+    def _filter(self, wanted, lines):
+        """Consigne envoyée à la démarche : l'avance est coupée si un obstacle
+        barre le chemin (tourner et reculer restent possibles)."""
+        sc = self.scanner
+        was = sc.blocked
+        blocked = sc.check(self.odom, wanted)
+        if blocked != was:
+            lines.append("OBSTACLE %d" % blocked)
+        if blocked:
+            return GaitCommand(0.0, 0.0, wanted.yaw_rate)
+        return wanted
+
+    def _integrate(self, travel):
+        dx, dy, dth = travel
+        x, y, th = self.odom
+        mid = th + dth / 2
+        c, s = math.cos(mid), math.sin(mid)
+        self.odom = (x + c * dx - s * dy, y + s * dx + c * dy, th + dth)
 
     def _safe_solve(self):
         try:

@@ -47,6 +47,7 @@ class Hexapod:
         self.pose = BodyPose()
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}  # pied - neutre (mm)
         self._lift = {}  # pieds en l'air : position (dx, dy) au moment de se lever
+        self.travel = (0.0, 0.0, 0.0)  # déplacement du corps au dernier update (mm, mm, rad, repère corps)
 
     def set_legs(self, n):
         """Passe en marche à 6 ou 4 pattes. Seulement à l'arrêt, pieds au sol."""
@@ -228,6 +229,8 @@ class Hexapod:
             dx, dy, _ = self.offsets[n]
             mx, my = moves[n]
             self.offsets[n] = (dx + mx * k, dy + my * k, 0.0)
+        # Pieds posés fixes au sol : le corps a avancé de la consigne suivie × k.
+        self.travel = (cmd.vx * k * dt, cmd.vy * k * dt, cmd.yaw_rate * k * dt) if stance else (0.0, 0.0, 0.0)
         for n in QUAD_TUCKED if self.legs == 4 else ():
             self.offsets[n] = (0.0, 0.0, 0.0)  # repliée : voir solve()
 

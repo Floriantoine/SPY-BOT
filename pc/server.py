@@ -24,6 +24,7 @@ sys.path.insert(0, ROOT)
 
 from hexapod import default_config  # noqa: E402
 from hexapod.controller import Controller  # noqa: E402
+from hexapod.sensor import SimRanger  # noqa: E402
 from hexapod.servo import DryRunDriver  # noqa: E402
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -68,7 +69,9 @@ class SimLink:
     def __init__(self, on_line):
         self.on_line = on_line
         calib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_calib.json")
-        self.ctrl = Controller(default_config(), DryRunDriver(), calib)
+        # Capteur avant simulé, avec quelques obstacles virtuels pour commencer.
+        ranger = SimRanger([(450.0, 0.0, 40.0), (350.0, 320.0, 50.0), (750.0, -260.0, 60.0)])
+        self.ctrl = Controller(default_config(), DryRunDriver(), calib, ranger)
         self.inbox = queue.Queue()
         self.running = True
         threading.Thread(target=self._loop, daemon=True).start()
@@ -89,9 +92,9 @@ class SimLink:
                 if reply:
                     self.on_line(reply)
             now = time.monotonic()
-            line = self.ctrl.tick(now - last)
+            lines = self.ctrl.tick(now - last)
             last = now
-            if line:
+            for line in lines.split("\n") if lines else ():
                 self.on_line(line)
             time.sleep(0.02)
 
@@ -181,6 +184,7 @@ class App:
         try:
             self.send("GEOM")
             self.send("GETCAL")
+            self.send("SENSOR")
         except RuntimeError:
             pass
 

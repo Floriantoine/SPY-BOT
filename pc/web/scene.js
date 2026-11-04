@@ -10,7 +10,11 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
-const REF_TIBIA = 89.07; // longueur du tibia de hexapod-v2-7697, sert d'échelle
+const REF_TIBIA = 89.07;
+// Capteur avant (VL53L1X) sur son servo de balayage, repère robot (mm).
+const SENSOR = { axisX: 8, chip: 8, z: 71, fov: (27 * Math.PI) / 180, minRange: 120 };
+const SCAN_LIFE = 4000; // ms : une mesure s'efface au bout de ce temps
+const SCAN_MAX = 600; // longueur du tibia de hexapod-v2-7697, sert d'échelle
 const TRACE_POINTS = 150; // ~2,5 s d'historique par pied à 60 images/s
 
 const COLORS = {
@@ -95,12 +99,14 @@ export class RobotView {
     this.grid = new THREE.GridHelper(2000, 80, 0x2a3446, 0x1a212d);
     this.grid.rotation.x = Math.PI / 2; // grille dans le plan xy du repère robot
     this.track.add(this.grid);
+    this.groundZ = 0;
 
     // Tout le robot est construit dans son propre repère.
     this.robot = new THREE.Group();
     this.robot.matrixAutoUpdate = false;
     this.robot.matrix.copy(ROBOT_TO_THREE);
     scene.add(this.robot);
+    this._buildSensorLayer();
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 1, 5000);
     this.controls = new OrbitControls(this.camera, renderer.domElement);
@@ -169,6 +175,7 @@ export class RobotView {
   setGeometry(geom, resetCamera = true) {
     this.geom = geom;
     this.robot.clear();
+    this.robot.add(this.sensorHead);
     this.parts = [];
     for (const leg of this.legs) this.scene.remove(leg.contact);
     const k = geom.tibia / REF_TIBIA;
@@ -483,6 +490,7 @@ export class RobotView {
     const tolerance = Math.max(1.5, 0.02 * this.geom.tibia);
     this._odometry(tips.map((p, i) => (p.y - footR - lowest < tolerance ? this.robot.worldToLocal(p.clone()) : null)));
     this._updateTrack(lowest);
+    this._updateSensor(lowest);
     const sel = this.selection;
 
     this.legs.forEach((leg, i) => {
@@ -559,6 +567,152 @@ export class RobotView {
     // Pied fixe au sol : a = d + R(dth)·b  ->  d = a - R(dth)·b (repère robot précédent).
     const c = Math.cos(dth), s = Math.sin(dth);
     return { dx: ax - (c * bx - s * by), dy: ay - (s * bx + c * by), dth };
+  }
+
+  // --------------------------------------------------------- capteur avant
+
+  _buildSensorLayer() {
+    // Tête du capteur : support, servo de balayage et plaquette, au-dessus du corps.
+    this.sensorHead = new THREE.Group();
+    this.sensorHead.position.set(SENSOR.axisX, 0, SENSOR.z);
+    this.sensorHead.visible = false;
+    // Servo de balayage (MG92B couché sur son socle) sous la tête.
+    const servo = new THREE.Mesh(new THREE.BoxGeometry(23, 12, 22), new THREE.MeshStandardMaterial({ color: COLORS.servo, roughness: 0.4 }));
+    servo.position.set(-5.6, 0, -20);
+    this.sensorHead.add(servo);
+    const pan = new THREE.Group();
+    this.sensorHead.add(pan);
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(12, 30, 3), new THREE.MeshStandardMaterial({ color: COLORS.frame, roughness: 0.55 }));
+    bracket.position.set(SENSOR.chip / 2, 0, -7);
+    pan.add(bracket);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(2, 25, 11), new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.5 }));
+    board.position.x = SENSOR.chip;
+    pan.add(board);
+    const chip = new THREE.Mesh(new THREE.BoxGeometry(1.5, 5, 3), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+    chip.position.x = SENSOR.chip + 1.5;
+    pan.add(chip);
+    // Faisceau : un éventail de 27° jusqu'à la dernière distance mesurée.
+    const fan = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 24, -SENSOR.fov / 2, SENSOR.fov),
+      new THREE.MeshBasicMaterial({ color: 0xf87171, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    fan.position.x = SENSOR.chip;
+    pan.add(fan);
+    this.sensorPan = pan;
+    this.sensorFan = fan;
+    this.robot.add(this.sensorHead);
+
+    // Mesures récentes, posées sur le sol (repère du sol, elles restent en place quand le robot avance).
+    this.scans = [];
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(SCAN_MAX * 3), 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(SCAN_MAX * 3), 3));
+    this.scanPoints = new THREE.Points(geo, new THREE.PointsMaterial({ size: 16, vertexColors: true, sizeAttenuation: true }));
+    this.scanPoints.frustumCulled = false;
+    this.track.add(this.scanPoints);
+
+    // Obstacles virtuels (simulation), placés dans le repère du robot simulé.
+    this.obstacles = new THREE.Group();
+    this.track.add(this.obstacles);
+    this.obstacleMat = new THREE.MeshStandardMaterial({ color: 0x8b93a7, roughness: 0.8, transparent: true, opacity: 0.85 });
+    this.simToTrack = null; // repère de la simulation -> repère du sol affiché
+    this._obstacleList = [];
+  }
+
+  /** Capteur présent et actif : affiche la tête et le faisceau. */
+  setSensor(present, on) {
+    this.sensorHead.visible = present;
+    this.sensorFan.visible = on;
+    if (!on) this.scans = [];
+  }
+
+  /** Une mesure : angle du balayage (degrés, + à gauche), distance (mm, 0 = rien en vue). */
+  addScan(angleDeg, dist) {
+    const a = (angleDeg * Math.PI) / 180;
+    this.sensorPan.rotation.z = a;
+    const len = dist > 0 ? dist : 400;
+    this.sensorFan.scale.setScalar(len);
+    this.sensorFan.material.opacity = dist > 0 ? 0.2 : 0.07;
+    if (!(dist > 0)) return;
+    const bx = SENSOR.axisX + Math.cos(a) * (SENSOR.chip + dist);
+    const by = Math.sin(a) * (SENSOR.chip + dist);
+    const o = this.odo;
+    const c = Math.cos(o.th), s = Math.sin(o.th);
+    this.scans.push({ x: o.x + c * bx - s * by, y: o.y + s * bx + c * by, t: performance.now(), d: dist });
+    if (this.scans.length > SCAN_MAX) this.scans.shift();
+  }
+
+  /** Position du robot simulé (x, y, cap) : recale les obstacles sur le sol affiché. */
+  setSimPose(x, y, th) {
+    const o = this.odo;
+    // Écart entre la position simulée et celle déduite des pieds : on ne
+    // recale que s'il devient visible (sinon les obstacles tremblent un peu
+    // à chaque message, qui n'arrive pas en même temps que l'image).
+    const dth = o.th - th;
+    const c = Math.cos(dth), s = Math.sin(dth);
+    const off = { th: dth, x: o.x - (c * x - s * y), y: o.y - (s * x + c * y) };
+    const prev = this._simOffset;
+    if (prev && Math.hypot(off.x - prev.x, off.y - prev.y) < 15 && Math.abs(off.th - prev.th) < 0.03) return;
+    this._simOffset = off;
+    this.simToTrack = new THREE.Matrix4().makeRotationZ(off.th).setPosition(off.x, off.y, 0);
+    this._placeObstacles();
+  }
+
+  setObstacles(list) {
+    this._obstacleList = list;
+    this._placeObstacles();
+  }
+
+  _placeObstacles() {
+    const g = this.obstacles;
+    g.clear();
+    const m = this.simToTrack || new THREE.Matrix4();
+    for (const [x, y, r] of this._obstacleList) {
+      const h = 130;
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 32), this.obstacleMat);
+      mesh.rotation.x = Math.PI / 2; // cylindre debout dans le repère robot (z haut)
+      const p = new THREE.Vector3(x, y, 0).applyMatrix4(m);
+      mesh.position.set(p.x, p.y, this.groundZ + h / 2);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    }
+  }
+
+  /** Point du sol sous la souris, dans le repère de la simulation (ou null). */
+  floorPointAt(clientX, clientY) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.ground.position.y);
+    const hit = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    if (!hit) return null;
+    const p = this.track.worldToLocal(hit);
+    if (this.simToTrack) p.applyMatrix4(this.simToTrack.clone().invert());
+    return { x: p.x, y: p.y };
+  }
+
+  _updateSensor(groundY) {
+    if (Math.abs(groundY - this.groundZ) > 0.5) {
+      this.groundZ = groundY;
+      this._placeObstacles();
+    }
+    const now = performance.now();
+    while (this.scans.length && now - this.scans[0].t > SCAN_LIFE) this.scans.shift();
+    const pos = this.scanPoints.geometry.attributes.position;
+    const col = this.scanPoints.geometry.attributes.color;
+    const near = new THREE.Color(0xef4444);
+    const far = new THREE.Color(0xfbbf24);
+    const c = new THREE.Color();
+    this.scans.forEach((p, i) => {
+      pos.array.set([p.x, p.y, groundY + 3], i * 3);
+      const fade = 1 - (now - p.t) / SCAN_LIFE;
+      c.copy(far).lerp(near, Math.max(0, Math.min(1, 1 - (p.d - 150) / 600))).multiplyScalar(0.25 + 0.75 * fade);
+      col.array.set([c.r, c.g, c.b], i * 3);
+    });
+    this.scanPoints.geometry.setDrawRange(0, this.scans.length);
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
   }
 
   _updateTrack(groundY) {
