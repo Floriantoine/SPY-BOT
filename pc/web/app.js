@@ -300,34 +300,70 @@ const keys = new Set();
 
 const isTyping = (e) => ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && e.target.type !== "range";
 
+// Touches repérées par leur position sur le clavier (e.code), pas par leur
+// lettre : mêmes touches en AZERTY (Z Q S D, A E), QWERTY (W A S D, Q E) ou
+// Dvorak (, A O E, ' .). Les flèches marchent aussi (sauf en calibration).
+const DRIVE_KEYS = {
+  KeyW: "fwd", KeyS: "back", KeyA: "left", KeyD: "right", KeyQ: "turnL", KeyE: "turnR",
+  ArrowUp: "fwd", ArrowDown: "back", ArrowLeft: "left", ArrowRight: "right",
+};
+const driveKey = (e) => {
+  const action = DRIVE_KEYS[e.code];
+  if (!action || e.ctrlKey || e.metaKey || e.altKey) return null;
+  if (e.code.startsWith("Arrow") && activeTab === "cal") return null; // flèches : réglage des trims
+  return action;
+};
+
 document.addEventListener("keydown", (e) => {
-  if (isTyping(e) || e.repeat && !"zqsdae".includes(e.key.toLowerCase())) return;
-  const k = e.key.toLowerCase();
-  if ("zqsdae".includes(k) && k.length === 1) {
-    keys.add(k);
+  if (isTyping(e)) return;
+  const action = driveKey(e);
+  if (action) {
+    keys.add(action);
     e.preventDefault();
-  } else if (k === "shift") {
+    return;
+  }
+  if (e.repeat) return;
+  if (e.key === "Shift") {
     keys.add("shift");
-  } else if (k === " ") {
+  } else if (e.code === "Space") {
     keys.clear();
     e.preventDefault();
-  } else if (k === "l" && !e.repeat) {
+  } else if (e.code === "KeyL") {
     $("#btn-stand").click();
-  } else if (k === "escape") {
+  } else if (e.key === "Escape") {
     send("POWER 0");
   }
 });
-document.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+document.addEventListener("keyup", (e) => {
+  const action = DRIVE_KEYS[e.code];
+  if (action) keys.delete(action);
+  if (e.key === "Shift") keys.delete("shift");
+});
 window.addEventListener("blur", () => keys.clear());
 
 function readKeyboard() {
   const has = (k) => (keys.has(k) ? 1 : 0);
   const gain = keys.has("shift") ? 1 : 0.5;
-  let x = has("d") - has("q");
-  let y = has("z") - has("s");
+  let x = has("right") - has("left");
+  let y = has("fwd") - has("back");
   const n = Math.hypot(x, y) || 1;
-  return { x: (x / n) * gain, y: (y / n) * gain, turn: (has("e") - has("a")) * gain };
+  return { x: (x / n) * gain, y: (y / n) * gain, turn: (has("turnR") - has("turnL")) * gain };
 }
+
+// Aide : les lettres réelles de ces touches sur le clavier de l'utilisateur.
+(async () => {
+  const hint = $("#keys-hint");
+  let label = (code, fallback) => fallback;
+  try {
+    const map = await navigator.keyboard?.getLayoutMap?.();
+    if (map) label = (code, fallback) => (map.get(code) || fallback).toUpperCase();
+  } catch {}
+  const k = (code, fallback) => `<kbd>${label(code, fallback)}</kbd>`;
+  hint.innerHTML =
+    `Clavier : ${k("KeyW", "Z")} ${k("KeyA", "Q")} ${k("KeyS", "S")} ${k("KeyD", "D")} ou les flèches pour avancer, ` +
+    `${k("KeyQ", "A")} ${k("KeyE", "E")} pour tourner, <kbd>Maj</kbd> pleine vitesse, <kbd>Espace</kbd> stop, ` +
+    `${k("KeyL", "L")} debout / assis, <kbd>Échap</kbd> relâcher.`;
+})();
 
 // Manette (API Gamepad) : stick gauche déplacement, stick droit rotation.
 const padButtons = {};

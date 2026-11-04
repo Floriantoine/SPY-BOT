@@ -11,7 +11,12 @@ from .servo import DryRunDriver, ik_to_servo_deg
 # La consigne de marche change progressivement (démarrages et arrêts doux).
 ACCEL = 250.0  # mm/s²
 YAW_ACCEL = 1.5  # rad/s²
-SETTLED = 0.5  # mm : pied considéré revenu à sa position neutre
+# Au lâcher, le robot freine plus fort qu'il n'accélère (le pied en l'air
+# vise alors sa place), et il s'arrête dès que tous les pieds sont posés à
+# moins de STOP_TOL de leur place (pas de pas de plus juste pour les recentrer).
+DECEL = 600.0  # mm/s²
+YAW_DECEL = 4.0  # rad/s²
+STOP_TOL = 20.0  # mm
 TUCK_TIME = 1.0  # s pour replier ou déplier les pattes du milieu
 # Patte repliée : fémur relevé de 55°, tibia replié de 15° vers le corps (pied
 # ~4 cm au-dessus du sol debout, ~2 cm assis), dans la course des servos et
@@ -114,7 +119,11 @@ class Hexapod:
             raise ValueError("arrêter le robot d'abord")
         self.legs = n
         self.gait = self.quad if n == 4 else self.tripod
-        self.reset_gait()
+        # Les pieds restent où ils sont (posés, à moins de STOP_TOL de leur place).
+        self.gait.reset()
+        self.current = GaitCommand()
+        self._lift = {}
+        self._placed = set()
 
     def reset_gait(self):
         self.gait.reset()
@@ -191,9 +200,10 @@ class Hexapod:
         # Pas de marche tant que les pattes du milieu bougent.
         target = self.command if self.tuck_settled else GaitCommand()
         c = self.current
-        self.current = GaitCommand(_approach(c.vx, target.vx, ACCEL * dt),
-                                   _approach(c.vy, target.vy, ACCEL * dt),
-                                   _approach(c.yaw_rate, target.yaw_rate, YAW_ACCEL * dt))
+        self.current = GaitCommand(_approach(c.vx, target.vx, _rate(c.vx, target.vx, ACCEL, DECEL) * dt),
+                                   _approach(c.vy, target.vy, _rate(c.vy, target.vy, ACCEL, DECEL) * dt),
+                                   _approach(c.yaw_rate, target.yaw_rate,
+                                             _rate(c.yaw_rate, target.yaw_rate, YAW_ACCEL, YAW_DECEL) * dt))
         self._home_wait -= dt
         if self._home_wait <= 0.0 and self._refresh_home():
             self._home_wait = HOME_PERIOD
@@ -278,7 +288,7 @@ class Hexapod:
         # et cette place pas trop loin de la meilleure pour la pose actuelle.
         for n, o in self.offsets.items():
             h, g = self.home[n], self.home_goal[n]
-            if abs(o[0] - h[0]) >= SETTLED or abs(o[1] - h[1]) >= SETTLED:
+            if (o[0] - h[0]) ** 2 + (o[1] - h[1]) ** 2 > STOP_TOL * STOP_TOL:
                 return False
             if self.replace_feet and (h[0] - g[0]) ** 2 + (h[1] - g[1]) ** 2 > HOME_REPLACE * HOME_REPLACE:
                 return False
@@ -553,6 +563,11 @@ def neighbours_ok(angles):
 
 def angles_ok(config, angles):
     return all(leg_ok(leg, angles[leg.name]) for leg in config.legs) and neighbours_ok(angles)
+
+
+def _rate(value, target, accel, decel):
+    """Freinage (vers zéro, ou changement de sens) plus fort que l'accélération."""
+    return accel if value * target > 0 and abs(target) > abs(value) else decel if value else accel
 
 
 def _approach(value, target, step):

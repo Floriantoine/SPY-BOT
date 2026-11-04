@@ -253,3 +253,22 @@ class SmoothStartStopTest(unittest.TestCase):
                     self.assertLess(abs(value - prev[key]), 8.0, (legs, i, key))
                 prev = dict(driver.angles)
             self.assertTrue(c.robot.gait.at_rest)
+
+
+class StopTest(unittest.TestCase):
+    def test_stops_within_one_step_after_release(self):
+        c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
+        c.handle("POWER 1")
+        c.handle("STAND")
+        run(c, 3.0)
+        for release in (0.2, 0.5, 0.65):
+            for i in range(int((2.0 + release) / 0.02)):
+                if i % 25 == 0:
+                    c.handle("MOVE 100 0 0")
+                c.tick(0.02)
+            c.handle("MOVE 0 0 0")
+            t = 0.0
+            while not c.robot.at_rest:
+                c.tick(0.02)
+                t += 0.02
+                self.assertLess(t, 0.9, release)  # le pas en cours, plus au plus un
