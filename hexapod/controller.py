@@ -53,6 +53,10 @@ seconde une ligne de télémétrie :
 
     T <mode> <phase> <18 angles en milliradians, pattes RF RM RR LF LM LR,
        coxa fémur tibia pour chacune>
+    M <v réelle> <v demandée> <marge> <pose> <levée> <tick>
+                                  mesures : vitesses en mm/s, plus petite marge
+                                  d'un servo à sa butée en 0,1°, pose et levée
+                                  gardées en %, plus long tick de la boucle en µs
 
 Avec le capteur avant activé, en plus :
 
@@ -79,7 +83,18 @@ import os
 from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
-from .robot import Hexapod
+from .robot import Hexapod, leg_margin
+
+try:  # MicroPython
+    from time import ticks_diff, ticks_us
+except ImportError:  # PC
+    from time import perf_counter
+
+    def ticks_us():
+        return int(perf_counter() * 1e6)
+
+    def ticks_diff(a, b):
+        return a - b
 from .imu import Leveler
 from .nav import Navigator
 from .sensor import STOP_RANGE, Scanner
@@ -130,6 +145,8 @@ class Controller:
         self.user_pose = BodyPose()
         self.pose_limited = False  # pose réduite pour rester dans la course des servos
         self._free_time = 0.0
+        self._went = 0.0  # mm parcourus depuis la dernière ligne M
+        self._tick_us = 0  # plus long tick depuis la dernière ligne M
         self.since_move = 0.0
         self.since_telemetry = TELEMETRY_PERIOD
         self.angles = self._safe_solve() or self._zero_angles()
@@ -139,6 +156,7 @@ class Controller:
 
     def tick(self, dt):
         """À appeler à ~50 Hz. Retourne la ligne de télémétrie quand il le faut."""
+        t0 = ticks_us()
         r = self.robot
         lines, self._pending = self._pending, []
         if self.mode != STAND:
@@ -192,6 +210,7 @@ class Controller:
                 # On garde la dernière position atteignable.
                 r.command = GaitCommand()
             self._integrate(r.travel)
+            self._went += math.hypot(r.travel[0], r.travel[1])
             # Pose réduite par le robot (servos en butée sinon) : prévenir l'appli.
             self._free_time = 0.0 if r.pose_scale < 0.99 else self._free_time + dt
             if r.pose_scale < 0.95 and not self.pose_limited:
@@ -216,8 +235,9 @@ class Controller:
 
         self.since_telemetry += dt
         if self.since_telemetry >= TELEMETRY_PERIOD:
-            self.since_telemetry = 0.0
             lines.append(self.telemetry())
+            lines.append(self.measures(self.since_telemetry))
+            self.since_telemetry = 0.0
             x, y, th = self.odom
             lines.append("P %d %d %d" % (round(x), round(y), round(th * 1000)))
             if self.imu is not None and self.imu.attitude.ready:
@@ -235,7 +255,20 @@ class Controller:
                 person = ranger.person
                 if person:
                     lines.append("PERSON %d %d" % (round(person[0]), round(person[1])))
+        self._tick_us = max(self._tick_us, ticks_diff(ticks_us(), t0))
         return "\n".join(lines) if lines else None
+
+    def measures(self, period):
+        """Ligne M : vitesse réelle et demandée (mm/s), plus petite marge d'un
+        servo à sa butée (0,1°), pose et levée gardées (%), plus long tick (µs)."""
+        r = self.robot
+        w = self.wanted
+        margin = min(leg_margin(leg, self.angles[leg.name]) for leg in r.config.legs)
+        line = "M %d %d %d %d %d %d" % (
+            round(self._went / period) if period else 0, round(math.hypot(w.vx, w.vy)),
+            round(margin * 10), round(r.pose_scale * 100), round(r.lift_scale * 100), self._tick_us)
+        self._went, self._tick_us = 0.0, 0
+        return line
 
     def telemetry(self):
         values = []

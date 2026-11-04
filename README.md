@@ -106,6 +106,8 @@ Le guide pas à pas est dans [docs/MONTAGE.md](docs/MONTAGE.md) : assemblage, c�
 
 Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Normal** et **Rapide**), la démarche, la position et l'inclinaison du corps, le câblage et la calibration. Le journal montre les échanges avec le robot et permet de taper une commande à la main.
 
+- **Mesures** (onglet **Journal**) : vitesse réelle et demandée, marge du servo le plus proche de sa butée, part de la pose et de la levée gardées, assiette du corps et plus long calcul de la boucle (20 ms disponibles). **Copier les 30 dernières secondes** met ces valeurs dans le presse-papiers (une ligne toutes les 50 ms), pour les coller dans une discussion ou un tableur.
+
 - **Démarrage en douceur** : à la mise sous tension, les pattes s'activent l'une après l'autre (moins d'appel de courant), puis le robot se lève.
 - **Servos en butée** : un servo qui arrive au bout de sa course passe en rouge dans la 3D, avec son étiquette carte · canal.
 - **Longueur de pas selon la place de chaque patte** : au démarrage, le robot calcule jusqu'où chaque pied peut aller dans chaque direction (servos à 3° de leurs butées, pattes voisines sans se toucher). La consigne n'est réduite que pour la patte qui a le moins de place : 100 mm/s en ligne droite (67 avant), 46°/s en tournant sur place (24 avant). Avec une pose du corps forte, il revient au pas prudent de la config.

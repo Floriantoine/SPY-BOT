@@ -493,6 +493,7 @@ export class RobotView {
       femurJ.rotation.y = -f; // positif = fémur qui monte
       tibiaJ.rotation.y = -t;
     });
+    this._applyAttitude();
     this.world.updateMatrixWorld(true);
 
     // Pieds dans le repère du monde (sol), qui peut pencher.
@@ -680,9 +681,21 @@ export class RobotView {
   /** Assiette du corps par rapport aux pieds, et pente du sol sous le robot
    * (simulation), en radians. */
   setAttitude(roll, pitch, groundRoll, groundPitch) {
-    this.robot.matrix.copy(tiltInThree(roll, pitch));
+    this._attGoal = [roll, pitch, groundRoll, groundPitch];
+    this._att ||= [...this._attGoal];
+  }
+
+  /** L'assiette arrive ~20 fois par seconde : on la suit en douceur à chaque image. */
+  _applyAttitude() {
+    if (!this._attGoal) return;
+    const a = this._att, g = this._attGoal;
+    const now = performance.now();
+    const k = Math.min(1, (now - (this._attAt || now)) / 80);
+    this._attAt = now;
+    for (let i = 0; i < 4; i++) a[i] += (g[i] - a[i]) * k;
+    this.robot.matrix.copy(tiltInThree(a[0], a[1]));
     this.robot.matrixWorldNeedsUpdate = true;
-    this.world.matrix.copy(tiltInThree(groundRoll, groundPitch).multiply(THREE_TO_ROBOT));
+    this.world.matrix.copy(tiltInThree(a[2], a[3]).multiply(THREE_TO_ROBOT));
     this.world.matrixWorldNeedsUpdate = true;
   }
 

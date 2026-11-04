@@ -453,3 +453,13 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 4px; border: 1px solid
 #kbd-capture { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; overflow: hidden; outline: none; caret-color: transparent; }
 .kbd-badge { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 12px; cursor: pointer; }
 .kbd-badge.on { color: #b9f6ca; border-color: rgba(52, 211, 153, .5); }
+
+/* Mesures (onglet Journal) */
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.metrics div { display: grid; grid-template-columns: auto 1fr; column-gap: 4px; background: var(--surface-2); border-radius: 10px; padding: 6px 8px; min-width: 0; }
+.metrics small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.metrics b { font-size: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.metrics b.warn { color: var(--warn); }
+.metrics b.bad { color: var(--danger); }
+.metrics em { font-style: normal; color: var(--muted); font-size: 11px; align-self: end; padding-bottom: 2px; }
+#metrics-text { width: 100%; height: 120px; margin-top: 8px; background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: 11px ui-monospace, monospace; }

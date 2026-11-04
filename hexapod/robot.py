@@ -510,6 +510,11 @@ class Hexapod:
             half = self._halves[n]
             if lift > dt:
                 k = min(k, _fraction_inside(dx - hx, dy - hy, vx * lift, vy * lift, half))
+            else:
+                # Il se lève pendant ce tick : l'autre série touche le sol au
+                # même moment. Le laisser finir ce dernier bout de pas au lieu
+                # de figer le corps un tick (à-coup avant/arrière).
+                half += math.hypot(vx, vy) * dt
             k = min(k, _fraction_inside(dx - hx, dy - hy, vx * dt, vy * dt, half))
         for n in stance:
             dx, dy, _ = self.offsets[n]

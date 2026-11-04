@@ -295,6 +295,21 @@
       </div>
 
       <div class="tab-page" id="tab-log">
+        <div class="card metrics-card">
+          <h3>Mesures</h3>
+          <div class="metrics" id="metrics">
+            <div title="Vitesse réelle du corps"><small>Vitesse</small><b id="m-speed">–</b><em>mm/s</em></div>
+            <div><small>Demandée</small><b id="m-wanted">–</b><em>mm/s</em></div>
+            <div title="Écart entre le servo le plus proche de sa butée et cette butée"><small>Marge</small><b id="m-margin">–</b><em>°</em></div>
+            <div title="Part de la pose du corps et de la levée des pieds que le robot garde (100 % = tout)"><small>Pose · levée</small><b id="m-scale">–</b><em>%</em></div>
+            <div><small>Assiette</small><b id="m-att">–</b><em>°</em></div>
+            <div title="Plus long calcul d'un tick de la boucle (20 ms disponibles)"><small>Tick max</small><b id="m-tick">–</b><em>ms</em></div>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="metrics-copy">Copier les 30 dernières secondes</button>
+          </div>
+          <textarea id="metrics-text" readonly hidden aria-label="Mesures des 30 dernières secondes"></textarea>
+        </div>
         <div class="card grow">
           <h3>Échanges avec le robot</h3>
           <pre id="log"></pre>

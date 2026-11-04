@@ -272,3 +272,38 @@ class StopTest(unittest.TestCase):
                 c.tick(0.02)
                 t += 0.02
                 self.assertLess(t, 0.9, release)  # le pas en cours, plus au plus un
+
+    def test_no_body_jolt_when_restarting(self):
+        # Repartir après un arrêt : le corps ne se fige jamais un tick au
+        # changement de série de pattes (à-coup avant/arrière).
+        c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
+        c.handle("POWER 1")
+        c.handle("STAND")
+        run(c, 3.0)
+        speeds = []
+        for line, seconds in (("MOVE 100 0 0", 2.0), ("MOVE 0 0 0", 1.5), ("MOVE 100 0 0", 1.5), ("MOVE -100 0 0", 2.0)):
+            for i in range(int(seconds / 0.02)):
+                if i % 25 == 0:
+                    c.handle(line)
+                c.tick(0.02)
+                speeds.append(c.robot.travel[0] / 0.02)
+        jumps = [abs(b - a) / 0.02 for a, b in zip(speeds, speeds[1:])]
+        self.assertLessEqual(max(jumps), 650)  # mm/s² : la décélération voulue, pas plus
+
+    def test_measures_line(self):
+        c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
+        c.handle("POWER 1")
+        c.handle("STAND")
+        run(c, 3.0)
+        lines = []
+        for i in range(100):
+            if i % 25 == 0:
+                c.handle("MOVE 60 0 0")
+            out = c.tick(0.02)
+            lines += [l for l in (out or "").split("\n") if l.startswith("M ")]
+        speed, wanted, margin, pose, lift, tick = map(int, lines[-1].split()[1:])
+        self.assertEqual(wanted, 60)
+        self.assertAlmostEqual(speed, 60, delta=3)
+        self.assertGreater(margin, 0)
+        self.assertEqual((pose, lift), (100, 100))
+        self.assertGreater(tick, 0)

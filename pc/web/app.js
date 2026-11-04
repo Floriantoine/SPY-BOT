@@ -101,8 +101,14 @@ events.onmessage = (e) => {
     return;
   }
   if (kind === "B") {
-    const [r, p, gr, gp] = rest.split(" ").map((v) => (Number(v) / 1800) * Math.PI);
+    const deci = rest.split(" ").map(Number);
+    const [r, p, gr, gp] = deci.map((v) => (v / 1800) * Math.PI);
     view.setAttitude(r, p, gr, gp);
+    metrics.att = deci.map((v) => v / 10);
+    return;
+  }
+  if (kind === "M") {
+    gotMetrics(rest.split(" ").map(Number));
     return;
   }
   if (kind === "G") {
@@ -1188,6 +1194,61 @@ $("#anim-loop").onchange = () => (animator.loop = $("#anim-loop").checked);
 
 renderAnimList();
 renderDraft();
+
+// ---------------------------------------------------------- mesures
+
+// Une ligne M par télémétrie (20 par seconde) : on garde 30 s pour les copier.
+const metrics = { rows: [], att: [0, 0, 0, 0], shownAt: 0 };
+const METRICS_KEEP = 30000; // ms
+
+function gotMetrics([speed, wanted, margin, pose, lift, tickUs]) {
+  const now = performance.now();
+  const [roll, pitch, groundRoll, groundPitch] = metrics.att;
+  metrics.rows.push([now, state.mode, speed, wanted, margin / 10, pose, lift,
+    +(roll + groundRoll).toFixed(1), +(pitch + groundPitch).toFixed(1), tickUs / 1000]);
+  while (metrics.rows.length && now - metrics.rows[0][0] > METRICS_KEEP) metrics.rows.shift();
+  if (now - metrics.shownAt < 200) return; // 5 rafraîchissements par seconde suffisent
+  metrics.shownAt = now;
+  const set = (id, text, cls = "") => {
+    const el = $(id);
+    el.textContent = text;
+    el.className = cls;
+  };
+  set("#m-speed", speed);
+  set("#m-wanted", wanted);
+  set("#m-margin", (margin / 10).toFixed(1), margin < 30 ? "bad" : margin < 60 ? "warn" : "");
+  set("#m-scale", pose + " · " + lift, Math.min(pose, lift) < 95 ? "warn" : "");
+  set("#m-att", (roll + groundRoll).toFixed(1) + " / " + (pitch + groundPitch).toFixed(1));
+  set("#m-tick", (tickUs / 1000).toFixed(1), tickUs > 15000 ? "bad" : tickUs > 8000 ? "warn" : "");
+}
+
+function metricsText() {
+  const rows = metrics.rows;
+  if (!rows.length) return "";
+  const head = "# SPY-BOT mesures (" + (state.sim ? "simulation" : "robot") + "), " + new Date().toLocaleString("fr-FR") +
+    "\n# t_s mode v_reelle v_demandee marge_servo_deg pose_% levee_% roulis_deg tangage_deg tick_ms";
+  // Une ligne M toutes les 50 ms côté robot (elles arrivent parfois groupées).
+  const body = rows.map(([, ...r], i) => [(i * 0.05).toFixed(2), ...r].join(" "));
+  return [head, ...body].join("\n");
+}
+
+$("#metrics-copy").addEventListener("click", async (e) => {
+  const text = metricsText();
+  if (!text) return toast("Pas encore de mesures : connecte le robot ou la simulation", "err");
+  const area = $("#metrics-text");
+  area.value = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    area.hidden = true;
+    toast(metrics.rows.length + " mesures copiées, colle-les dans la discussion", "ok");
+  } catch {
+    // Presse-papiers refusé : on montre le texte sélectionné, Ctrl+C le copie.
+    area.hidden = false;
+    area.focus();
+    area.select();
+    toast("Copie bloquée : le texte est sélectionné, fais Ctrl+C", "");
+  }
+});
 
 // ---------------------------------------------------------- journal, toasts
 

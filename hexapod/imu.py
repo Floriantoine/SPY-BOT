@@ -151,6 +151,9 @@ class MPU6050:
             self.attitude.update(dt, m[0], m[1])
 
 
+ROCK_TIME = 0.15  # s : le robot bascule sur ses nouveaux pieds posés en ~0,15 s
+
+
 class SimIMU:
     """Centrale simulée : le sol est penché de (`ground_roll`, `ground_pitch`),
     et avec `terrain` le robot repose sur ses pieds posés sur le terrain
@@ -164,6 +167,7 @@ class SimIMU:
         self.slope = (0.0, 0.0)  # pente du sol sous le robot, vue du corps (roulis, tangage)
         self.plane = None  # terrain : plan des pieds posés z = a + b·x + c·y (mm, sol)
         self.air = []  # terrain : hauteur de chaque pied posé au-dessus du terrain
+        self._rest = None
         self.attitude = Attitude()
         self._prev = None
 
@@ -173,11 +177,17 @@ class SimIMU:
             from .terrain import rest_on
 
             a, b, c, roll, pitch, self.air = rest_on(feet, odom)
-            self.plane = (a, b, c)
-            sr += roll
-            sp += pitch
+            # Le robot bascule sur ses nouveaux pieds posés en un instant
+            # bref, pas d'un coup (souplesse des servos et des pièces).
+            k = 1.0 if self.plane is None else min(1.0, dt / ROCK_TIME) if dt else 0.0
+            p = self.plane or (a, b, c)
+            self.plane = tuple(u + (v - u) * k for u, v in zip(p, (a, b, c)))
+            self._rest = (roll, pitch) if self._rest is None else (
+                self._rest[0] + (roll - self._rest[0]) * k, self._rest[1] + (pitch - self._rest[1]) * k)
+            sr += self._rest[0]
+            sp += self._rest[1]
         else:
-            self.plane, self.air = None, []
+            self.plane, self.air, self._rest = None, [], None
         self.slope = (sr, sp)
         roll = sr + pose.roll
         pitch = sp + pose.pitch
