@@ -102,6 +102,8 @@ class Hexapod:
         self.ground = {n: 0.0 for n in self.neutral}
         self._ground_lift = {}  # hauteur du sol quand le pied s'est levé
         self._touched = set()  # pieds en l'air qui ont déjà touché quelque chose
+        self.feel_rate = (0.0, 0.0)
+        self._last_angles = None  # derniers angles valides (filet de sécurité)
         self.feel_ground = False
         self.time_scale = 1.0  # < 1 : la démarche ralentit (corps qui bascule trop vite)
         self.travel = (0.0, 0.0, 0.0)  # déplacement du corps au dernier update (mm, mm, rad, repère corps)
@@ -186,10 +188,12 @@ class Hexapod:
                     sink = (n, score)
         if push:
             n = push[0]
-            self._touched.add(n)
             dx, dy, dz = self.offsets[n]
-            self.ground[n] = min(GROUND_MAX, self.ground[n] + dz)
-            self.offsets[n] = (dx, dy, 0.0)
+            z = self.ground[n] + self.lift_scale * dz  # là où est vraiment le pied
+            if z <= GROUND_MAX:
+                self._touched.add(n)
+                self.ground[n] = z
+                self.offsets[n] = (dx, dy, 0.0)
         if sink:
             n = sink[0]
             self.ground[n] = max(-GROUND_MAX, self.ground[n] - EXTEND_SPEED * dt)
@@ -197,7 +201,9 @@ class Hexapod:
     @property
     def at_rest(self):
         """Arrêté, pieds posés à leur position neutre."""
-        return self.current.is_zero and self.gait.at_rest and self._feet_settled()
+        sx, sy = self.gait.shift  # 4 pattes : corps revenu au centre (sinon saut en passant à 6)
+        return (self.current.is_zero and self.gait.at_rest and sx * sx + sy * sy < 0.25
+                and self._feet_settled())
 
     @property
     def tuck_settled(self):
@@ -294,13 +300,16 @@ class Hexapod:
         if found is None:
             found = self._search(rs, rl)
         if found is None:
-            # Même sans pose et sans lever les pieds, c'est trop : on garde la
-            # pose demandée (les servos s'arrêtent à leur butée).
+            # Même sans pose et sans lever les pieds, c'est trop : on garde les
+            # derniers angles valides plutôt que de sauter à la pose complète.
+            if self._last_angles is not None:
+                return self._last_angles
             self.pose_scale = self.lift_scale = 1.0
             self.applied = self.pose
             return self.solve()
         self.pose_scale, self.lift_scale, angles = found
         self.applied = self.effective_pose(self.pose_scale)
+        self._last_angles = angles
         return angles
 
     def _search(self, top_s, top_l):
@@ -348,8 +357,8 @@ class Hexapod:
     def _feet_settled(self):
         # Pieds revenus à leur place (la démarche ne s'arrête que pieds posés),
         # et cette place pas trop loin de la meilleure pour la pose actuelle.
-        for n, o in self.offsets.items():
-            h, g = self.home[n], self.home_goal[n]
+        for n in self.walking_legs():  # 4 pattes : celles du milieu sont repliées
+            o, h, g = self.offsets[n], self.home[n], self.home_goal[n]
             if (o[0] - h[0]) ** 2 + (o[1] - h[1]) ** 2 > STOP_TOL * STOP_TOL:
                 return False
             if self.replace_feet and (h[0] - g[0]) ** 2 + (h[1] - g[1]) ** 2 > HOME_REPLACE * HOME_REPLACE:
@@ -389,6 +398,8 @@ class Hexapod:
             return 0.0
         lo, hi = HOME_RANGE
         out, inside = self._home_margin(leg, pose, HOME_STEP), self._home_margin(leg, pose, -HOME_STEP)
+        if max(out, inside) <= f0:
+            return 0.0  # le neutre est déjà le mieux
         sign = 1.0 if out >= inside else -1.0
         r, f = sign * HOME_STEP, max(out, inside)
         prev_r, prev_f = 0.0, f0
@@ -534,13 +545,15 @@ class Hexapod:
             if s is None:
                 self._placed.discard(n)
                 if self._lift.pop(n, None) is not None:
-                    self._touched.discard(n)
                     self._ground_lift.pop(n, None)
-                    # Il vient de se poser : il finit son pas sur le point visé.
-                    vx, vy = ground_velocity(p, cmd)
-                    hx, hy = self.home[n]
-                    dx, dy = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
-                    self.offsets[n] = (dx, dy, 0.0)
+                    if n in self._touched:
+                        self._touched.discard(n)  # déjà posé (sur un caillou) : il reste où il est
+                    else:
+                        # Il vient de se poser : il finit son pas sur le point visé.
+                        vx, vy = ground_velocity(p, cmd)
+                        hx, hy = self.home[n]
+                        dx, dy = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
+                        self.offsets[n] = (dx, dy, 0.0)
                 stance.append(n)
             else:
                 # En l'air : de là où il s'est levé jusqu'à un demi-pas en avant.
@@ -553,7 +566,10 @@ class Hexapod:
                 tx, ty = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
                 k = s * s * (3 - 2 * s)
                 if n in self._touched:
-                    z = 0.0  # posé sur ce qu'il a touché : il n'y descend plus
+                    # Posé sur ce qu'il a touché : il ne glisse pas, il recule
+                    # avec le sol comme un pied d'appui.
+                    stance.append(n)
+                    continue
                 else:
                     # Il redescend vers le sol prévu (le plan des pieds).
                     g0 = self._ground_lift.setdefault(n, self.ground[n])
@@ -575,7 +591,8 @@ class Hexapod:
             p = self.neutral[n]
             vx, vy = ground_velocity((p[0] + dx, p[1] + dy), cmd)
             moves[n] = (vx * dt, vy * dt)
-            lift = g.time_to_lift(n)
+            # Pied déjà posé sur un caillou en fin de pas : il se lève au prochain cycle.
+            lift = g.time_to_lift(n) if g.swing(n) is None else 0.0
             hx, hy = self.home[n]
             half = self._halves[n]
             if lift > dt:
@@ -656,11 +673,10 @@ def _fraction_inside(x, y, mx, my, radius):
     du disque de rayon `radius` (ou sans s'en éloigner davantage)."""
     if (x + mx) ** 2 + (y + my) ** 2 <= radius * radius:
         return 1.0
-    if x * mx + y * my <= 0:
-        return 1.0  # déjà dehors mais revient vers le centre
     a = mx * mx + my * my
     b = 2 * (x * mx + y * my)
     c = x * x + y * y - radius * radius
     if c >= 0:
-        return 0.0
+        # Déjà dehors : il peut revenir vers le centre, pas s'en éloigner.
+        return 1.0 if b <= 0 else 0.0
     return max(0.0, min(1.0, (-b + math.sqrt(b * b - 4 * a * c)) / (2 * a)))

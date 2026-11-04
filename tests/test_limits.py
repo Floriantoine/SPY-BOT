@@ -7,6 +7,7 @@ import unittest
 from hexapod import default_config
 from hexapod.controller import Controller
 from hexapod.imu import SimIMU
+from hexapod.body_ik import BodyPose
 from hexapod.robot import angles_ok
 from hexapod.sensor import SimRanger
 from hexapod.servo import DryRunDriver
@@ -130,3 +131,39 @@ class FootPlacementTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuadSwitchTest(unittest.TestCase):
+    def test_lowered_body_can_switch_back_to_six_legs(self):
+        from hexapod import Hexapod, default_config as cfg
+        r = Hexapod(cfg())
+        r.pose = BodyPose(z=-10)
+        for _ in range(400):
+            r.update(0.02)
+        self.assertTrue(r.at_rest)
+        r.set_legs(4)
+        for _ in range(500):
+            r.update(0.02)
+        self.assertTrue(r.at_rest)  # les pattes repliées ne le font pas piétiner
+        r.set_legs(6)
+
+    def test_no_jump_when_switching_after_walking_on_four(self):
+        from hexapod import GaitCommand, Hexapod, default_config as cfg
+        from hexapod.servo import DryRunDriver
+        r = Hexapod(cfg(), DryRunDriver())
+        r.set_legs(4)
+        for _ in range(100):
+            r.update(0.02)
+        r.command = GaitCommand(60, 0, 0)
+        for _ in range(300):
+            r.update(0.02)
+        r.command = GaitCommand()
+        for _ in range(1000):
+            r.update(0.02)
+            if r.at_rest:
+                break
+        before = dict(r.driver.angles)
+        r.set_legs(6)
+        r.update(0.02)
+        jump = max(abs(v - before[k]) for k, v in r.driver.angles.items())
+        self.assertLess(jump, 3.0)  # degrés : le corps était revenu au centre
