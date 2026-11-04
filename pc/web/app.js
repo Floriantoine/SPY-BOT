@@ -166,7 +166,6 @@ events.onmessage = (e) => {
     state.sim = rest.includes("simulation");
     if (state.sim) send("OBST", true);
     $("#sensor-sim").hidden = !state.sim;
-    $("#nav-sim").hidden = !state.sim;
     sendGait(); // le robot démarre avec ses propres réglages : on lui envoie ceux de l'interface
     if (state.legs !== 6) send(`LEGS ${state.legs}`, true);
     toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
@@ -665,9 +664,7 @@ function renderNav() {
   const el = $("#nav-state");
   el.textContent = NAV_LABELS[state.nav] || state.nav;
   el.className = "sensor-state " + (state.nav === "off" ? "" : "good");
-  $("#nav-follow").classList.toggle("on", state.nav === "follow");
 }
-$("#nav-follow").onclick = () => send(state.nav === "follow" ? "NAV STOP" : `FOLLOW ${$("#speed").value}`);
 $("#nav-stop").onclick = () => send("NAV STOP");
 
 // ----------------------------------------------------------------- montage
