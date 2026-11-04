@@ -83,6 +83,18 @@ def rest_on(feet, odom, swing=()):
     if len(pts) < 3:
         h = height(x0, y0)
         return h, 0.0, 0.0, 0.0, 0.0, [0.0] * len(pts)
+    support = _tripod(pts, x0, y0)
+    if support:
+        # Le robot repose sur les 3 pieds qui portent son centre ; les autres
+        # sont au-dessus du terrain ou dans le vide.
+        a, b, cc = support
+        others = [point(f) for f in swing]
+        if all(p[2] <= a + b * p[0] + cc * p[1] + 0.5 for p in others):
+            return _result(a, b, cc, pts, c, s)
+        pts_all = pts + others
+        support = _tripod(pts_all, x0, y0)
+        if support:
+            return _result(support[0], support[1], support[2], pts, c, s)
     a, b, cc = _fit(pts)
     # Un pied en l'air qui rentrerait dans le terrain le touche : le robot
     # bascule aussi sur lui (on l'ajoute, au plus 3 fois).
@@ -101,11 +113,45 @@ def rest_on(feet, odom, swing=()):
         a, b, cc = _fit(support)
     # Aucun pied ne s'enfonce : le robot monte jusqu'à toucher le plus haut.
     a += max(p[2] - (a + b * p[0] + cc * p[1]) for p in support)
+    return _result(a, b, cc, pts, c, s)
+
+
+def _result(a, b, cc, pts, c, s):
     air = [a + b * p[0] + cc * p[1] - p[2] for p in pts]
     ahead, left = c * b + s * cc, -s * b + c * cc
     # Sol qui monte devant : nez vers le haut (tangage négatif) ;
     # sol qui monte à gauche : côté gauche plus haut (roulis positif).
     return a, b, cc, math.atan(left), -math.atan(ahead), air
+
+
+def _tripod(pts, cx, cy):
+    """Plan des 3 pieds sur lesquels le robot repose vraiment : aucun autre
+    pied ne s'enfonce et le centre (cx, cy) est au-dessus de leur triangle
+    (face du dessus de l'enveloppe des points). None si aucun ne convient."""
+    n = len(pts)
+    best = None
+    for i in range(n - 2):
+        for j in range(i + 1, n - 1):
+            for k in range(j + 1, n):
+                p, q, r = pts[i], pts[j], pts[k]
+                # Centre dans le triangle (coordonnées barycentriques).
+                d = (q[1] - r[1]) * (p[0] - r[0]) + (r[0] - q[0]) * (p[1] - r[1])
+                if abs(d) < 1e-6:
+                    continue
+                u = ((q[1] - r[1]) * (cx - r[0]) + (r[0] - q[0]) * (cy - r[1])) / d
+                v = ((r[1] - p[1]) * (cx - r[0]) + (p[0] - r[0]) * (cy - r[1])) / d
+                if u < -1e-9 or v < -1e-9 or u + v > 1 + 1e-9:
+                    continue
+                a, b, cc = _fit((p, q, r))
+                over = max(t[2] - (a + b * t[0] + cc * t[1]) for t in pts)
+                if over <= 1e-6:
+                    return a, b, cc
+                if best is None or over < best[0]:
+                    best = (over, a, b, cc)
+    # Arrondis : le moins mauvais, remonté pour que rien ne s'enfonce.
+    if best is not None and best[0] < 0.5:
+        return best[1] + best[0], best[2], best[3]
+    return None
 
 
 def _fit(pts):

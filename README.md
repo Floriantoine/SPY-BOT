@@ -166,12 +166,12 @@ un pied au-dessus d'un trou reste en l'air. La 3D dessine le terrain. Premier es
   pied le plus du côté qui bouge. Si le corps bascule vite, la marche ralentit
   le temps que ça se calme. Sur le terrain simulé, avec l'auto-équilibrage :
   corps penché de 1,0° en moyenne au lieu de 1,2°, et 25 % de pieds en moins
-  qui ne touchent pas, y compris avec un gyroscope bruité. Les seuils
+  qui ne touchent pas (environ 30 %), y compris avec un gyroscope bruité. Les seuils
   (`TOUCH_RATE`, `EXTEND_SPEED` dans `hexapod/robot.py`) seront à régler sur
   le vrai robot : les vibrations des servos peuvent faire croire à un contact.
 - **Arrêt de sécurité** (toujours actif avec le gyroscope) : corps penché de
   plus de 20°, le robot s'arrête ; il repart revenu sous 12° depuis 1 s.
-- En simulation, un pied en l'air qui rencontre un caillou touche le terrain
+- En simulation, le robot repose sur les 3 pieds qui portent son centre (les autres peuvent être dans le vide, comme en vrai) ; un pied en l'air qui rencontre un caillou touche le terrain
   et fait basculer le robot, et un pied allongé ou raccourci change son
   appui.
 
