@@ -34,6 +34,19 @@ HOME_STEP = 10.0  # mm entre deux essais
 HOME_REPLACE = 8.0  # mm : à l'arrêt, un pied plus loin que ça de sa place fait un pas
 HOME_PERIOD = 0.06  # s entre deux recalculs (calcul étalé, pour l'ESP32)
 HOME_POSE_MM = 2.0  # la pose a changé de plus que ça (mm, ou °) : on recalcule
+# Longueur de pas selon la place de chaque patte : dans chaque direction (vue
+# de la patte), jusqu'où le pied peut aller de part et d'autre de sa place en
+# gardant ses servos à REACH_MARGIN de leurs butées, sans que deux pattes
+# voisines se touchent (coxa à moins de REACH_COXA du milieu). Les 6 pattes
+# sont la même pièce : un seul tableau, calculé au démarrage.
+REACH_DIRS = 24  # directions du tableau (tous les 15°)
+REACH_MARGIN = 3.0  # ° gardés avant les butées
+REACH_COXA = 33.0  # ° : deux voisines à ±33° restent à 66° (< 70°, elles se touchent)
+REACH_MAX = 70.0  # mm : demi-pas maximal
+# Le tableau est fait pour le corps au neutre. Avec une pose (baissé, penché,
+# auto-équilibrage), on revient progressivement au demi-pas sûr de la config
+# (max_stride / 2) : complètement à REACH_POSE mm ou REACH_POSE / 2 degrés.
+REACH_POSE = 10.0
 LIFT_MIN = 0.5  # pas pas moins hauts que la moitié de la hauteur réglée
 BISECT = 4  # essais pour trouver ce qui est possible (précision 1/16)
 
@@ -53,6 +66,7 @@ class Hexapod:
         self.driver = driver or DryRunDriver()
         self.tripod = gait or TripodGait(step_height=config.step_height, max_stride=config.max_stride)
         self.neutral = {leg.name: config.neutral_foot(leg) for leg in config.legs}
+        self._legs = {leg.name: leg for leg in config.legs}
         # À 4 pattes, le corps se balance (sway) en plus du pas : pas plus
         # courts pour rester dans la course des servos (vérifié par les tests).
         self.quad = QuadGait(self.neutral, period=2 * self.tripod.period, step_height=config.step_height,
@@ -80,6 +94,7 @@ class Hexapod:
             dx, dy = p[0] - leg.mount_x, p[1] - leg.mount_y
             d = math.sqrt(dx * dx + dy * dy)
             self._radial[leg.name] = (dx / d, dy / d)
+        self._reach = self._reach_table(config.legs[0])
         # Marge (°) avant les butées au neutre : on cherche à la retrouver dans toute pose.
         self._home_target = {leg.name: self._home_margin(leg, BodyPose(), 0.0) for leg in config.legs}
         self._home_wait = 0.0
@@ -361,27 +376,84 @@ class Hexapod:
         need = max(0.0, min(g.sway, need))
         return (nx * need, ny * need)
 
+    def _reach_table(self, leg):
+        """Demi-pas possible (mm) pour chaque direction vue de la patte : le
+        pied va autant d'un côté que de l'autre de sa place."""
+        c = self.config
+        p = self.neutral[leg.name]
+
+        def ok(d, a):
+            ux, uy = math.cos(leg.mount_angle + a), math.sin(leg.mount_angle + a)
+            x, y, z = body_to_leg_frame((p[0] + d * ux, p[1] + d * uy, p[2]), leg)
+            try:
+                ang = leg_ik(x, y, z, c.coxa_length, c.femur_length, c.tibia_length)
+            except UnreachableError:
+                return False
+            return leg_margin(leg, ang) >= REACH_MARGIN and abs(ang.coxa * DEG_PER_RAD) <= REACH_COXA
+
+        def far(a):
+            lo, hi = 0.0, REACH_MAX
+            if ok(hi, a):
+                return hi
+            for _ in range(8):
+                mid = (lo + hi) / 2
+                if ok(mid, a):
+                    lo = mid
+                else:
+                    hi = mid
+            return lo
+
+        dist = [far(2 * math.pi * i / REACH_DIRS) for i in range(REACH_DIRS)]
+        half = REACH_DIRS // 2
+        return [min(dist[i], dist[(i + half) % REACH_DIRS]) for i in range(REACH_DIRS)]
+
+    def half_stride(self, name, vx, vy):
+        """Demi-pas possible pour le pied `name` qui recule à (vx, vy)."""
+        g = self.gait
+        if g is not self.tripod:
+            return g.max_stride / 2  # à 4 pattes : le balancement du corps prend de la place
+        speed = math.sqrt(vx * vx + vy * vy)
+        if speed < 1e-6:
+            return g.max_stride / 2
+        leg = self._legs[name]
+        a = (math.atan2(vy, vx) - leg.mount_angle) % (2 * math.pi) * REACH_DIRS / (2 * math.pi)
+        i = int(a) % REACH_DIRS
+        f = a - int(a)
+        t = self._reach
+        base = g.max_stride / 2
+        extra = max(0.0, t[i] + (t[(i + 1) % REACH_DIRS] - t[i]) * f - base)
+        return base + extra * self._reach_share()
+
+    def _reach_share(self):
+        """1 au neutre, 0 dès que la pose est trop forte pour le tableau."""
+        p, b = self.pose, self.base_pose
+        deg = DEG_PER_RAD
+        worst = max(abs(p.x - b.x), abs(p.y - b.y), abs(p.z - b.z),
+                    2 * deg * abs(p.roll - b.roll), 2 * deg * abs(p.pitch - b.pitch), 2 * deg * abs(p.yaw - b.yaw))
+        return max(0.0, 1.0 - worst / REACH_POSE)
+
     def _command_in_reach(self):
-        """Consigne réduite si besoin pour que le pas le plus long ne dépasse
-        pas 90 % de max_stride (même réduction pour tous les pieds : pas de
-        glissement). La marge évite qu'un pied arrive au bout de sa course
-        juste avant de se lever (en tournant, ou à cause du pas de temps) : le
-        corps marquerait alors une petite pause."""
+        """Consigne réduite si besoin pour qu'aucun pas ne dépasse 90 % de ce
+        que permet sa patte dans sa direction (même réduction pour tous les
+        pieds : pas de glissement). La marge évite qu'un pied arrive au bout
+        de sa course juste avant de se lever (en tournant, ou à cause du pas
+        de temps) : le corps marquerait alors une petite pause."""
         g, cmd = self.gait, self.current
-        longest = 0.0
+        k = 1.0
+        self._halves = {}
         for n in self.walking_legs():
             vx, vy = ground_velocity(self.neutral[n], cmd)
-            longest = max(longest, math.sqrt(vx * vx + vy * vy) * g.stance_time)
-        reach = 0.9 * g.max_stride
-        if longest <= reach:
+            half = self._halves[n] = self.half_stride(n, vx, vy)
+            step = math.sqrt(vx * vx + vy * vy) * g.stance_time
+            if step > 1e-9:
+                k = min(k, 0.9 * 2 * half / step)
+        if k >= 1.0:
             return cmd
-        k = reach / longest
         return GaitCommand(cmd.vx * k, cmd.vy * k, cmd.yaw_rate * k)
 
     def _move_feet(self, dt):
         g = self.gait
         cmd = self._command_in_reach()
-        half = g.max_stride / 2
         stance = []
         for n in self.walking_legs():
             dx, dy, _ = self.offsets[n]
@@ -425,6 +497,7 @@ class Hexapod:
             moves[n] = (vx * dt, vy * dt)
             lift = g.time_to_lift(n)
             hx, hy = self.home[n]
+            half = self._halves[n]
             if lift > dt:
                 k = min(k, _fraction_inside(dx - hx, dy - hy, vx * lift, vy * lift, half))
             k = min(k, _fraction_inside(dx - hx, dy - hy, vx * dt, vy * dt, half))
