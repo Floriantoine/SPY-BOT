@@ -407,6 +407,7 @@ export class RobotView {
     tipBar.position.set(L - 3 * k, 0, 0);
     const foot = this._add(tip, new THREE.Mesh(new THREE.SphereGeometry(4.5 * k, 16, 12), this.mats.rubber), { leg: g.name, link: 2, role: "rubber" });
     foot.scale.set(1.2, 1, 1);
+    foot.position.x = -5.4 * k; // (rayon 4,5 × 1,2 le long du tibia) le bas de l'embout est le point de contact
   }
 
   /** Servo MG92B : axe de sortie le long de `axis` passant par `at`, boîtier allongé vers `bodyDir`. */
@@ -499,7 +500,9 @@ export class RobotView {
     // Pieds dans le repère du monde (sol), qui peut pencher.
     const tipsW = this.legs.map((leg) => leg.tip.getWorldPosition(new THREE.Vector3()));
     const tips = tipsW.map((p) => this.world.worldToLocal(p.clone()));
-    const footR = 4.5 * this.k;
+    // Le bout du tibia (config) est le point de contact au sol : bas du pied
+    // imprimé (tibia.stl s'arrête pile là) et bas de l'embout du dessin générique.
+    const footR = 0;
     const lowest = Math.min(...tips.map((p) => p.y)) - footR;
     this.ground.position.y = lowest;
     const tolerance = Math.max(1.5, 0.02 * this.geom.tibia);
