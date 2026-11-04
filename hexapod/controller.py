@@ -210,7 +210,7 @@ class Controller:
                 # On garde la dernière position atteignable.
                 r.command = GaitCommand()
             self._integrate(r.travel)
-            self._went += math.hypot(r.travel[0], r.travel[1])
+            self._went += math.sqrt(r.travel[0] ** 2 + r.travel[1] ** 2)
             # Pose réduite par le robot (servos en butée sinon) : prévenir l'appli.
             self._free_time = 0.0 if r.pose_scale < 0.99 else self._free_time + dt
             if r.pose_scale < 0.95 and not self.pose_limited:
@@ -265,7 +265,7 @@ class Controller:
         w = self.wanted
         margin = min(leg_margin(leg, self.angles[leg.name]) for leg in r.config.legs)
         line = "M %d %d %d %d %d %d" % (
-            round(self._went / period) if period else 0, round(math.hypot(w.vx, w.vy)),
+            round(self._went / period) if period else 0, round(math.sqrt(w.vx * w.vx + w.vy * w.vy)),
             round(margin * 10), round(r.pose_scale * 100), round(r.lift_scale * 100), self._tick_us)
         self._went, self._tick_us = 0.0, 0
         return line
