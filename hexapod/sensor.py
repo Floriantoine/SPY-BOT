@@ -35,9 +35,9 @@ WALK_HALF = 40.0  # deg : en marche, balayage resserré autour de la direction s
 MIN_RANGE = 120.0  # mm de la puce : plus près, c'est une patte du robot
 MAX_RANGE = 4000.0  # mm, mode longue distance du VL53L1X
 POINT_LIFE = 4.0  # s : une mesure plus vieille est oubliée
-CORRIDOR = 165.0  # mm : demi-largeur du couloir balayé par les pieds
-STOP_DEFAULT = 200.0  # mm devant la puce
-STOP_RANGE = (100.0, 600.0)
+FOOT_RADIUS = 160.0  # mm : cercle des pieds (156) autour du centre du corps, + marge
+STOP_DEFAULT = 80.0  # mm de marge entre les pieds et l'obstacle, le long du chemin
+STOP_RANGE = (30.0, 300.0)
 
 
 class Scanner:
@@ -104,31 +104,45 @@ class Scanner:
         self.blocked = self.enabled and self._in_path(pose, wanted)
         return self.blocked
 
-    def nearest_ahead(self, pose, wanted):
-        return self._in_path(pose, wanted, nearest=True)
-
     # --- interne ----------------------------------------------------------
 
-    def _in_path(self, pose, wanted, nearest=False):
+    def _in_path(self, pose, wanted):
+        """Suit la trajectoire de la consigne (arc de cercle si le robot tourne
+        en avançant) sur `stop_dist` mm : bloqué si un point mesuré entre dans
+        le cercle des pieds en chemin. Un point qui s'éloigne ne bloque pas :
+        on peut toujours se dégager d'un obstacle déjà tout près."""
         speed = math.sqrt(wanted.vx * wanted.vx + wanted.vy * wanted.vy)
-        if speed < 1.0:
-            return None if nearest else False
-        ux, uy = wanted.vx / speed, wanted.vy / speed
+        if speed < 1.0 or not self.points:
+            return False
         x, y, th = pose
         c, s = math.cos(th), math.sin(th)
-        best = None
+        near = []
+        reach = FOOT_RADIUS + self.stop_dist + 10.0
         for px, py, _ in self.points:
             dx, dy = px - x, py - y
             bx, by = c * dx + s * dy, -s * dx + c * dy  # dans le repère corps
-            along = bx * ux + by * uy
-            across = -bx * uy + by * ux
-            # Distance comptée depuis l'avant du corps (la puce) dans la direction suivie.
-            ahead = along - CHIP_X * max(0.0, ux)
-            if along > 0 and abs(across) < CORRIDOR and ahead < self.stop_dist:
-                if not nearest:
+            d2 = bx * bx + by * by
+            if d2 < reach * reach:
+                near.append((bx, by, d2))
+        if not near:
+            return False
+        w = wanted.yaw_rate
+        horizon = min(3.0, self.stop_dist / speed)
+        n = max(2, int(self.stop_dist / 15.0))
+        r2 = FOOT_RADIUS * FOOT_RADIUS
+        for i in range(1, n + 1):
+            t = horizon * i / n
+            if abs(w) < 1e-4:
+                cx, cy = wanted.vx * t, wanted.vy * t
+            else:
+                a = w * t
+                cx = (wanted.vx * math.sin(a) + wanted.vy * (math.cos(a) - 1.0)) / w
+                cy = (wanted.vx * (1.0 - math.cos(a)) + wanted.vy * math.sin(a)) / w
+            for bx, by, d2 in near:
+                e2 = (bx - cx) ** 2 + (by - cy) ** 2
+                if e2 < r2 and e2 < d2 - 25.0:
                     return True
-                best = ahead if best is None else min(best, ahead)
-        return best if nearest else False
+        return False
 
     def _step(self, wanted):
         lo, hi = -PAN_LIMIT, PAN_LIMIT
@@ -232,6 +246,9 @@ class VL53L1X:
         self._write8(0x0087, 0x00)  # arrêt
         self._write8(0x0008, 0x09)  # VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND
         self._write8(0x000B, 0x00)
+        # Champ de vue réduit de 27° à ~15° (ROI de 4×4 SPAD au centre) : un
+        # obstacle à côté du chemin paraît moins « étalé ». Portée un peu réduite.
+        self._write8(0x0080, 0x33)
         self._write8(0x0087, 0x40)  # mesure continue
 
     @classmethod

@@ -4,7 +4,7 @@ import unittest
 from hexapod import default_config
 from hexapod.controller import Controller
 from hexapod.gait import GaitCommand
-from hexapod.sensor import CHIP_X, PAN_LIMIT, PAN_SERVO, MIN_RANGE, Scanner, SimRanger
+from hexapod.sensor import CHIP_X, FOOT_RADIUS, PAN_LIMIT, PAN_SERVO, MIN_RANGE, Scanner, SimRanger
 from hexapod.servo import DryRunDriver
 
 
@@ -61,8 +61,29 @@ class ScannerTest(unittest.TestCase):
         self.assertTrue(s.check((0, 0, 0), GaitCommand(80, 0, 0)))
         self.assertFalse(s.check((0, 0, 0), GaitCommand(-80, 0, 0)))
         self.assertFalse(s.check((0, 0, 0), GaitCommand(0, 0, 0.5)))
-        s.stop_dist = 100
+        s.stop_dist = 30
         self.assertFalse(s.check((0, 0, 0), GaitCommand(80, 0, 0)))
+
+
+class SlalomTest(unittest.TestCase):
+    def scanned(self, obstacles):
+        s = Scanner(SimRanger(obstacles))
+        s.enable(True)
+        for _ in range(60):
+            s.tick(0.05, (0, 0, 0), GaitCommand())
+        return s
+
+    def test_obstacle_beside_the_path_does_not_block(self):
+        s = self.scanned([(350, FOOT_RADIUS + 70, 40)])
+        self.assertTrue(s.points)
+        self.assertFalse(s.check((0, 0, 0), GaitCommand(80, 0, 0)))
+
+    def test_turning_into_it_blocks_turning_away_does_not(self):
+        s = self.scanned([(250, FOOT_RADIUS + 80, 40)])
+        s.stop_dist = 250
+        self.assertFalse(s.check((0, 0, 0), GaitCommand(80, 0, 0)))
+        self.assertTrue(s.check((0, 0, 0), GaitCommand(80, 0, 0.5)))
+        self.assertFalse(s.check((0, 0, 0), GaitCommand(80, 0, -0.5)))
 
 
 class ControllerSensorTest(unittest.TestCase):
@@ -71,7 +92,7 @@ class ControllerSensorTest(unittest.TestCase):
 
     def test_absent_sensor(self):
         c = self.make(None)
-        self.assertEqual(c.handle("SENSOR"), "SENSOR present 0 on 0 stop 200")
+        self.assertEqual(c.handle("SENSOR"), "SENSOR present 0 on 0 stop 80")
         self.assertTrue(c.handle("SENSOR 1").startswith("ERR"))
         self.assertTrue(c.handle("OBST").startswith("ERR"))
 
@@ -79,7 +100,7 @@ class ControllerSensorTest(unittest.TestCase):
         c = self.make(SimRanger())
         self.assertEqual(c.handle("OBST ADD 300 -50 40"), "OBST 300 -50 40")
         self.assertEqual(c.handle("OBST CLEAR"), "OBST ")
-        self.assertEqual(c.handle("SENSOR STOP 5000"), "SENSOR present 1 on 0 stop 600")
+        self.assertEqual(c.handle("SENSOR STOP 5000"), "SENSOR present 1 on 0 stop 300")
 
     def test_stops_in_front_of_obstacle_but_can_turn(self):
         c = self.make(SimRanger([(500, 0, 40)]))
@@ -91,9 +112,9 @@ class ControllerSensorTest(unittest.TestCase):
         self.assertTrue(any(l.startswith("S ") for l in lines))
         self.assertTrue(any(l.startswith("P ") for l in lines))
         x = c.odom[0]
-        front = 500 - 40 - CHIP_X
-        self.assertLess(x, front - 120)  # arrêté avant de toucher
-        self.assertGreater(x, front - 320)  # mais assez près
+        gap = 500 - 40 - 156 - x  # entre l'obstacle et le cercle des pieds
+        self.assertGreater(gap, 20)  # arrêté avant de toucher
+        self.assertLess(gap, 150)  # mais pas trop loin, pour pouvoir slalomer
         run(c, 3.0, (80, 0, 0))
         self.assertAlmostEqual(c.odom[0], x, delta=5)  # reste arrêté
         th = c.odom[2]

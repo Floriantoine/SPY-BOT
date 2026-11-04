@@ -26,7 +26,7 @@ const state = {
   legs: 6, // pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
   invert: {},
   selectedLeg: "RF",
-  sensor: { present: false, on: false, stop: 200, blocked: false },
+  sensor: { present: false, on: false, stop: 80, blocked: false },
   sim: false,
 };
 
@@ -526,11 +526,16 @@ const radar = {
       ctx.stroke();
       ctx.fillText(d / 1000 + " m", cx + 3, cy - d * k + 11);
     }
-    // Zone d'arrêt devant le robot.
+    // Pieds du robot (cercle) et marge d'arrêt autour.
     if (on) {
       ctx.fillStyle = state.sensor.blocked ? "rgba(248,113,113,.22)" : "rgba(52,211,153,.10)";
-      const half = 165 * k, len = (state.sensor.stop + 16) * k;
-      ctx.fillRect(cx - half, cy - len, 2 * half, len);
+      ctx.beginPath();
+      ctx.arc(cx, cy, (160 + state.sensor.stop) * k, Math.PI, 0);
+      ctx.fill();
+      ctx.fillStyle = "rgba(79,140,255,.18)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 160 * k, Math.PI, 0);
+      ctx.fill();
     }
     ctx.strokeStyle = "rgba(255,255,255,.1)";
     for (const deg of [-60, 0, 60]) {
@@ -561,7 +566,7 @@ const radar = {
       }
       if (!(dist > 0)) continue;
       const [x, y] = toXY(deg, Math.min(dist, this.range));
-      const near = dist < state.sensor.stop + 150;
+      const near = dist < state.sensor.stop + 160;
       ctx.globalAlpha = 1 - age * 0.8;
       ctx.fillStyle = dist > this.range ? "#5b6577" : near ? "#f87171" : "#fbbf24";
       ctx.beginPath();

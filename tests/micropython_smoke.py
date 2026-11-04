@@ -58,7 +58,7 @@ assert len(driver.angles) == 18
 
 # Capteur avant simulé : un obstacle droit devant arrête l'avance.
 ctrl = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-smoke-calib.json", SimRanger([(400, 0, 40)]))
-assert ctrl.handle("SENSOR 1") == "SENSOR present 1 on 1 stop 200"
+assert ctrl.handle("SENSOR 1") == "SENSOR present 1 on 1 stop 80"
 ctrl.handle("STAND")
 run(4)
 out = []
@@ -69,5 +69,5 @@ for _ in range(80):
         if line:
             out += line.split("\n")
 assert "OBSTACLE 1" in out, "obstacle"
-assert ctrl.odom[0] < 400 - 40 - 150, ctrl.odom
+assert ctrl.odom[0] < 400 - 40 - 156, ctrl.odom
 print("MicroPython OK")

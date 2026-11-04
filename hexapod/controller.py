@@ -90,6 +90,7 @@ class Controller:
         self.scanner = Scanner(ranger, driver)
         self.wanted = GaitCommand()  # consigne MOVE, avant le filtre d'obstacle
         self.odom = (0.0, 0.0, 0.0)  # position estimée du robot sur le sol (mm, mm, rad)
+        self._pending = []  # lignes à envoyer avec la prochaine télémétrie
         self.driver = driver
         self.calib_path = calib_path
         self.mode = OFF
@@ -106,7 +107,7 @@ class Controller:
     def tick(self, dt):
         """À appeler à ~50 Hz. Retourne la ligne de télémétrie quand il le faut."""
         r = self.robot
-        lines = []
+        lines, self._pending = self._pending, []
         if self.mode != STAND:
             self.wanted = GaitCommand()
         if self.mode == STAND:
@@ -221,7 +222,7 @@ class Controller:
         if self.mode != STAND:
             return "ERR MOVE : le robot doit être debout"
         self.wanted = GaitCommand(float(vx), float(vy), float(yaw) * DEG)
-        self.robot.command = self._filter(self.wanted, [])
+        self.robot.command = self._filter(self.wanted, self._pending)
         self.since_move = 0.0
         return None  # envoyé en continu : pas d'accusé de réception
 
