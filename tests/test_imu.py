@@ -124,6 +124,24 @@ class LevelTest(unittest.TestCase):
         self.assertLess(air1, air0)
         self.assertTrue(any(robot.ground.values()))  # il a bien deviné des hauteurs
 
+    def test_feeling_does_not_slow_walk_with_uneven_ticks(self):
+        # Appli de démo : ticks de 20 ms suivis de petits bouts (page lente).
+        def speed(feel):
+            c, imu = self.make()
+            c.handle("TERRAIN 1")
+            c.handle("LEVEL 1")
+            c.handle("FEEL %d" % feel)
+            t = d = 0.0
+            for i in range(400):
+                if i % 20 == 0:
+                    c.handle("MOVE 100 0 0")
+                for dt in (0.02, 0.002 + 0.008 * (i % 3)):
+                    c.tick(dt)
+                    t += dt
+                    d += c.robot.travel[0]
+            return d / t
+        self.assertGreater(speed(1), 0.95 * speed(0))
+
     def test_absent(self):
         c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
         self.assertEqual(c.handle("IMU"), "IMU present 0 level 0 feel 0")

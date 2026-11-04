@@ -525,7 +525,8 @@ class Controller:
         if not r.feel_ground:
             r.time_scale = 1.0
             return
-        rate = math.sqrt(att.rate[0] ** 2 + att.rate[1] ** 2)
+        fr, fp = r.feel_rate  # lissée : un tick bref (dt petit) ne fait pas de pic
+        rate = math.sqrt(fr * fr + fp * fp)
         goal = max(SLOW_MIN, min(1.0, 1.0 - (rate - SLOW_RATE) / SLOW_SPAN))
         if goal < r.time_scale:
             r.time_scale = goal

@@ -154,7 +154,7 @@ class Hexapod:
         self.ground = {n: 0.0 for n in self.neutral}
         self._ground_lift = {}
         self._touched = set()
-        self._feel_rate = (0.0, 0.0)
+        self.feel_rate = (0.0, 0.0)
 
     def feel(self, dt, roll_rate, pitch_rate):
         """Devine au gyroscope où le sol n'est pas à la hauteur prévue.
@@ -167,10 +167,10 @@ class Hexapod:
         if not self.feel_ground:
             return
         # Lissé sur ~2 ticks : les vibrations des servos ne font pas croire à un contact.
-        fr, fp = self._feel_rate
+        fr, fp = self.feel_rate
         k = min(1.0, dt / FEEL_SMOOTH) if dt else 1.0
         roll_rate, pitch_rate = fr + (roll_rate - fr) * k, fp + (pitch_rate - fp) * k
-        self._feel_rate = (roll_rate, pitch_rate)
+        self.feel_rate = (roll_rate, pitch_rate)
         g = self.gait
         push, sink = None, None
         for n in self.walking_legs():
