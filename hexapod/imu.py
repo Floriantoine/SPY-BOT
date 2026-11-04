@@ -151,47 +151,33 @@ class MPU6050:
             self.attitude.update(dt, m[0], m[1])
 
 
-# Sol bosselé de la simulation : bosses et creux (hauteur en mm selon la
-# position sur le sol), pente jusqu'à ~10° sous le robot.
-TERRAIN_WAVES = ((14.0, 900.0, 0.0, 0.0), (12.0, 700.0, 1.2, 1.0), (8.0, 500.0, 2.4, 2.0))  # (mm, longueur d'onde, direction rad, phase)
-
-
-def terrain_slope(x, y):
-    """Pente du sol bosselé en (x, y) : (dh/dx, dh/dy)."""
-    gx = gy = 0.0
-    for a, wl, d, ph in TERRAIN_WAVES:
-        k = 2 * math.pi / wl
-        c, s = math.cos(d), math.sin(d)
-        g = a * k * math.cos(k * (c * x + s * y) + ph)
-        gx += g * c
-        gy += g * s
-    return gx, gy
-
-
 class SimIMU:
     """Centrale simulée : le sol est penché de (`ground_roll`, `ground_pitch`),
-    plus les bosses du sol bosselé (`terrain`) sous la position du robot ;
-    le corps s'incline en plus de la pose commandée."""
+    et avec `terrain` le robot repose sur ses pieds posés sur le terrain
+    accidenté (hexapod/terrain.py) ; le corps s'incline en plus de la pose
+    commandée."""
 
     def __init__(self):
         self.ground_roll = 0.0
         self.ground_pitch = 0.0
         self.terrain = False
         self.slope = (0.0, 0.0)  # pente du sol sous le robot, vue du corps (roulis, tangage)
+        self.plane = None  # terrain : plan des pieds posés z = a + b·x + c·y (mm, sol)
+        self.air = []  # terrain : hauteur de chaque pied posé au-dessus du terrain
         self.attitude = Attitude()
         self._prev = None
 
-    def update(self, dt, pose, odom=None):
+    def update(self, dt, pose, odom=None, feet=None):
         sr, sp = self.ground_roll, self.ground_pitch
-        if self.terrain and odom is not None:
-            x, y, th = odom
-            gx, gy = terrain_slope(x, y)
-            c, s = math.cos(th), math.sin(th)
-            ahead, left = c * gx + s * gy, -s * gx + c * gy
-            # Sol qui monte devant : nez vers le haut (tangage négatif) ;
-            # sol qui monte à gauche : côté gauche plus haut (roulis positif).
-            sr += math.atan(left)
-            sp -= math.atan(ahead)
+        if self.terrain and odom is not None and feet:
+            from .terrain import rest_on
+
+            a, b, c, roll, pitch, self.air = rest_on(feet, odom)
+            self.plane = (a, b, c)
+            sr += roll
+            sp += pitch
+        else:
+            self.plane, self.air = None, []
         self.slope = (sr, sp)
         roll = sr + pose.roll
         pitch = sp + pose.pitch

@@ -147,8 +147,11 @@ l'ESP32. Le robot doit rester immobile 1 s au démarrage (mesure du biais du
 gyroscope). Onglet **Corps**, carte « Gyroscope » : roulis et tangage mesurés
 (horizon artificiel) et **Garder le corps horizontal**, qui incline le corps
 (jusqu'à 10°) pour compenser une pente. En simulation, deux curseurs penchent
-le sol virtuel, et **Sol bosselé** fait des bosses et des creux : la pente
-sous le robot change quand il marche, et la 3D penche avec le sol. Premier essai sur le robot : sur sol plat, une pose de roulis
+le sol virtuel, et **Terrain accidenté** pose le robot sur un sol d'ondulations,
+de cailloux (jusqu'à 3 cm) et de trous (`hexapod/terrain.py`). Sans capteur
+sous les pieds, le robot pose ses pieds sur le plan qu'il croit être le sol :
+il repose en vrai sur ses pieds posés, penche selon le terrain sous eux, et
+un pied au-dessus d'un trou reste en l'air. La 3D dessine le terrain. Premier essai sur le robot : sur sol plat, une pose de roulis
 +5° doit se lire +5° ; sinon, corriger `IMU_AXES` dans `hexapod/imu.py`
 (orientation de la carte). Pilote pas encore essayé sur le robot.
 

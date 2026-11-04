@@ -105,6 +105,21 @@ events.onmessage = (e) => {
     view.setAttitude(r, p, gr, gp);
     return;
   }
+  if (kind === "G") {
+    const [a, b, c] = rest.split(" ").map(Number);
+    view.setTerrainPlane(a, b / 1e4, c / 1e4);
+    return;
+  }
+  if (kind === "TERRAINMAP") {
+    const v = rest.split(" ").map(Number);
+    const nw = v[0];
+    const waves = [], rocks = [];
+    for (let i = 0; i < nw; i++) waves.push(v.slice(1 + 4 * i, 5 + 4 * i));
+    const nr = v[1 + 4 * nw];
+    for (let i = 0; i < nr; i++) rocks.push(v.slice(2 + 4 * nw + 4 * i, 6 + 4 * nw + 4 * i));
+    view.setTerrain({ waves, rocks });
+    return;
+  }
   if (kind === "I") {
     const [roll, pitch, cr, cp] = rest.split(" ").map((v) => Number(v) / 10);
     Object.assign(state.imu, { roll, pitch, corrRoll: cr, corrPitch: cp, at: performance.now() });
@@ -175,6 +190,7 @@ events.onmessage = (e) => {
     renderSensor();
   } else if (kind === "TERRAIN") {
     $("#terrain").checked = rest.trim() === "1";
+    if (rest.trim() !== "1") view.setTerrain(null);
   } else if (kind === "LIMIT") {
     // Le robot réduit lui-même la pose du corps pour garder ses servos dans leur course.
     if (rest === "pose 1") toast("Pose du corps réduite : les pattes n'ont pas la course pour la tenir en marchant", "");
@@ -240,6 +256,7 @@ function setConnected(connected, name = "") {
     view.setGoal(null);
     view.setPerson(null);
     view.setAttitude(0, 0, 0, 0);
+    view.setTerrain(null);
     renderNav();
   }
   updateControls();

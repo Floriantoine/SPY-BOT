@@ -42,8 +42,9 @@ Commandes (une par ligne, PC -> robot) :
     LEVEL 1|0                     auto-équilibrage : le corps reste horizontal
                                   (à l'assiette de POSE) même sur une pente
     TILT roll pitch               (simulation) pente du sol en degrés
-    TERRAIN [1|0]                 (simulation) sol bosselé : la pente change en marchant
-                                  -> TERRAIN 0|1
+    TERRAIN [1|0]                 (simulation) terrain accidenté (bosses, cailloux,
+                                  trous) : le robot repose sur ses pieds posés
+                                  -> TERRAIN 0|1, puis TERRAINMAP (description)
                                   -> LIMIT pose 1|0 (spontané) : pose du corps
                                   réduite pour garder les servos dans leur course
 
@@ -67,6 +68,8 @@ Avec le capteur avant activé, en plus :
                                   assiette du corps par rapport aux pieds et
                                   pente du sol (simulation), en 0,1°
     LIMIT pose 1|0                pose du corps réduite / de nouveau complète
+    G <a> <b> <c>                 (simulation, terrain) plan des pieds posés :
+                                  z = a + b·x + c·y (mm ; b, c × 10 000)
 """
 
 import json
@@ -199,7 +202,7 @@ class Controller:
                 lines.append("LIMIT pose 0")
 
         if self.imu is not None:
-            self.imu.update(dt, self.robot.applied, self.odom)
+            self.imu.update(dt, self.robot.applied, self.odom, self._stance_feet())
             att = self.imu.attitude
             if self.mode == STAND and att.ready:
                 u = self.user_pose
@@ -224,6 +227,9 @@ class Controller:
             b = self.robot.applied
             gr, gp = getattr(self.imu, "slope", (0.0, 0.0))
             lines.append("B %d %d %d %d" % tuple(round(v * 1800 / math.pi) for v in (b.roll, b.pitch, gr, gp)))
+            plane = getattr(self.imu, "plane", None)
+            if plane:
+                lines.append("G %d %d %d" % (round(plane[0]), round(plane[1] * 10000), round(plane[2] * 10000)))
             ranger = self.scanner.ranger
             if hasattr(ranger, "tick"):
                 person = ranger.person
@@ -443,7 +449,19 @@ class Controller:
             return "ERR TERRAIN : seulement en simulation"
         if on is not None:
             self.imu.terrain = on == "1"
+        if self.imu.terrain:
+            from .terrain import describe
+
+            self._pending.append(describe())  # l'appli dessine le même terrain
         return "TERRAIN %d" % self.imu.terrain
+
+    def _stance_feet(self):
+        """Pieds posés (repère corps), pour le terrain de la simulation."""
+        if not getattr(self.imu, "terrain", False):
+            return None
+        r = self.robot
+        targets = r.foot_targets()
+        return [targets[n] for n in r.walking_legs() if r.offsets[n][2] < 0.5]
 
     def cmd_obst(self, *args):
         ranger = self.scanner.ranger

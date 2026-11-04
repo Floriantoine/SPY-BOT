@@ -111,6 +111,7 @@ export class RobotView {
     this.grid.rotation.x = Math.PI / 2; // grille dans le plan xy du repère robot
     this.track.add(this.grid);
     this.groundZ = 0;
+    this._terrain = null; // terrain accidenté de la simulation (hexapod/terrain.py)
 
     // Tout le robot est construit dans son propre repère.
     this.robot = new THREE.Group();
@@ -661,6 +662,7 @@ export class RobotView {
 
   /** Position du robot simulé (x, y, cap) : recale les obstacles sur le sol affiché. */
   setSimPose(x, y, th) {
+    this._simPose = { x, y, th };
     const o = this.odo;
     // Écart entre la position simulée et celle déduite des pieds : on ne
     // recale que s'il devient visible (sinon les obstacles tremblent un peu
@@ -773,6 +775,78 @@ export class RobotView {
     col.needsUpdate = true;
   }
 
+  /** Terrain accidenté de la simulation : { waves: [[a, l, dir, phase]], rocks: [[x, y, r, h]] }, ou null. */
+  setTerrain(def) {
+    if (this._terrain) {
+      this.track.remove(this._terrain.mesh);
+      this._terrain.mesh.geometry.dispose();
+    }
+    this._terrain = null;
+    this.ground.children[0].visible = this.grid.visible = !def;
+    if (!def) return;
+    const N = 80, SIZE = 1600;
+    const geo = new THREE.PlaneGeometry(SIZE, SIZE, N, N); // plan xy, z vers le haut (repère du sol)
+    geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 3), 3));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
+    mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
+    this.track.add(mesh);
+    this._terrain = { ...def, mesh, N, SIZE, plane: [0, 0, 0], center: null, heights: null };
+  }
+
+  /** Plan des pieds posés dans la simulation : z = a + b·x + c·y (repère de la simulation). */
+  setTerrainPlane(a, b, c) {
+    if (this._terrain) this._terrain.plane = [a, b, c];
+  }
+
+  _terrainHeight(x, y) {
+    const t = this._terrain;
+    let h = 0;
+    for (const [a, l, d, ph] of t.waves) h += a * Math.sin(((2 * Math.PI) / l) * (Math.cos(d) * x + Math.sin(d) * y) + ph);
+    for (const [rx, ry, r, rh] of t.near) {
+      const d2 = (x - rx) ** 2 + (y - ry) ** 2;
+      if (d2 < 9 * r * r) h += rh * Math.exp(-d2 / (r * r));
+    }
+    return h;
+  }
+
+  _updateTerrain(groundY) {
+    const t = this._terrain;
+    const sim = this._simPose;
+    if (!t || !sim) return;
+    // Le maillage suit le robot par pas de 20 mm ; les hauteurs ne changent qu'alors.
+    const step = t.SIZE / t.N;
+    const cx = Math.round(sim.x / step) * step, cy = Math.round(sim.y / step) * step;
+    const pos = t.mesh.geometry.attributes.position;
+    if (!t.center || t.center[0] !== cx || t.center[1] !== cy) {
+      t.center = [cx, cy];
+      const reach = t.SIZE / 2 + 400;
+      t.near = t.rocks.filter(([x, y]) => Math.abs(x - cx) < reach && Math.abs(y - cy) < reach);
+      t.heights = new Float32Array(pos.count);
+      const col = t.mesh.geometry.attributes.color;
+      const low = new THREE.Color(0x101826), mid = new THREE.Color(0x3a4252), high = new THREE.Color(0xa08560), c = new THREE.Color();
+      for (let i = 0; i < pos.count; i++) {
+        const h = this._terrainHeight(cx + pos.getX(i), cy + pos.getY(i));
+        t.heights[i] = h;
+        const k = Math.max(0, Math.min(1, (h + 30) / 65));
+        if (k < 0.5) c.copy(low).lerp(mid, k * 2);
+        else c.copy(mid).lerp(high, k * 2 - 1);
+        col.setXYZ(i, c.r, c.g, c.b);
+      }
+      col.needsUpdate = true;
+    }
+    // Vu du robot, le plan de ses pieds posés est horizontal, à la hauteur des pieds.
+    const [a, b, c] = t.plane;
+    for (let i = 0; i < pos.count; i++) {
+      const x = cx + pos.getX(i), y = cy + pos.getY(i);
+      pos.setZ(i, groundY + t.heights[i] - (a + b * x + c * y));
+    }
+    pos.needsUpdate = true;
+    t.mesh.geometry.computeVertexNormals();
+    t.mesh.matrix.copy(this.simToTrack || new THREE.Matrix4()).multiply(new THREE.Matrix4().makeTranslation(cx, cy, 0));
+    t.mesh.matrixWorldNeedsUpdate = true;
+  }
+
   _updateTrack(groundY) {
     const o = this.odo;
     const pose = new THREE.Matrix4().makeRotationZ(o.th).setPosition(o.x, o.y, 0);
@@ -781,6 +855,7 @@ export class RobotView {
     // La grille suit le robot par pas entiers de case, pour paraître infinie.
     const cell = 25;
     this.grid.position.set(Math.round(o.x / cell) * cell, Math.round(o.y / cell) * cell, groundY + 0.2);
+    this._updateTerrain(groundY);
     this.track.updateMatrixWorld(true);
   }
 
