@@ -131,7 +131,7 @@ main { flex: 1; display: flex; min-height: 0; }
   background: var(--bg-2); border-left: 1px solid var(--line);
 }
 
-.tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); }
 .tab {
   flex: 1 0 auto; border: 0; background: transparent; color: var(--muted);
   padding: 8px 6px; border-radius: 9px; font-weight: 600; font-size: 13px;
