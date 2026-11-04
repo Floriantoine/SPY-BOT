@@ -47,6 +47,10 @@
 
   <main>
     <section id="view">
+      <!-- Pilotage au clavier : tant que ce champ a le focus, les extensions
+           de type Vim (Vimium…) se mettent en mode saisie et laissent passer les touches. -->
+      <div id="kbd-capture" contenteditable="true" tabindex="0" spellcheck="false" aria-label="Pilotage au clavier"></div>
+      <button id="kbd-badge" class="kbd-badge" type="button" title="Clique sur la 3D pour piloter au clavier">⌨ Clavier</button>
       <div class="readout">
         <div><small>Avance</small><b id="r-vx">0</b><em>mm/s</em></div>
         <div><small>Côté</small><b id="r-vy">0</b><em>mm/s</em></div>

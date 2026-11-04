@@ -350,6 +350,28 @@ function readKeyboard() {
   return { x: (x / n) * gain, y: (y / n) * gain, turn: (has("turnR") - has("turnL")) * gain };
 }
 
+// Clic sur la 3D : le focus va dans un champ invisible. Les extensions de
+// type Vim (Vimium…) passent alors en mode saisie et ne prennent plus les
+// touches (O, F…) ; le texte tapé n'y est jamais écrit.
+const kbdCapture = $("#kbd-capture");
+const kbdBadge = $("#kbd-badge");
+kbdCapture.addEventListener("beforeinput", (e) => e.preventDefault());
+kbdCapture.addEventListener("keydown", (e) => {
+  if (!e.ctrlKey && !e.metaKey && (e.key.length === 1 || e.key === "Enter" || e.key === "Tab")) e.preventDefault();
+});
+const focusDrive = () => kbdCapture.focus({ preventScroll: true });
+$("#view").addEventListener("pointerdown", (e) => {
+  if (!e.target.closest("button, input, select, .stick")) setTimeout(focusDrive, 0);
+});
+kbdBadge.onclick = focusDrive;
+const showKbd = () => {
+  const on = document.activeElement === kbdCapture;
+  kbdBadge.classList.toggle("on", on);
+  kbdBadge.textContent = on ? "⌨ Clavier actif" : "⌨ Clavier";
+};
+kbdCapture.addEventListener("focus", showKbd);
+kbdCapture.addEventListener("blur", () => { keys.clear(); showKbd(); });
+
 // Aide : les lettres réelles de ces touches sur le clavier de l'utilisateur.
 (async () => {
   const hint = $("#keys-hint");

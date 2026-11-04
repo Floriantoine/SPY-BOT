@@ -101,7 +101,7 @@ Le guide pas à pas est dans [docs/MONTAGE.md](docs/MONTAGE.md) : assemblage, c�
 
 - **Joystick gauche** : avancer, reculer et se déplacer de côté, avec une vitesse proportionnelle à l'inclinaison.
 - **Joystick droit** : tourner sur place.
-- Clavier (touches repérées par leur position, donc valables en AZERTY, QWERTY ou Dvorak ; l'appli affiche les lettres de ton clavier) : Z/Q/S/D en AZERTY (W/A/S/D en QWERTY, ,/A/O/E en Dvorak) ou les flèches pour se déplacer, A/E (Q/E, '/.) pour tourner, Maj pour aller à pleine vitesse, Espace pour s'arrêter, L (position du L en AZERTY/QWERTY) pour se lever ou s'asseoir, Échap pour relâcher les servos.
+- Clavier (touches repérées par leur position, donc valables en AZERTY, QWERTY ou Dvorak ; l'appli affiche les lettres de ton clavier ; clique d'abord sur la 3D : le badge « ⌨ Clavier actif » s'allume et les extensions de type Vim ou la recherche rapide du navigateur ne prennent plus les touches) : Z/Q/S/D en AZERTY (W/A/S/D en QWERTY, ,/A/O/E en Dvorak) ou les flèches pour se déplacer, A/E (Q/E, '/.) pour tourner, Maj pour aller à pleine vitesse, Espace pour s'arrêter, L (position du L en AZERTY/QWERTY) pour se lever ou s'asseoir, Échap pour relâcher les servos.
 - Manette (Xbox, PlayStation...) : stick gauche pour se déplacer, stick droit pour tourner, A pour se lever, B pour s'asseoir.
 
 Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Normal** et **Rapide**), la démarche, la position et l'inclinaison du corps, le câblage et la calibration. Le journal montre les échanges avec le robot et permet de taper une commande à la main.
