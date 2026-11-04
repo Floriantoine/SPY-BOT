@@ -28,6 +28,8 @@ const state = {
   selectedLeg: "RF",
   sensor: { present: false, on: false, stop: 80, blocked: false },
   sim: false,
+  nav: "off",
+  clickMode: null, // clic sur le sol : "obst", "goal" ou "person"
 };
 
 const view = new RobotView($("#view"));
@@ -97,6 +99,11 @@ events.onmessage = (e) => {
     view.setSimPose(x, y, th / 1000);
     return;
   }
+  if (kind === "PERSON") {
+    const [x, y] = rest.split(" ").map(Number);
+    view.setPerson([x, y]);
+    return;
+  }
   if (line === "OK PONG") return gotPong();
   log(line, kind === "ERR" ? "err" : "");
   if (kind === "GEOM") {
@@ -138,6 +145,15 @@ events.onmessage = (e) => {
     Object.assign(state.sensor, { present: value("present") === 1, on: value("on") === 1, stop: value("stop") });
     if (!state.sensor.on) state.sensor.blocked = false;
     renderSensor();
+  } else if (kind === "NAV") {
+    if (rest === "arrived") toast("Arrivé au point", "ok");
+    else if (rest === "stuck") toast("Point impossible à atteindre : le robot s'arrête", "err");
+    else {
+      state.nav = rest.split(" ")[0];
+      const [, gx, gy] = rest.split(" ").map(Number);
+      view.setGoal(state.nav === "goto" ? [gx, gy] : null);
+    }
+    renderNav();
   } else if (kind === "OBSTACLE") {
     state.sensor.blocked = rest === "1";
     renderSensor();
@@ -150,6 +166,7 @@ events.onmessage = (e) => {
     state.sim = rest.includes("simulation");
     if (state.sim) send("OBST", true);
     $("#sensor-sim").hidden = !state.sim;
+    $("#nav-sim").hidden = !state.sim;
     sendGait(); // le robot démarre avec ses propres réglages : on lui envoie ceux de l'interface
     if (state.legs !== 6) send(`LEGS ${state.legs}`, true);
     toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
@@ -192,8 +209,12 @@ function setConnected(connected, name = "") {
   if (connected && name) $("#port").value = name;
   if (!connected) {
     state.sim = false;
-    state.placing = false;
+    state.nav = "off";
+    setClickMode(null);
     view.setObstacles([]);
+    view.setGoal(null);
+    view.setPerson(null);
+    renderNav();
   }
   updateControls();
   renderSensor();
@@ -473,9 +494,9 @@ let downAt = null;
 view.renderer.domElement.addEventListener("pointerdown", (e) => (downAt = [e.clientX, e.clientY]));
 view.renderer.domElement.addEventListener("pointerup", (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
-  if (state.placing && state.sim) {
+  if (state.clickMode) {
     const p = view.floorPointAt(e.clientX, e.clientY);
-    if (p) send(`OBST ADD ${Math.round(p.x)} ${Math.round(p.y)} 45`);
+    if (p) floorClick(p);
     return;
   }
   if (activeTab !== "cal" && activeTab !== "build") return;
@@ -614,11 +635,40 @@ sliders.sensorStop = bindSlider($("#sensor-stop"), (v) => `${v} mm`);
 $("#sensor-on").onchange = (e) => send(`SENSOR ${e.target.checked ? 1 : 0}`);
 $("#sensor-stop").addEventListener("change", (e) => send(`SENSOR STOP ${e.target.value}`));
 $("#obst-clear").onclick = () => send("OBST CLEAR");
-$("#obst-place").onclick = () => {
-  state.placing = !state.placing;
-  $("#obst-place").classList.toggle("on", state.placing);
-  $("#obst-place").textContent = state.placing ? "Clique sur le sol…" : "Placer un obstacle";
-};
+
+// Boutons « clique ensuite sur le sol » : un seul actif à la fois.
+const CLICK_LABELS = {};
+for (const b of $$("[data-click]")) CLICK_LABELS[b.dataset.click] = b.textContent;
+function setClickMode(mode) {
+  state.clickMode = mode;
+  for (const b of $$("[data-click]")) {
+    const on = b.dataset.click === mode;
+    b.classList.toggle("on", on);
+    b.textContent = on ? "Clique sur le sol…" : CLICK_LABELS[b.dataset.click];
+  }
+}
+for (const b of $$("[data-click]")) b.onclick = () => setClickMode(state.clickMode === b.dataset.click ? null : b.dataset.click);
+
+function floorClick(p) {
+  const x = Math.round(p.x), y = Math.round(p.y);
+  if (state.clickMode === "obst" && state.sim) send(`OBST ADD ${x} ${y} 45`);
+  if (state.clickMode === "person" && state.sim) send(`PERSON ${x} ${y}`);
+  if (state.clickMode === "goal") {
+    if (state.mode !== "stand") return toast("Lève le robot d'abord", "err");
+    send(`GOTO ${x} ${y} ${$("#speed").value}`);
+    setClickMode(null);
+  }
+}
+
+const NAV_LABELS = { off: "manuel", goto: "va au point", follow: "suit" };
+function renderNav() {
+  const el = $("#nav-state");
+  el.textContent = NAV_LABELS[state.nav] || state.nav;
+  el.className = "sensor-state " + (state.nav === "off" ? "" : "good");
+  $("#nav-follow").classList.toggle("on", state.nav === "follow");
+}
+$("#nav-follow").onclick = () => send(state.nav === "follow" ? "NAV STOP" : `FOLLOW ${$("#speed").value}`);
+$("#nav-stop").onclick = () => send("NAV STOP");
 
 // ----------------------------------------------------------------- montage
 

@@ -104,9 +104,14 @@ class Scanner:
         self.blocked = self.enabled and self._in_path(pose, wanted)
         return self.blocked
 
+    def path_blocked(self, pose, wanted, distance, margin=30.0):
+        """Pour la navigation : le chemin est-il libre sur `distance` mm, avec
+        `margin` mm de plus autour des pieds ?"""
+        return self._in_path(pose, wanted, distance, FOOT_RADIUS + margin)
+
     # --- interne ----------------------------------------------------------
 
-    def _in_path(self, pose, wanted):
+    def _in_path(self, pose, wanted, distance=None, radius=FOOT_RADIUS):
         """Suit la trajectoire de la consigne (arc de cercle si le robot tourne
         en avançant) sur `stop_dist` mm : bloqué si un point mesuré entre dans
         le cercle des pieds en chemin. Un point qui s'éloigne ne bloque pas :
@@ -117,7 +122,9 @@ class Scanner:
         x, y, th = pose
         c, s = math.cos(th), math.sin(th)
         near = []
-        reach = FOOT_RADIUS + self.stop_dist + 10.0
+        if distance is None:
+            distance = self.stop_dist
+        reach = radius + distance + 10.0
         for px, py, _ in self.points:
             dx, dy = px - x, py - y
             bx, by = c * dx + s * dy, -s * dx + c * dy  # dans le repère corps
@@ -127,9 +134,9 @@ class Scanner:
         if not near:
             return False
         w = wanted.yaw_rate
-        horizon = min(3.0, self.stop_dist / speed)
-        n = max(2, int(self.stop_dist / 15.0))
-        r2 = FOOT_RADIUS * FOOT_RADIUS
+        horizon = min(3.0, distance / speed)
+        n = max(2, int(distance / 15.0))
+        r2 = radius * radius
         for i in range(1, n + 1):
             t = horizon * i / n
             if abs(w) < 1e-4:
@@ -174,15 +181,37 @@ class SimRanger:
 
     BEAM = 7.5 * DEG  # demi-angle
 
+    PERSON_RADIUS = 70.0  # mm : les deux jambes d'une personne, vues du sol
+    PERSON_SPEED = 70.0  # mm/s, pour que le robot puisse suivre
+
     def __init__(self, obstacles=None):
         self.obstacles = list(obstacles or [])  # (x, y, rayon) en mm, repère du sol
+        self.person = None  # (x, y) de la personne virtuelle, si placée
+        self.person_goal = None
+
+    def walk_person_to(self, x, y):
+        if self.person is None:
+            self.person = (x, y)
+        self.person_goal = (x, y)
+
+    def tick(self, dt):
+        if self.person is None or self.person_goal is None:
+            return
+        (x, y), (gx, gy) = self.person, self.person_goal
+        dx, dy = gx - x, gy - y
+        d = math.sqrt(dx * dx + dy * dy)
+        step = self.PERSON_SPEED * dt
+        self.person = (gx, gy) if d <= step else (x + dx / d * step, y + dy / d * step)
 
     def read(self, x, y, heading):
         best = None
+        things = self.obstacles
+        if self.person is not None:
+            things = things + [(self.person[0], self.person[1], self.PERSON_RADIUS)]
         for k in (-1.0, -0.5, 0.0, 0.5, 1.0):
             a = heading + k * self.BEAM
             ux, uy = math.cos(a), math.sin(a)
-            for ox, oy, r in self.obstacles:
+            for ox, oy, r in things:
                 d = _ray_circle(x, y, ux, uy, ox, oy, r)
                 if d is not None and (best is None or d < best):
                     best = d

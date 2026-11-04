@@ -114,7 +114,7 @@ class ControllerTest(unittest.TestCase):
         self.assertTrue(self.ctrl.handle("MOVE 10 0 0").startswith("ERR"))
 
     def test_telemetry_format(self):
-        line = run(self.ctrl, 0.1)[0].split()
+        line = run(self.ctrl, 0.1)[0].split("\n")[0].split()
         self.assertEqual(line[0], "T")
         self.assertEqual(line[1], OFF)
         self.assertEqual(len(line), 3 + 18)

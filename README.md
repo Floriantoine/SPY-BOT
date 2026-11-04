@@ -127,6 +127,17 @@ restent possibles. En simulation, le capteur est simulé et des obstacles
 virtuels (cylindres) se placent d'un clic sur le sol. Le pilote du vrai
 capteur (`hexapod/sensor.py`) n'a pas encore été essayé sur le robot.
 
+### Se déplacer seul
+
+Carte « Seul » de l'onglet Pilotage :
+- **Aller à un point** puis clic sur le sol : le robot y va en contournant ce
+  que voit le capteur (il se tourne toujours vers où il va, pour le voir). Si
+  le point est inatteignable, il s'arrête au bout de 10 s.
+- **Me suivre** : il suit ce qui est juste devant lui (à ~40 cm), par exemple
+  tes jambes, et ne se laisse pas distraire par un obstacle plus proche.
+- Toucher les joysticks ou **Stop** reprend la main. En simulation,
+  **Déplacer la personne** fait marcher une personne virtuelle à suivre.
+
 ## Organisation du code
 
 | Fichier | Rôle |

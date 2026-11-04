@@ -124,11 +124,25 @@
           <canvas id="radar" width="320" height="170" aria-label="Vue radar du capteur avant"></canvas>
           <div class="sim-only" id="sensor-sim" hidden>
             <div class="row">
-              <button class="btn ghost" id="obst-place" title="Puis clique sur le sol de la vue 3D">Placer un obstacle</button>
+              <button class="btn ghost" data-click="obst" title="Puis clique sur le sol de la vue 3D">Placer un obstacle</button>
               <button class="btn ghost" id="obst-clear">Tout effacer</button>
             </div>
             <p class="hint">Obstacles virtuels de la simulation : le capteur simulé les voit comme le vrai.</p>
           </div>
+        </div>
+        <div class="card nav-card">
+          <h3>Seul <span class="sensor-state" id="nav-state">manuel</span></h3>
+          <div class="row">
+            <button class="btn" data-click="goal" data-needs="link" title="Puis clique sur le sol de la vue 3D">Aller à un point</button>
+            <button class="btn" id="nav-follow" data-needs="link">Me suivre</button>
+            <button class="btn ghost" id="nav-stop" data-needs="link">Stop</button>
+          </div>
+          <div class="sim-only" id="nav-sim" hidden>
+            <div class="row">
+              <button class="btn ghost" data-click="person" title="Puis clique sur le sol : la personne marche jusque-là">Déplacer la personne</button>
+            </div>
+          </div>
+          <p class="hint">Le robot va au point en contournant ce que voit le capteur, ou suit ce qui est juste devant lui (à ~40 cm). Toucher les joysticks reprend la main.</p>
         </div>
         <div class="card keys">
           <h3>Raccourcis</h3>

@@ -615,6 +615,10 @@ export class RobotView {
     this.obstacles = new THREE.Group();
     this.track.add(this.obstacles);
     this.obstacleMat = new THREE.MeshStandardMaterial({ color: 0x8b93a7, roughness: 0.8, transparent: true, opacity: 0.85 });
+    this.goalMat = new THREE.MeshBasicMaterial({ color: 0x34d399, side: THREE.DoubleSide });
+    this.personMat = new THREE.MeshStandardMaterial({ color: 0x2f9e78, roughness: 0.7 });
+    this._goal = null;
+    this._person = null;
     this.simToTrack = null; // repère de la simulation -> repère du sol affiché
     this._obstacleList = [];
   }
@@ -658,25 +662,57 @@ export class RobotView {
     this._placeObstacles();
   }
 
+  /** But de « aller à un point » (repère du robot simulé / estimé), ou null. */
+  setGoal(goal) {
+    this._goal = goal;
+    this._placeObstacles();
+  }
+
+  /** Personne virtuelle de la simulation, ou null. */
+  setPerson(p) {
+    this._person = p;
+    this._placeObstacles();
+  }
+
   setObstacles(list) {
     this._obstacleList = list;
     this._placeObstacles();
   }
 
   _placeObstacles() {
+    // Géométries partagées (cylindre unité mis à l'échelle) : reconstruire
+    // souvent (personne qui marche, sol qui bouge) ne crée rien de nouveau.
+    const geo = (this._geo ||= {
+      cyl: new THREE.CylinderGeometry(1, 1, 1, 32).rotateX(Math.PI / 2), // axe z (repère robot)
+      ring: new THREE.RingGeometry(14, 22, 32),
+    });
     const g = this.obstacles;
     g.clear();
     const m = this.simToTrack || new THREE.Matrix4();
-    for (const [x, y, r] of this._obstacleList) {
-      const h = 130;
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 32), this.obstacleMat);
-      mesh.rotation.x = Math.PI / 2; // cylindre debout dans le repère robot (z haut)
+    const z0 = this.groundZ;
+    const add = (mat, x, y, r, h, z = z0 + h / 2) => {
+      const mesh = new THREE.Mesh(geo.cyl, mat);
       const p = new THREE.Vector3(x, y, 0).applyMatrix4(m);
-      mesh.position.set(p.x, p.y, this.groundZ + h / 2);
+      mesh.position.set(p.x, p.y, z);
+      mesh.scale.set(r, r, h);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       g.add(mesh);
+      return p;
+    };
+    if (this._goal) {
+      const p = add(this.goalMat, ...this._goal, 2, 60);
+      const ring = new THREE.Mesh(geo.ring, this.goalMat);
+      ring.position.set(p.x, p.y, z0 + 1);
+      g.add(ring);
     }
+    if (this._person) {
+      // Deux jambes : vues du capteur, à peu près un cylindre de 7 cm de rayon.
+      const [x, y] = this._person;
+      const th = this._simOffset ? -this._simOffset.th : 0;
+      for (const side of [-1, 1]) add(this.personMat, x - Math.sin(th) * side * 36, y + Math.cos(th) * side * 36, 26, 260);
+    }
+    for (const [x, y, r] of this._obstacleList) add(this.obstacleMat, x, y, r, 130);
   }
 
   /** Point du sol sous la souris, dans le repère de la simulation (ou null). */
@@ -693,7 +729,7 @@ export class RobotView {
   }
 
   _updateSensor(groundY) {
-    if (Math.abs(groundY - this.groundZ) > 0.5) {
+    if (Math.abs(groundY - this.groundZ) > 2) {
       this.groundZ = groundY;
       this._placeObstacles();
     }

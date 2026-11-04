@@ -32,6 +32,12 @@ Commandes (une par ligne, PC -> robot) :
     SENSOR STOP mm                distance d'arrêt devant un obstacle
     OBST                          (simulation) -> OBST x y r x y r ... obstacles virtuels
     OBST ADD x y r | OBST CLEAR   (simulation) ajoute un cylindre / efface tout
+    GOTO x y [vitesse]            aller seul au point (x, y) du sol (repère de P),
+                                  en contournant les obstacles vus par le capteur
+    FOLLOW [vitesse]              suivre ce qui est devant le capteur (à ~40 cm)
+    NAV [STOP]                    -> NAV off|follow|goto x y ; STOP reprend la main
+                                  (un MOVE aussi)
+    PERSON x y                    (simulation) la personne virtuelle marche jusque-là
 
 Réponses (robot -> PC) : `OK ...`, `ERR ...`, `CAL {...}`, et ~20 fois par
 seconde une ligne de télémétrie :
@@ -44,7 +50,9 @@ Avec le capteur avant activé, en plus :
     S <angle> <distance>          une mesure : angle du balayage (deg, + à
                                   gauche), distance en mm (0 = rien en vue)
     OBSTACLE 1|0                  la marche demandée est bloquée / libre
-    P <x> <y> <cap>               (simulation) position du robot (mm, mrad)
+    P <x> <y> <cap>               position estimée du robot sur le sol (mm, mrad)
+    NAV arrived | NAV stuck       but atteint / impossible à atteindre (puis NAV off)
+    PERSON <x> <y>                (simulation) position de la personne virtuelle
 """
 
 import json
@@ -55,6 +63,7 @@ from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
 from .robot import Hexapod
+from .nav import Navigator
 from .sensor import STOP_RANGE, Scanner
 
 DEG = math.pi / 180.0
@@ -91,6 +100,7 @@ class Controller:
         self.wanted = GaitCommand()  # consigne MOVE, avant le filtre d'obstacle
         self.odom = (0.0, 0.0, 0.0)  # position estimée du robot sur le sol (mm, mm, rad)
         self._pending = []  # lignes à envoyer avec la prochaine télémétrie
+        self.nav = Navigator()  # aller à un point / suivre (GOTO, FOLLOW)
         self.driver = driver
         self.calib_path = calib_path
         self.mode = OFF
@@ -110,9 +120,19 @@ class Controller:
         lines, self._pending = self._pending, []
         if self.mode != STAND:
             self.wanted = GaitCommand()
+            if self.nav.active:
+                self.nav.stop()
+                lines.append(self.nav.status())
         if self.mode == STAND:
             self.since_move += dt
-            if self.since_move > WATCHDOG:
+            if self.nav.active:
+                # Le robot se pilote seul : pas besoin de MOVE.
+                self.since_move = 0.0
+                self.wanted, event = self.nav.command(self.odom, self.scanner, dt)
+                if event:
+                    lines.append("NAV " + event)
+                    lines.append(self.nav.status())
+            elif self.since_move > WATCHDOG:
                 self.wanted = GaitCommand()
             r.command = self._filter(self.wanted, lines)
         elif self.mode == STANDING:
@@ -149,6 +169,8 @@ class Controller:
                 r.command = GaitCommand()
             self._integrate(r.travel)
 
+        if hasattr(self.scanner.ranger, "tick"):
+            self.scanner.ranger.tick(dt)  # simulation : la personne marche
         if self.mode != OFF:  # servos relâchés : le balayage attend
             lines += self.scanner.tick(dt, self.odom, self.wanted)
 
@@ -156,9 +178,13 @@ class Controller:
         if self.since_telemetry >= TELEMETRY_PERIOD:
             self.since_telemetry = 0.0
             lines.append(self.telemetry())
-            if self.scanner.enabled and hasattr(self.scanner.ranger, "obstacles"):
-                x, y, th = self.odom
-                lines.append("P %d %d %d" % (round(x), round(y), round(th * 1000)))
+            x, y, th = self.odom
+            lines.append("P %d %d %d" % (round(x), round(y), round(th * 1000)))
+            ranger = self.scanner.ranger
+            if hasattr(ranger, "tick"):
+                person = ranger.person
+                if person:
+                    lines.append("PERSON %d %d" % (round(person[0]), round(person[1])))
         return "\n".join(lines) if lines else None
 
     def telemetry(self):
@@ -221,6 +247,9 @@ class Controller:
     def cmd_move(self, vx, vy, yaw):
         if self.mode != STAND:
             return "ERR MOVE : le robot doit être debout"
+        if self.nav.active:
+            self.nav.stop()  # on reprend la main
+            self._pending.append(self.nav.status())
         self.wanted = GaitCommand(float(vx), float(vy), float(yaw) * DEG)
         self.robot.command = self._filter(self.wanted, self._pending)
         self.since_move = 0.0
@@ -313,6 +342,41 @@ class Controller:
                 return "ERR SENSOR : capteur avant absent"
             sc.enable(args[0] == "1")
         return sc.status()
+
+    def cmd_goto(self, x, y, speed=None):
+        if self.mode != STAND:
+            return "ERR GOTO : le robot doit être debout"
+        self._auto_sensor()
+        self.nav.goto(float(x), float(y), float(speed) if speed else None)
+        return self.nav.status()
+
+    def cmd_follow(self, speed=None):
+        if self.mode != STAND:
+            return "ERR FOLLOW : le robot doit être debout"
+        if not self.scanner.present:
+            return "ERR FOLLOW : il faut le capteur avant"
+        self._auto_sensor()
+        self.nav.follow(float(speed) if speed else None)
+        return self.nav.status()
+
+    def cmd_nav(self, *args):
+        if args and args[0].upper() == "STOP":
+            self.nav.stop()
+            self.wanted = GaitCommand()
+        return self.nav.status()
+
+    def cmd_person(self, x, y):
+        ranger = self.scanner.ranger
+        if not hasattr(ranger, "tick"):
+            return "ERR PERSON : seulement en simulation"
+        ranger.walk_person_to(float(x), float(y))
+        return None
+
+    def _auto_sensor(self):
+        # Se déplacer seul sans regarder devant soi : le capteur s'allume.
+        if self.scanner.present and not self.scanner.enabled:
+            self.scanner.enable(True)
+            self._pending.append(self.scanner.status())
 
     def cmd_obst(self, *args):
         ranger = self.scanner.ranger
