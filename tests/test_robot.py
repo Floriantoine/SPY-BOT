@@ -231,3 +231,12 @@ class SmoothWalkTest(unittest.TestCase):
                     n = max(still, key=lambda m: math.hypot(*robot.neutral[m][:2]))
                     speeds.append(math.dist(before[n][:2], after[n][:2]))
                 self.assertGreater(min(speeds), 0.5 * max(speeds), (legs, command))
+
+
+class BodyV6FoldTest(unittest.TestCase):
+    def test_middle_legs_strap_limit(self):
+        from hexapod.config import tibia_fold_limit as limit
+        self.assertLessEqual(limit(-53, True), 40)
+        self.assertGreater(limit(-53), 40)  # autres pattes : pas de sangle
+        self.assertLessEqual(limit(-73), 30)  # batterie
+        self.assertEqual(limit(-30, True), limit(-30))  # postures normales inchangées

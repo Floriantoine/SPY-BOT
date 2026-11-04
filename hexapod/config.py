@@ -41,8 +41,26 @@ TIBIA_FOLD_LIMITS = ((-90, 6), (-75, 20), (-60, 44), (-45, 51), (-30, 57), (-15,
                      (0, 64), (15, 59), (30, 56), (75, 56), (90, 58))
 
 
-def tibia_fold_limit(femur_deg):
-    """Repli maximal du tibia (°) pour un fémur à `femur_deg`, interpolé."""
+# Plaque_bas « hexa v6 » (Fusion, 2026-11-04) : batterie 2S sous le corps
+# (x ±17,5, y ±37,5, 38,3 mm sous les axes) et boucles de sa sangle (x ±10,25,
+# |y| 38,5 à 48,5, devant les pattes du milieu). (fémur au plus, repli au plus)
+BATTERY_FOLD = (-73, 30)  # toutes les pattes : tibia replié sous le corps
+STRAP_FOLD = (-53, 40)  # pattes du milieu : boucles de la sangle
+MIDDLE_LEGS = ("LM", "RM")
+
+
+def tibia_fold_limit(femur_deg, middle=False):
+    """Repli maximal du tibia (°) pour un fémur à `femur_deg`, interpolé ;
+    `middle` : patte du milieu (sangle de la batterie)."""
+    v = _fold_table(femur_deg)
+    if femur_deg <= BATTERY_FOLD[0]:
+        v = min(v, BATTERY_FOLD[1])
+    if middle and femur_deg <= STRAP_FOLD[0]:
+        v = min(v, STRAP_FOLD[1])
+    return v
+
+
+def _fold_table(femur_deg):
     pts = TIBIA_FOLD_LIMITS
     if femur_deg <= pts[0][0]:
         return pts[0][1]

@@ -3,7 +3,7 @@
 import math
 
 from .body_ik import BodyPose, body_to_leg_frame, foot_in_body, leg_to_body_frame
-from .config import tibia_fold_limit
+from .config import MIDDLE_LEGS, tibia_fold_limit
 from .gait import QUAD_ORDER, QUAD_TUCKED, GaitCommand, QuadGait, TripodGait, _diagonal, ground_velocity
 from .leg_ik import LegAngles, UnreachableError, leg_fk, leg_ik
 from .servo import DryRunDriver, ik_to_servo_deg
@@ -626,7 +626,7 @@ def leg_margin(leg, a):
         d = 90.0 + joint.direction * (v * deg - joint.zero_deg) + joint.trim_deg
         worst = min(worst, d - joint.min_deg, joint.max_deg - d)
     femur = a.femur * deg
-    return min(worst, tibia_fold_limit(femur) - (-a.tibia * deg - 90.0))
+    return min(worst, tibia_fold_limit(femur, leg.name in MIDDLE_LEGS) - (-a.tibia * deg - 90.0))
 
 
 def leg_ok(leg, a):
@@ -638,7 +638,7 @@ def leg_ok(leg, a):
         if d < joint.min_deg + SERVO_MARGIN or d > joint.max_deg - SERVO_MARGIN:
             return False
     femur = a.femur * deg
-    if femur <= -90.0 or -a.tibia * deg - 90.0 > tibia_fold_limit(femur) - FOLD_MARGIN:
+    if femur <= -90.0 or -a.tibia * deg - 90.0 > tibia_fold_limit(femur, leg.name in MIDDLE_LEGS) - FOLD_MARGIN:
         return False
     # Fémur levé : la coxa doit moins tourner (bord de la plaque du haut).
     return femur <= 45.0 or abs(a.coxa * deg) <= 55.0 - (femur - 45.0) / 3.0
