@@ -77,16 +77,55 @@ class LimitTest(unittest.TestCase):
         run(c, 2.0)
         self.assertEqual(c.robot.pose_scale, 1.0)  # immobile : la pose tient
         lines = run(c, 4.0, "MOVE 100 0 30")
-        self.assertLess(c.robot.lift_scale, 1.0)  # pas moins hauts d'abord
-        c.handle("POSE 0 0 0 8 8 0")
-        lines += run(c, 4.0, "MOVE 100 0 30")
+        # Pieds posés plus loin du corps : la pose et la hauteur de pas tiennent.
+        self.assertEqual((c.robot.pose_scale, c.robot.lift_scale), (1.0, 1.0))
+        c.handle("TILT 12 12")
+        c.handle("LEVEL 1")
+        lines += run(c, 6.0, "MOVE 100 0 30")
         self.assertIn("LIMIT pose 1", lines)
         c.handle("MOVE 0 0 0")
+        c.handle("LEVEL 0")
         c.handle("POSE 0 0 0 5 0 0")  # tient à l'arrêt
         lines = run(c, 5.0)
         self.assertIn("LIMIT pose 0", lines)
         self.assertEqual(c.robot.pose_scale, 1.0)
         self.assertAlmostEqual(math.degrees(c.robot.applied.roll), 5.0, places=3)
+
+
+
+class FootPlacementTest(unittest.TestCase):
+    def test_feet_move_out_when_body_lowered(self):
+        c = make()
+        c.handle("POSE 0 0 -15 0 0 0")
+        run(c, 4.0)  # à l'arrêt : un pas sur place pour replacer les pieds
+        self.assertTrue(c.robot.at_rest)
+        for n, (hx, hy) in c.robot.home.items():
+            self.assertGreater(math.hypot(hx, hy), 20.0, n)
+            o = c.robot.offsets[n]
+            self.assertAlmostEqual(o[0], hx, delta=0.5)
+            self.assertAlmostEqual(o[1], hy, delta=0.5)
+        phase = c.robot.gait.phase
+        run(c, 2.0)
+        self.assertEqual(c.robot.gait.phase, phase)  # puis il ne bouge plus
+
+    def test_neutral_pose_keeps_neutral_stance(self):
+        c = make()
+        run(c, 3.0, "MOVE 100 0 30")
+        self.assertEqual(set(c.robot.home.values()), {(0.0, 0.0)})
+
+    def test_no_stepping_while_standing_up_or_sitting(self):
+        c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json", SimRanger([]), SimIMU())
+        c.handle("POWER 1")
+        c.handle("POSE 0 0 -15 0 0 0")
+        c.handle("STAND")
+        while c.mode != "stand":
+            self.assertEqual(c.robot.gait.phase, 0.0)  # pas de pas en se levant
+            c.tick(0.02)
+        run(c, 4.0)
+        c.handle("POSE 0 0 0 0 0 0")
+        c.handle("SIT")
+        run(c, 6.0)
+        self.assertEqual(c.mode, "sit")
 
 
 if __name__ == "__main__":

@@ -42,6 +42,8 @@ Commandes (une par ligne, PC -> robot) :
     LEVEL 1|0                     auto-équilibrage : le corps reste horizontal
                                   (à l'assiette de POSE) même sur une pente
     TILT roll pitch               (simulation) pente du sol en degrés
+    TERRAIN [1|0]                 (simulation) sol bosselé : la pente change en marchant
+                                  -> TERRAIN 0|1
                                   -> LIMIT pose 1|0 (spontané) : pose du corps
                                   réduite pour garder les servos dans leur course
 
@@ -61,6 +63,10 @@ Avec le capteur avant activé, en plus :
     PERSON <x> <y>                (simulation) position de la personne virtuelle
     I <roulis> <tangage> <corr. roulis> <corr. tangage>
                                   assiette mesurée et correction, en 0,1°
+    B <roulis> <tangage> <sol roulis> <sol tangage>
+                                  assiette du corps par rapport aux pieds et
+                                  pente du sol (simulation), en 0,1°
+    LIMIT pose 1|0                pose du corps réduite / de nouveau complète
 """
 
 import json
@@ -176,6 +182,7 @@ class Controller:
 
         if self.mode in (SIT, STANDING, STAND, SITTING):
             self._apply_pose()
+            r.replace_feet = self.mode == STAND  # pas sur place seulement debout
             try:
                 self.angles = r.update(dt)
             except UnreachableError:
@@ -192,7 +199,7 @@ class Controller:
                 lines.append("LIMIT pose 0")
 
         if self.imu is not None:
-            self.imu.update(dt, self.robot.applied)
+            self.imu.update(dt, self.robot.applied, self.odom)
             att = self.imu.attitude
             if self.mode == STAND and att.ready:
                 u = self.user_pose
@@ -213,6 +220,10 @@ class Controller:
             if self.imu is not None and self.imu.attitude.ready:
                 a, lv = self.imu.attitude, self.leveler
                 lines.append("I %d %d %d %d" % tuple(round(v * 1800 / math.pi) for v in (a.roll, a.pitch, lv.roll, lv.pitch)))
+            # Assiette du corps par rapport aux pieds, et pente du sol (simulation) : pour la 3D.
+            b = self.robot.applied
+            gr, gp = getattr(self.imu, "slope", (0.0, 0.0))
+            lines.append("B %d %d %d %d" % tuple(round(v * 1800 / math.pi) for v in (b.roll, b.pitch, gr, gp)))
             ranger = self.scanner.ranger
             if hasattr(ranger, "tick"):
                 person = ranger.person
@@ -426,6 +437,13 @@ class Controller:
         self.imu.ground_roll = _clamp(float(roll), 15) * DEG
         self.imu.ground_pitch = _clamp(float(pitch), 15) * DEG
         return "OK TILT %.0f %.0f" % (self.imu.ground_roll / DEG, self.imu.ground_pitch / DEG)
+
+    def cmd_terrain(self, on=None):
+        if not hasattr(self.imu, "terrain"):
+            return "ERR TERRAIN : seulement en simulation"
+        if on is not None:
+            self.imu.terrain = on == "1"
+        return "TERRAIN %d" % self.imu.terrain
 
     def cmd_obst(self, *args):
         ranger = self.scanner.ranger

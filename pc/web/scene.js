@@ -31,6 +31,12 @@ const COLORS = {
 
 // Repère robot (x avant, y gauche, z haut) -> repère three.js (x droite, y haut, z arrière).
 const ROBOT_TO_THREE = new THREE.Matrix4().set(0, -1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 1);
+const THREE_TO_ROBOT = ROBOT_TO_THREE.clone().invert();
+/** Rotation roulis / tangage (repère robot : x avant, y gauche, z haut), vue dans three. */
+function tiltInThree(roll, pitch) {
+  const r = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(roll, pitch, 0, "ZYX"));
+  return ROBOT_TO_THREE.clone().multiply(r);
+}
 
 export class RobotView {
   constructor(container) {
@@ -78,6 +84,11 @@ export class RobotView {
     rim.position.set(-300, 150, -300);
     scene.add(rim);
 
+    // Monde : sol, grille, robot. Il penche avec la pente du sol (sol bosselé
+    // de la simulation) ; le robot y penche de son assiette par rapport aux pieds.
+    this.world = new THREE.Group();
+    this.world.matrixAutoUpdate = false;
+    scene.add(this.world);
     this.ground = new THREE.Group();
     const floor = new THREE.Mesh(
       new THREE.CircleGeometry(1400, 64),
@@ -86,7 +97,7 @@ export class RobotView {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.ground.add(floor);
-    scene.add(this.ground);
+    this.world.add(this.ground);
 
     // Repère du sol : le robot reste au centre de la vue et c'est le sol qui
     // défile quand il marche. Son déplacement est déduit des pieds posés, qui
@@ -95,7 +106,7 @@ export class RobotView {
     this.odo = { x: 0, y: 0, th: 0 };
     this.track = new THREE.Group();
     this.track.matrixAutoUpdate = false;
-    scene.add(this.track);
+    this.world.add(this.track);
     this.grid = new THREE.GridHelper(2000, 80, 0x2a3446, 0x1a212d);
     this.grid.rotation.x = Math.PI / 2; // grille dans le plan xy du repère robot
     this.track.add(this.grid);
@@ -105,7 +116,7 @@ export class RobotView {
     this.robot = new THREE.Group();
     this.robot.matrixAutoUpdate = false;
     this.robot.matrix.copy(ROBOT_TO_THREE);
-    scene.add(this.robot);
+    this.world.add(this.robot);
     this._buildSensorLayer();
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 1, 5000);
@@ -177,7 +188,7 @@ export class RobotView {
     this.robot.clear();
     this.robot.add(this.sensorHead);
     this.parts = [];
-    for (const leg of this.legs) this.scene.remove(leg.contact);
+    for (const leg of this.legs) this.world.remove(leg.contact);
     const k = geom.tibia / REF_TIBIA;
     this.k = k;
 
@@ -274,7 +285,7 @@ export class RobotView {
     // Repère au sol sous le pied.
     leg.contact = new THREE.Mesh(new THREE.RingGeometry(5 * k, 9 * k, 28), this.mats.contact);
     leg.contact.rotation.x = -Math.PI / 2;
-    this.scene.add(leg.contact);
+    this.world.add(leg.contact);
 
     // Trace du pied : les dernières positions, vertes au sol, bleues en l'air.
     const traceGeo = new THREE.BufferGeometry();
@@ -481,14 +492,16 @@ export class RobotView {
       femurJ.rotation.y = -f; // positif = fémur qui monte
       tibiaJ.rotation.y = -t;
     });
-    this.robot.updateMatrixWorld(true);
+    this.world.updateMatrixWorld(true);
 
-    const tips = this.legs.map((leg) => leg.tip.getWorldPosition(new THREE.Vector3()));
+    // Pieds dans le repère du monde (sol), qui peut pencher.
+    const tipsW = this.legs.map((leg) => leg.tip.getWorldPosition(new THREE.Vector3()));
+    const tips = tipsW.map((p) => this.world.worldToLocal(p.clone()));
     const footR = 4.5 * this.k;
     const lowest = Math.min(...tips.map((p) => p.y)) - footR;
     this.ground.position.y = lowest;
     const tolerance = Math.max(1.5, 0.02 * this.geom.tibia);
-    this._odometry(tips.map((p, i) => (p.y - footR - lowest < tolerance ? this.robot.worldToLocal(p.clone()) : null)));
+    this._odometry(tips.map((p, i) => (p.y - footR - lowest < tolerance ? p.clone().applyMatrix4(THREE_TO_ROBOT) : null)));
     this._updateTrack(lowest);
     this._updateSensor(lowest);
     const sel = this.selection;
@@ -504,7 +517,7 @@ export class RobotView {
         label.element.classList.toggle("lit", n === j);
         label.element.classList.toggle("limit", atLimit);
       });
-      this._trace(leg, tips[i], onGround);
+      this._trace(leg, tipsW[i], onGround);
       leg.halo.visible = j >= 0;
       if (j >= 0) {
         const p = leg.joints[j].getWorldPosition(new THREE.Vector3());
@@ -662,6 +675,15 @@ export class RobotView {
     this._placeObstacles();
   }
 
+  /** Assiette du corps par rapport aux pieds, et pente du sol sous le robot
+   * (simulation), en radians. */
+  setAttitude(roll, pitch, groundRoll, groundPitch) {
+    this.robot.matrix.copy(tiltInThree(roll, pitch));
+    this.robot.matrixWorldNeedsUpdate = true;
+    this.world.matrix.copy(tiltInThree(groundRoll, groundPitch).multiply(THREE_TO_ROBOT));
+    this.world.matrixWorldNeedsUpdate = true;
+  }
+
   /** But de « aller à un point » (repère du robot simulé / estimé), ou null. */
   setGoal(goal) {
     this._goal = goal;
@@ -720,7 +742,7 @@ export class RobotView {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.ground.position.y);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.ground.position.y).applyMatrix4(this.world.matrixWorld);
     const hit = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
     if (!hit) return null;
     const p = this.track.worldToLocal(hit);

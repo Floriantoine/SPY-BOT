@@ -25,6 +25,15 @@ POSE_RECOVER = 0.5  # /s : vitesse de retour à la pose / hauteur de pas demand�
 SERVO_MARGIN = 1.0  # ° gardés avant chaque butée de servo
 FOLD_MARGIN = 2.0  # ° gardés avant que le tibia touche la coxa
 NEIGHBOUR_LIMIT = 70.0  # ° : deux pattes voisines qui se rapprochent se touchent
+# Pieds replacés selon la pose : pour chaque patte, la position de pose au
+# sol (le long de la patte) qui garde ses servos le plus loin de leurs
+# butées, avec le corps dans la pose demandée. Le pied y va à son prochain
+# pas ; à l'arrêt, le robot fait un pas sur place si un pied en est loin.
+HOME_RANGE = (-30.0, 60.0)  # mm : rapproché / éloigné du corps, le long de la patte
+HOME_STEP = 10.0  # mm entre deux essais
+HOME_REPLACE = 8.0  # mm : à l'arrêt, un pied plus loin que ça de sa place fait un pas
+HOME_PERIOD = 0.06  # s entre deux recalculs (calcul étalé, pour l'ESP32)
+HOME_POSE_MM = 2.0  # la pose a changé de plus que ça (mm, ou °) : on recalcule
 LIFT_MIN = 0.5  # pas pas moins hauts que la moitié de la hauteur réglée
 BISECT = 4  # essais pour trouver ce qui est possible (précision 1/16)
 
@@ -63,6 +72,22 @@ class Hexapod:
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}  # pied - neutre (mm)
         self._lift = {}  # pieds en l'air : position (dx, dy) au moment de se lever
         self.travel = (0.0, 0.0, 0.0)  # déplacement du corps au dernier update (mm, mm, rad, repère corps)
+        # Place de chaque pied selon la pose (décalage par rapport au neutre) :
+        # `home` = là où il se pose, `home_goal` = la meilleure place pour la pose actuelle.
+        self._radial = {}
+        for leg in config.legs:
+            p = self.neutral[leg.name]
+            dx, dy = p[0] - leg.mount_x, p[1] - leg.mount_y
+            d = math.sqrt(dx * dx + dy * dy)
+            self._radial[leg.name] = (dx / d, dy / d)
+        # Marge (°) avant les butées au neutre : on cherche à la retrouver dans toute pose.
+        self._home_target = {leg.name: self._home_margin(leg, BodyPose(), 0.0) for leg in config.legs}
+        self._home_wait = 0.0
+        self._placed = set()  # pieds en l'air qui ont déjà pris leur nouvelle place
+        self.replace_feet = True  # faux : pas de pas sur place pour replacer les pieds (en se levant…)
+        self.home = {n: (0.0, 0.0) for n in self.neutral}
+        self.home_goal = {n: (0.0, 0.0) for n in self.neutral}
+        self._home_key = {n: (0.0,) * 6 for n in self.neutral}
 
     def set_legs(self, n):
         """Passe en marche à 6 ou 4 pattes. Seulement à l'arrêt, pieds au sol."""
@@ -81,6 +106,10 @@ class Hexapod:
         self.current = GaitCommand()
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}
         self._lift = {}
+        self._placed = set()
+        self.home = {n: (0.0, 0.0) for n in self.neutral}
+        self.home_goal = {n: (0.0, 0.0) for n in self.neutral}
+        self._home_key = {n: (0.0,) * 6 for n in self.neutral}
 
     @property
     def at_rest(self):
@@ -150,6 +179,9 @@ class Hexapod:
         self.current = GaitCommand(_approach(c.vx, target.vx, ACCEL * dt),
                                    _approach(c.vy, target.vy, ACCEL * dt),
                                    _approach(c.yaw_rate, target.yaw_rate, YAW_ACCEL * dt))
+        self._home_wait -= dt
+        if self._home_wait <= 0.0 and self._refresh_home():
+            self._home_wait = HOME_PERIOD
         self.gait.advance(dt, not (self.current.is_zero and self._feet_settled()))
         self._move_feet(dt)
         angles = self.solve_limited(dt)
@@ -227,8 +259,79 @@ class Hexapod:
     # --- interne ----------------------------------------------------------
 
     def _feet_settled(self):
-        # Pieds revenus au neutre (la démarche ne s'arrête que pieds posés).
-        return all(abs(o[0]) < SETTLED and abs(o[1]) < SETTLED for o in self.offsets.values())
+        # Pieds revenus à leur place (la démarche ne s'arrête que pieds posés),
+        # et cette place pas trop loin de la meilleure pour la pose actuelle.
+        for n, o in self.offsets.items():
+            h, g = self.home[n], self.home_goal[n]
+            if abs(o[0] - h[0]) >= SETTLED or abs(o[1] - h[1]) >= SETTLED:
+                return False
+            if self.replace_feet and (h[0] - g[0]) ** 2 + (h[1] - g[1]) ** 2 > HOME_REPLACE * HOME_REPLACE:
+                return False
+        return True
+
+    # --- place des pieds selon la pose ----------------------------------------
+
+    def _refresh_home(self):
+        """Recalcule la meilleure place d'un pied (un par appel, pour étaler
+        le calcul) si la pose a changé depuis la dernière fois."""
+        p, b = self.pose, self.base_pose
+        # La hauteur assise (base_pose) ne compte pas : on ne déplace pas les pieds pour s'asseoir.
+        key = (p.x - b.x, p.y - b.y, p.z - b.z, math.degrees(p.roll - b.roll),
+               math.degrees(p.pitch - b.pitch), math.degrees(p.yaw - b.yaw))
+        for leg in self.config.legs:
+            n = leg.name
+            if self.legs == 4 and n in QUAD_TUCKED:
+                continue
+            if max(abs(u - v) for u, v in zip(key, self._home_key[n])) <= HOME_POSE_MM:
+                continue
+            self._home_key[n] = key
+            pose = BodyPose(key[0], key[1], key[2], *(math.radians(v) for v in key[3:]))
+            r = self._best_radius(leg, pose)
+            ux, uy = self._radial[n]
+            self.home_goal[n] = (r * ux, r * uy)
+            return True
+        return False
+
+    def _best_radius(self, leg, pose):
+        """Décalage (mm, le long de la patte) le plus petit qui rend à la patte
+        autant de marge avant les butées qu'au neutre (pied posé à un demi-pas
+        autour, et levé) ; s'il n'y en a pas, celui qui en donne le plus."""
+        want = self._home_target[leg.name]
+        f0 = self._home_margin(leg, pose, 0.0)
+        if f0 >= want:
+            return 0.0
+        lo, hi = HOME_RANGE
+        out, inside = self._home_margin(leg, pose, HOME_STEP), self._home_margin(leg, pose, -HOME_STEP)
+        sign = 1.0 if out >= inside else -1.0
+        r, f = sign * HOME_STEP, max(out, inside)
+        prev_r, prev_f = 0.0, f0
+        while f < want:
+            nr = r + sign * HOME_STEP
+            if nr < lo or nr > hi:
+                return r
+            nf = self._home_margin(leg, pose, nr)
+            if nf <= f:
+                return r  # plus rien à gagner plus loin
+            prev_r, prev_f, r, f = r, f, nr, nf
+        # Entre les deux derniers essais : juste ce qu'il faut.
+        return prev_r + (r - prev_r) * (want - prev_f) / (f - prev_f)
+
+    def _home_margin(self, leg, pose, r):
+        c = self.config
+        p = self.neutral[leg.name]
+        ux, uy = self._radial[leg.name]
+        x0, y0 = p[0] + r * ux, p[1] + r * uy
+        h = 0.35 * self.tripod.max_stride  # pied posé : un peu moins d'un demi-pas autour
+        worst = 1e9
+        # Posé au point, plus loin et plus près le long de la patte, et levé.
+        for k, dz in ((0.0, 0.0), (h, 0.0), (-h, 0.0), (0.0, self.gait.step_height)):
+            x, y, z = body_to_leg_frame(foot_in_body((x0 + k * ux, y0 + k * uy, p[2] + dz), pose), leg)
+            try:
+                a = leg_ik(x, y, z, c.coxa_length, c.femur_length, c.tibia_length)
+            except UnreachableError:
+                return -1e9
+            worst = min(worst, leg_margin(leg, a))
+        return worst
 
     def _plan_sway(self, slot):
         """Décalage du corps avant le pas de la patte n° `slot` (QUAD_ORDER) :
@@ -285,17 +388,23 @@ class Hexapod:
             p = self.neutral[n]
             s = g.swing(n)
             if s is None:
+                self._placed.discard(n)
                 if self._lift.pop(n, None) is not None:
                     # Il vient de se poser : il finit son pas sur le point visé.
                     vx, vy = ground_velocity(p, cmd)
-                    dx, dy = -vx * g.stance_time / 2, -vy * g.stance_time / 2
+                    hx, hy = self.home[n]
+                    dx, dy = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
                     self.offsets[n] = (dx, dy, 0.0)
                 stance.append(n)
             else:
                 # En l'air : de là où il s'est levé jusqu'à un demi-pas en avant.
                 lx, ly = self._lift.setdefault(n, (dx, dy))
+                if s > 0.0 and n not in self._placed:
+                    self._placed.add(n)
+                    self.home[n] = self.home_goal[n]  # il se pose à sa meilleure place
                 vx, vy = ground_velocity(p, cmd)
-                tx, ty = -vx * g.stance_time / 2, -vy * g.stance_time / 2
+                hx, hy = self.home[n]
+                tx, ty = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
                 k = s * s * (3 - 2 * s)
                 self.offsets[n] = (lx + (tx - lx) * k, ly + (ty - ly) * k,
                                    g.step_height * math.sin(math.pi * s))
@@ -315,9 +424,10 @@ class Hexapod:
             vx, vy = ground_velocity((p[0] + dx, p[1] + dy), cmd)
             moves[n] = (vx * dt, vy * dt)
             lift = g.time_to_lift(n)
+            hx, hy = self.home[n]
             if lift > dt:
-                k = min(k, _fraction_inside(dx, dy, vx * lift, vy * lift, half))
-            k = min(k, _fraction_inside(dx, dy, vx * dt, vy * dt, half))
+                k = min(k, _fraction_inside(dx - hx, dy - hy, vx * lift, vy * lift, half))
+            k = min(k, _fraction_inside(dx - hx, dy - hy, vx * dt, vy * dt, half))
         for n in stance:
             dx, dy, _ = self.offsets[n]
             mx, my = moves[n]
@@ -330,6 +440,18 @@ class Hexapod:
 
 DEG_PER_RAD = 180.0 / math.pi
 AROUND = ("LF", "LM", "LR", "RR", "RM", "RF")  # sens trigo : coxa + = vers la suivante
+
+
+def leg_margin(leg, a):
+    """Plus petit écart (°) entre un servo de la patte et sa butée (ou entre le
+    tibia et la coxa) ; négatif s'il est dépassé."""
+    deg = DEG_PER_RAD
+    worst = 1e9
+    for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+        d = 90.0 + joint.direction * (v * deg - joint.zero_deg) + joint.trim_deg
+        worst = min(worst, d - joint.min_deg, joint.max_deg - d)
+    femur = a.femur * deg
+    return min(worst, tibia_fold_limit(femur) - (-a.tibia * deg - 90.0))
 
 
 def leg_ok(leg, a):

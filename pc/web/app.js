@@ -100,6 +100,11 @@ events.onmessage = (e) => {
     view.setSimPose(x, y, th / 1000);
     return;
   }
+  if (kind === "B") {
+    const [r, p, gr, gp] = rest.split(" ").map((v) => (Number(v) / 1800) * Math.PI);
+    view.setAttitude(r, p, gr, gp);
+    return;
+  }
   if (kind === "I") {
     const [roll, pitch, cr, cp] = rest.split(" ").map((v) => Number(v) / 10);
     Object.assign(state.imu, { roll, pitch, corrRoll: cr, corrPitch: cp, at: performance.now() });
@@ -168,6 +173,8 @@ events.onmessage = (e) => {
   } else if (kind === "OBSTACLE") {
     state.sensor.blocked = rest === "1";
     renderSensor();
+  } else if (kind === "TERRAIN") {
+    $("#terrain").checked = rest.trim() === "1";
   } else if (kind === "LIMIT") {
     // Le robot réduit lui-même la pose du corps pour garder ses servos dans leur course.
     if (rest === "pose 1") toast("Pose du corps réduite : les pattes n'ont pas la course pour la tenir en marchant", "");
@@ -181,7 +188,10 @@ events.onmessage = (e) => {
     if (state.sim) send("OBST", true);
     $("#sensor-sim").hidden = !state.sim;
     $("#imu-sim").hidden = !state.sim;
-    if (state.sim) sendTilt();
+    if (state.sim) {
+      sendTilt();
+      send(`TERRAIN ${$("#terrain").checked ? 1 : 0}`, true);
+    }
     sendGait(); // le robot démarre avec ses propres réglages : on lui envoie ceux de l'interface
     if (state.legs !== 6) send(`LEGS ${state.legs}`, true);
     toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
@@ -229,6 +239,7 @@ function setConnected(connected, name = "") {
     view.setObstacles([]);
     view.setGoal(null);
     view.setPerson(null);
+    view.setAttitude(0, 0, 0, 0);
     renderNav();
   }
   updateControls();
@@ -773,6 +784,7 @@ sliders.tiltPitch = bindSlider($("#tilt-pitch"), (v) => `${v}°`);
 const sendTilt = throttle(() => send(`TILT ${$("#tilt-roll").value} ${$("#tilt-pitch").value}`, true), 150);
 $("#tilt-roll").addEventListener("input", sendTilt);
 $("#tilt-pitch").addEventListener("input", sendTilt);
+$("#terrain").onchange = (e) => send(`TERRAIN ${e.target.checked ? 1 : 0}`);
 
 // ----------------------------------------------------------------- montage
 

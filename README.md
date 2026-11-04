@@ -108,6 +108,7 @@ Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Nor
 
 - **Démarrage en douceur** : à la mise sous tension, les pattes s'activent l'une après l'autre (moins d'appel de courant), puis le robot se lève.
 - **Servos en butée** : un servo qui arrive au bout de sa course passe en rouge dans la 3D, avec son étiquette carte · canal.
+- **Pieds replacés selon la pose** : quand le corps est baissé, penché ou décalé (Corps, ou l'auto-équilibrage), chaque pied se pose plus loin ou plus près du corps, là où ses servos gardent autant de marge qu'au neutre. Il y va à son prochain pas ; à l'arrêt, le robot fait un pas sur place si un pied est à plus de 8 mm de sa place (pas en se levant ni en s'asseyant).
 - **Pose trop forte pour marcher** : si la pose du corps (Corps, ou l'auto-équilibrage) ajoutée au pas ferait arriver un servo en butée ou toucher deux pièces, le robot fait d'abord des pas moins hauts (jusqu'à la moitié), puis réduit la pose juste ce qu'il faut ; elle revient doucement dès que c'est possible. L'appli le signale (« Pose du corps réduite »). Le rouge ne devrait donc plus apparaître en marchant.
 - **Traces des pieds** (bouton en haut à droite de la vue) : le sol défile sous le robot et chaque pied y laisse sa trace, verte au sol, bleue en l'air. Un pied qui glisse laisse un trait au lieu d'un point. Le défilement est calculé d'après les pieds posés (il suit exactement la démarche), sans capteur.
 - **Animations** : révérence, danse, pompes... et un éditeur pour créer les tiennes à partir des poses de l'onglet **Corps**. Elles sont enregistrées dans le navigateur.
@@ -146,7 +147,8 @@ l'ESP32. Le robot doit rester immobile 1 s au démarrage (mesure du biais du
 gyroscope). Onglet **Corps**, carte « Gyroscope » : roulis et tangage mesurés
 (horizon artificiel) et **Garder le corps horizontal**, qui incline le corps
 (jusqu'à 10°) pour compenser une pente. En simulation, deux curseurs penchent
-le sol virtuel. Premier essai sur le robot : sur sol plat, une pose de roulis
+le sol virtuel, et **Sol bosselé** fait des bosses et des creux : la pente
+sous le robot change quand il marche, et la 3D penche avec le sol. Premier essai sur le robot : sur sol plat, une pose de roulis
 +5° doit se lire +5° ; sinon, corriger `IMU_AXES` dans `hexapod/imu.py`
 (orientation de la carte). Pilote pas encore essayé sur le robot.
 

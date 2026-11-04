@@ -66,6 +66,25 @@ class LevelTest(unittest.TestCase):
             run(c, 0.1)
         self.assertLess(abs(imu.attitude.roll / DEG), 1)
 
+    def test_bumpy_ground_is_levelled_while_walking(self):
+        c, imu = self.make()
+        self.assertEqual(c.handle("TERRAIN 1"), "TERRAIN 1")
+        tilt = []
+        for _ in range(60):
+            c.handle("MOVE 100 0 0")
+            tilt += [max(abs(v) for v in imu.slope) / DEG]
+            run(c, 0.25)
+        self.assertGreater(max(tilt), 4)  # la pente change sous le robot
+        c.handle("LEVEL 1")
+        body = []
+        for _ in range(60):
+            c.handle("MOVE 100 0 0")
+            run(c, 0.25)
+            body.append(max(abs(imu.attitude.roll), abs(imu.attitude.pitch)) / DEG)
+        self.assertLess(sum(body[8:]) / len(body[8:]), 2.5)
+        lines = run(c, 0.2)
+        self.assertTrue(any(l.startswith("B ") for l in lines))
+
     def test_absent(self):
         c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
         self.assertEqual(c.handle("IMU"), "IMU present 0 level 0")
