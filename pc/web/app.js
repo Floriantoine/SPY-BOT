@@ -112,8 +112,8 @@ events.onmessage = (e) => {
     return;
   }
   if (kind === "G") {
-    const [a, b, c] = rest.split(" ").map(Number);
-    view.setTerrainPlane(a, b / 1e4, c / 1e4);
+    const [a, b, c, foot = -1, dz = 0] = rest.split(" ").map(Number);
+    view.setTerrainPlane(a, b / 1e4, c / 1e4, foot, dz / 10);
     return;
   }
   if (kind === "TERRAINMAP") {

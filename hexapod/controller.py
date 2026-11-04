@@ -78,8 +78,10 @@ Avec le capteur avant activé, en plus :
                                   assiette du corps par rapport aux pieds et
                                   pente du sol (simulation), en 0,1°
     LIMIT pose 1|0                pose du corps réduite / de nouveau complète
-    G <a> <b> <c>                 (simulation, terrain) plan des pieds posés :
-                                  z = a + b·x + c·y (mm ; b, c × 10 000)
+    G <a> <b> <c> <pied> <dz>     (simulation, terrain) plan des pieds posés :
+                                  z = a + b·x + c·y (mm ; b, c × 10 000), et un
+                                  pied posé qui touche (indice) avec sa hauteur
+                                  par rapport au pied normal (0,1 mm)
 """
 
 import json
@@ -157,6 +159,7 @@ class Controller:
         self.height = -self.sit_drop  # hauteur de base du corps (0 = debout)
         self.user_pose = BodyPose()
         self.pose_limited = False  # pose réduite pour rester dans la course des servos
+        self._stance_names, self._stance_z = [], []
         self.tilted = False  # corps trop penché : arrêt de sécurité
         self._upright_time = 0.0
         self._free_time = 0.0
@@ -270,7 +273,8 @@ class Controller:
             lines.append("B %d %d %d %d" % tuple(round(v * 1800 / math.pi) for v in (b.roll, b.pitch, gr, gp)))
             plane = getattr(self.imu, "plane", None)
             if plane:
-                lines.append("G %d %d %d" % (round(plane[0]), round(plane[1] * 10000), round(plane[2] * 10000)))
+                lines.append("G %d %d %d %d %d" % ((round(plane[0]), round(plane[1] * 10000), round(plane[2] * 10000))
+                                                    + self._ground_ref()))
             ranger = self.scanner.ranger
             if hasattr(ranger, "tick"):
                 person = ranger.person
@@ -548,6 +552,18 @@ class Controller:
                 self.tilted = False
                 lines.append("TILT 0")
 
+    def _ground_ref(self):
+        """Un pied posé qui touche le terrain (indice dans la config) et sa
+        hauteur par rapport au pied normal, en 0,1 mm : la 3D cale le
+        terrain dessus (un pied allongé n'est pas le sol)."""
+        air = getattr(self.imu, "air", [])
+        names = self._stance_names
+        if not air or len(air) != len(names):
+            return (-1, 0)
+        i = min(range(len(air)), key=lambda k: air[k])
+        legs = [leg.name for leg in self.robot.config.legs]
+        return (legs.index(names[i]), round(self._stance_z[i] * 10))
+
     def _sim_feet(self):
         """Pieds posés et pieds en l'air (repère corps, z par rapport au pied
         posé normal), pour le terrain de la simulation."""
@@ -556,10 +572,16 @@ class Controller:
         r = self.robot
         targets = r.foot_targets()
         stance, swing = [], []
+        self._stance_names, self._stance_z = [], []
         for n in r.walking_legs():
             x, y, z = targets[n]
             foot = (x, y, z - r.neutral[n][2])
-            (stance if r.offsets[n][2] < 0.5 else swing).append(foot)
+            if r.offsets[n][2] < 0.5:
+                stance.append(foot)
+                self._stance_names.append(n)
+                self._stance_z.append(foot[2])
+            else:
+                swing.append(foot)
         return stance, swing
 
     def cmd_obst(self, *args):

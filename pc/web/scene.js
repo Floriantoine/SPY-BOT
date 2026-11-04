@@ -504,7 +504,15 @@ export class RobotView {
     this.ground.position.y = lowest;
     const tolerance = Math.max(1.5, 0.02 * this.geom.tibia);
     this._odometry(tips.map((p, i) => (p.y - footR - lowest < tolerance ? p.clone().applyMatrix4(THREE_TO_ROBOT) : null)));
-    this._updateTrack(lowest);
+    // Terrain : calé sur un pied posé qui le touche (un pied allongé au-dessus
+    // d'un trou ne doit pas faire descendre le sol).
+    let groundY = lowest;
+    const ref = this._terrain && this._terrain.ref;
+    if (ref) {
+      const i = this.legs.findIndex((l) => l.name === ref[0]);
+      if (i >= 0) groundY = tips[i].y - footR - ref[1];
+    }
+    this._updateTrack(lowest, groundY);
     this._updateSensor(lowest);
     const sel = this.selection;
 
@@ -693,6 +701,11 @@ export class RobotView {
     const k = Math.min(1, (now - (this._attAt || now)) / 80);
     this._attAt = now;
     for (let i = 0; i < 4; i++) a[i] += (g[i] - a[i]) * k;
+    const t = this._terrain;
+    if (t && t.planeGoal) {
+      for (let i = 0; i < 3; i++) t.plane[i] += (t.planeGoal[i] - t.plane[i]) * k;
+      t.planeAt = now;
+    }
     this.robot.matrix.copy(tiltInThree(a[0], a[1]));
     this.robot.matrixWorldNeedsUpdate = true;
     this.world.matrix.copy(tiltInThree(a[2], a[3]).multiply(THREE_TO_ROBOT));
@@ -808,8 +821,14 @@ export class RobotView {
   }
 
   /** Plan des pieds posés dans la simulation : z = a + b·x + c·y (repère de la simulation). */
-  setTerrainPlane(a, b, c) {
-    if (this._terrain) this._terrain.plane = [a, b, c];
+  setTerrainPlane(a, b, c, foot = -1, dz = 0) {
+    const t = this._terrain;
+    if (!t) return;
+    // Suivi en douceur, au même rythme que l'assiette (sinon le terrain et
+    // la pente du monde se décalent un instant : pieds qui flottent ou s'enfoncent).
+    t.planeGoal = [a, b, c];
+    if (!t.planeAt) t.plane = [a, b, c];
+    t.ref = foot >= 0 && this.geom ? [this.geom.legs[foot]?.name, dz] : null;
   }
 
   _terrainHeight(x, y) {
@@ -860,7 +879,7 @@ export class RobotView {
     t.mesh.matrixWorldNeedsUpdate = true;
   }
 
-  _updateTrack(groundY) {
+  _updateTrack(groundY, terrainY = groundY) {
     const o = this.odo;
     const pose = new THREE.Matrix4().makeRotationZ(o.th).setPosition(o.x, o.y, 0);
     this.track.matrix.copy(ROBOT_TO_THREE).multiply(pose.invert());
@@ -868,7 +887,7 @@ export class RobotView {
     // La grille suit le robot par pas entiers de case, pour paraître infinie.
     const cell = 25;
     this.grid.position.set(Math.round(o.x / cell) * cell, Math.round(o.y / cell) * cell, groundY + 0.2);
-    this._updateTerrain(groundY);
+    this._updateTerrain(terrainY);
     this.track.updateMatrixWorld(true);
   }
 
