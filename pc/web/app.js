@@ -168,6 +168,9 @@ events.onmessage = (e) => {
   } else if (kind === "OBSTACLE") {
     state.sensor.blocked = rest === "1";
     renderSensor();
+  } else if (kind === "LIMIT") {
+    // Le robot réduit lui-même la pose du corps pour garder ses servos dans leur course.
+    if (rest === "pose 1") toast("Pose du corps réduite : les pattes n'ont pas la course pour la tenir en marchant", "");
   } else if (kind === "OBST") {
     const v = rest.trim() ? rest.trim().split(/\s+/).map(Number) : [];
     const list = [];

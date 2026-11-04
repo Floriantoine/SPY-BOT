@@ -3,8 +3,9 @@
 import math
 
 from .body_ik import BodyPose, body_to_leg_frame, foot_in_body, leg_to_body_frame
+from .config import tibia_fold_limit
 from .gait import QUAD_ORDER, QUAD_TUCKED, GaitCommand, QuadGait, TripodGait, _diagonal, ground_velocity
-from .leg_ik import LegAngles, leg_fk, leg_ik
+from .leg_ik import LegAngles, UnreachableError, leg_fk, leg_ik
 from .servo import DryRunDriver, ik_to_servo_deg
 
 # La consigne de marche change progressivement (démarrages et arrêts doux).
@@ -16,6 +17,16 @@ TUCK_TIME = 1.0  # s pour replier ou déplier les pattes du milieu
 # ~4 cm au-dessus du sol debout, ~2 cm assis), dans la course des servos et
 # sans toucher la coxa.
 TUCK_ANGLES = LegAngles(0.0, math.radians(55), math.radians(-105))
+# Pose du corps (POSE, auto-équilibrage) trop forte pour ce que font les
+# pattes : les pas sont moins hauts, puis la pose est réduite, juste assez
+# pour qu'aucun servo n'arrive en butée ni qu'une pièce en touche une autre ;
+# les deux reviennent doucement.
+POSE_RECOVER = 0.5  # /s : vitesse de retour à la pose / hauteur de pas demandées
+SERVO_MARGIN = 1.0  # ° gardés avant chaque butée de servo
+FOLD_MARGIN = 2.0  # ° gardés avant que le tibia touche la coxa
+NEIGHBOUR_LIMIT = 70.0  # ° : deux pattes voisines qui se rapprochent se touchent
+LIFT_MIN = 0.5  # pas pas moins hauts que la moitié de la hauteur réglée
+BISECT = 4  # essais pour trouver ce qui est possible (précision 1/16)
 
 
 class Hexapod:
@@ -44,7 +55,11 @@ class Hexapod:
         self.tuck = 0.0  # 0 = pattes du milieu au sol, 1 = repliées
         self.command = GaitCommand()  # consigne demandée
         self.current = GaitCommand()  # consigne suivie, qui rejoint la demandée en douceur
-        self.pose = BodyPose()
+        self.pose = BodyPose()  # pose demandée
+        self.base_pose = BodyPose()  # partie jamais réduite (hauteur assise)
+        self.pose_scale = 1.0  # part de (pose - base_pose) appliquée
+        self.lift_scale = 1.0  # part de la hauteur de pas appliquée
+        self.applied = BodyPose()  # pose réellement appliquée
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}  # pied - neutre (mm)
         self._lift = {}  # pieds en l'air : position (dx, dy) au moment de se lever
         self.travel = (0.0, 0.0, 0.0)  # déplacement du corps au dernier update (mm, mm, rad, repère corps)
@@ -79,11 +94,12 @@ class Hexapod:
     def walking_legs(self):
         return [n for n in self.neutral if not (self.legs == 4 and n in QUAD_TUCKED)]
 
-    def foot_targets(self):
-        """Position cible de chaque pied dans le repère corps neutre."""
+    def foot_targets(self, lift=1.0):
+        """Position cible de chaque pied dans le repère corps neutre
+        (pieds en l'air levés à `lift` × la hauteur de pas)."""
         sx, sy = self.gait.shift  # le corps se décale : vus du corps, les pieds reculent
         return {
-            n: (p[0] + self.offsets[n][0] - sx, p[1] + self.offsets[n][1] - sy, p[2] + self.offsets[n][2])
+            n: (p[0] + self.offsets[n][0] - sx, p[1] + self.offsets[n][1] - sy, p[2] + lift * self.offsets[n][2])
             for n, p in self.neutral.items()
         }
 
@@ -93,22 +109,34 @@ class Hexapod:
         foot = leg_fk(TUCK_ANGLES, c.coxa_length, c.femur_length, c.tibia_length)
         return leg_to_body_frame(foot, leg)
 
-    def solve(self):
-        """Angles articulaires de chaque patte pour l'état courant.
+    def effective_pose(self, scale=1.0):
+        """base_pose + scale × (pose - base_pose)."""
+        b, p = self.base_pose, self.pose
+        return BodyPose(*(getattr(b, k) + scale * (getattr(p, k) - getattr(b, k))
+                          for k in ("x", "y", "z", "roll", "pitch", "yaw")))
+
+    def solve(self, pose=None, lift=1.0, check=None):
+        """Angles articulaires de chaque patte pour l'état courant (pose
+        demandée, ou `pose` ; pieds levés à `lift` × la hauteur de pas).
+        Avec `check(leg, angles)`, retourne None dès qu'une patte ne le passe pas.
 
         Lève UnreachableError si une patte ne peut pas atteindre sa cible.
         """
         c = self.config
-        targets = self.foot_targets()
+        pose = self.pose if pose is None else pose
+        targets = self.foot_targets(lift)
         angles = {}
         for leg in c.legs:
-            foot = foot_in_body(targets[leg.name], self.pose)
+            foot = foot_in_body(targets[leg.name], pose)
             if leg.name in QUAD_TUCKED and self.tuck > 0.0:
                 t = self.tucked_foot(leg)
                 s = self.tuck * self.tuck * (3 - 2 * self.tuck)
                 foot = tuple(a + (b - a) * s for a, b in zip(foot, t))
             x, y, z = body_to_leg_frame(foot, leg)
-            angles[leg.name] = leg_ik(x, y, z, c.coxa_length, c.femur_length, c.tibia_length)
+            a = leg_ik(x, y, z, c.coxa_length, c.femur_length, c.tibia_length)
+            if check is not None and not check(leg, a):
+                return None
+            angles[leg.name] = a
         return angles
 
     def update(self, dt):
@@ -124,12 +152,77 @@ class Hexapod:
                                    _approach(c.yaw_rate, target.yaw_rate, YAW_ACCEL * dt))
         self.gait.advance(dt, not (self.current.is_zero and self._feet_settled()))
         self._move_feet(dt)
-        angles = self.solve()
+        angles = self.solve_limited(dt)
         for leg in self.config.legs:
             a = angles[leg.name]
             for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
                 self.driver.set_angle(joint.board, joint.channel, ik_to_servo_deg(value, joint))
         return angles
+
+    def solve_limited(self, dt=0.0):
+        """Comme solve(), mais en gardant tous les servos dans leur course et
+        les pièces sans contact : d'abord des pas moins hauts (jusqu'à
+        LIFT_MIN), puis une pose du corps réduite. Les deux reviennent
+        doucement quand c'est de nouveau possible."""
+        s, l = self.pose_scale, self.lift_scale
+        rs, rl = min(1.0, s + POSE_RECOVER * dt), min(1.0, l + POSE_RECOVER * dt)
+        found = None
+        for cs, cl in ((rs, rl), (rs, l), (s, l)):
+            angles = self._try(cs, cl)
+            if angles is not None:
+                found = (cs, cl, angles)
+                break
+        if found is None:
+            found = self._search(rs, rl)
+        if found is None:
+            # Même sans pose et sans lever les pieds, c'est trop : on garde la
+            # pose demandée (les servos s'arrêtent à leur butée).
+            self.pose_scale = self.lift_scale = 1.0
+            self.applied = self.pose
+            return self.solve()
+        self.pose_scale, self.lift_scale, angles = found
+        self.applied = self.effective_pose(self.pose_scale)
+        return angles
+
+    def _search(self, top_s, top_l):
+        # La pose la plus forte possible avec des pas au plus bas...
+        best = self._bisect(lambda v: self._try(v, LIFT_MIN), top_s)
+        if best is None:
+            return None
+        s, angles = best
+        # ... puis les pas les plus hauts possibles avec cette pose.
+        best = self._bisect(lambda v: self._try(s, LIFT_MIN + (1.0 - LIFT_MIN) * v),
+                            (top_l - LIFT_MIN) / (1.0 - LIFT_MIN), angles)
+        v, angles = best
+        return s, LIFT_MIN + (1.0 - LIFT_MIN) * v, angles
+
+    @staticmethod
+    def _bisect(attempt, top, low_angles=None):
+        """Plus grande valeur de [0, top] pour laquelle attempt() réussit."""
+        angles = attempt(top)
+        if angles is not None:
+            return top, angles
+        lo, hi = 0.0, top
+        angles = low_angles if low_angles is not None else attempt(0.0)
+        if angles is None:
+            return None
+        for _ in range(BISECT):
+            mid = (lo + hi) / 2
+            a = attempt(mid)
+            if a is None:
+                hi = mid
+            else:
+                lo, angles = mid, a
+        return lo, angles
+
+    def _try(self, scale, lift):
+        """Angles pour cette pose réduite et cette hauteur de pas, ou None si
+        un servo arriverait en butée (on s'arrête à la première patte en défaut)."""
+        try:
+            angles = self.solve(self.effective_pose(scale), lift, leg_ok)
+        except UnreachableError:
+            return None
+        return angles if angles is not None and neighbours_ok(angles) else None
 
     # --- interne ----------------------------------------------------------
 
@@ -233,6 +326,38 @@ class Hexapod:
         self.travel = (cmd.vx * k * dt, cmd.vy * k * dt, cmd.yaw_rate * k * dt) if stance else (0.0, 0.0, 0.0)
         for n in QUAD_TUCKED if self.legs == 4 else ():
             self.offsets[n] = (0.0, 0.0, 0.0)  # repliée : voir solve()
+
+
+DEG_PER_RAD = 180.0 / math.pi
+AROUND = ("LF", "LM", "LR", "RR", "RM", "RF")  # sens trigo : coxa + = vers la suivante
+
+
+def leg_ok(leg, a):
+    """Servos de la patte dans leur course (avec marge), tibia sans toucher
+    la coxa, coxa sans toucher la plaque du haut."""
+    deg = DEG_PER_RAD
+    for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+        d = 90.0 + joint.direction * (v * deg - joint.zero_deg) + joint.trim_deg
+        if d < joint.min_deg + SERVO_MARGIN or d > joint.max_deg - SERVO_MARGIN:
+            return False
+    femur = a.femur * deg
+    if femur <= -90.0 or -a.tibia * deg - 90.0 > tibia_fold_limit(femur) - FOLD_MARGIN:
+        return False
+    # Fémur levé : la coxa doit moins tourner (bord de la plaque du haut).
+    return femur <= 45.0 or abs(a.coxa * deg) <= 55.0 - (femur - 45.0) / 3.0
+
+
+def neighbours_ok(angles):
+    """Deux pattes voisines ne se rapprochent pas jusqu'à se toucher."""
+    for i, n in enumerate(AROUND):
+        m = AROUND[(i + 1) % 6]
+        if n in angles and m in angles and (angles[n].coxa - angles[m].coxa) * DEG_PER_RAD > NEIGHBOUR_LIMIT:
+            return False
+    return True
+
+
+def angles_ok(config, angles):
+    return all(leg_ok(leg, angles[leg.name]) for leg in config.legs) and neighbours_ok(angles)
 
 
 def _approach(value, target, step):

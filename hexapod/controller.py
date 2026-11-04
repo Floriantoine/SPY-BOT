@@ -42,6 +42,8 @@ Commandes (une par ligne, PC -> robot) :
     LEVEL 1|0                     auto-équilibrage : le corps reste horizontal
                                   (à l'assiette de POSE) même sur une pente
     TILT roll pitch               (simulation) pente du sol en degrés
+                                  -> LIMIT pose 1|0 (spontané) : pose du corps
+                                  réduite pour garder les servos dans leur course
 
 Réponses (robot -> PC) : `OK ...`, `ERR ...`, `CAL {...}`, et ~20 fois par
 seconde une ligne de télémétrie :
@@ -117,6 +119,8 @@ class Controller:
         self.sit_drop = config.sit_drop
         self.height = -self.sit_drop  # hauteur de base du corps (0 = debout)
         self.user_pose = BodyPose()
+        self.pose_limited = False  # pose réduite pour rester dans la course des servos
+        self._free_time = 0.0
         self.since_move = 0.0
         self.since_telemetry = TELEMETRY_PERIOD
         self.angles = self._safe_solve() or self._zero_angles()
@@ -178,9 +182,17 @@ class Controller:
                 # On garde la dernière position atteignable.
                 r.command = GaitCommand()
             self._integrate(r.travel)
+            # Pose réduite par le robot (servos en butée sinon) : prévenir l'appli.
+            self._free_time = 0.0 if r.pose_scale < 0.99 else self._free_time + dt
+            if r.pose_scale < 0.95 and not self.pose_limited:
+                self.pose_limited = True
+                lines.append("LIMIT pose 1")
+            elif self.pose_limited and self._free_time > 1.5:
+                self.pose_limited = False
+                lines.append("LIMIT pose 0")
 
         if self.imu is not None:
-            self.imu.update(dt, self.robot.pose)
+            self.imu.update(dt, self.robot.applied)
             att = self.imu.attitude
             if self.mode == STAND and att.ready:
                 u = self.user_pose
@@ -472,6 +484,7 @@ class Controller:
         limit = 12 * DEG  # pose + correction d'assiette : reste dans la course des servos
         self.robot.pose = BodyPose(p.x, p.y, self.height + p.z, _clamp(p.roll + lv.roll, limit),
                                    _clamp(p.pitch + lv.pitch, limit), p.yaw)
+        self.robot.base_pose = BodyPose(0.0, 0.0, self.height)
 
     def _send_angles(self):
         for leg in self.robot.config.legs:
