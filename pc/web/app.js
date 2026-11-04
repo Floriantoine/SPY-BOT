@@ -28,6 +28,7 @@ const state = {
   selectedLeg: "RF",
   sensor: { present: false, on: false, stop: 80, blocked: false },
   sim: false,
+  imu: { present: false, level: false, roll: 0, pitch: 0, corrRoll: 0, corrPitch: 0, at: 0 },
   nav: "off",
   clickMode: null, // clic sur le sol : "obst", "goal" ou "person"
 };
@@ -99,6 +100,11 @@ events.onmessage = (e) => {
     view.setSimPose(x, y, th / 1000);
     return;
   }
+  if (kind === "I") {
+    const [roll, pitch, cr, cp] = rest.split(" ").map((v) => Number(v) / 10);
+    Object.assign(state.imu, { roll, pitch, corrRoll: cr, corrPitch: cp, at: performance.now() });
+    return;
+  }
   if (kind === "PERSON") {
     const [x, y] = rest.split(" ").map(Number);
     view.setPerson([x, y]);
@@ -145,6 +151,11 @@ events.onmessage = (e) => {
     Object.assign(state.sensor, { present: value("present") === 1, on: value("on") === 1, stop: value("stop") });
     if (!state.sensor.on) state.sensor.blocked = false;
     renderSensor();
+  } else if (kind === "IMU") {
+    const f = rest.split(" ");
+    const value = (key) => Number(f[f.indexOf(key) + 1]);
+    Object.assign(state.imu, { present: value("present") === 1, level: value("level") === 1 });
+    renderImu();
   } else if (kind === "NAV") {
     if (rest === "arrived") toast("Arrivé au point", "ok");
     else if (rest === "stuck") toast("Point impossible à atteindre : le robot s'arrête", "err");
@@ -166,6 +177,8 @@ events.onmessage = (e) => {
     state.sim = rest.includes("simulation");
     if (state.sim) send("OBST", true);
     $("#sensor-sim").hidden = !state.sim;
+    $("#imu-sim").hidden = !state.sim;
+    if (state.sim) sendTilt();
     sendGait(); // le robot démarre avec ses propres réglages : on lui envoie ceux de l'interface
     if (state.legs !== 6) send(`LEGS ${state.legs}`, true);
     toast(rest.includes("simulation") ? "Robot simulé prêt" : "Robot connecté", "ok");
@@ -217,6 +230,7 @@ function setConnected(connected, name = "") {
   }
   updateControls();
   renderSensor();
+  renderImu();
 }
 
 function setMode(mode) {
@@ -667,6 +681,96 @@ function renderNav() {
 }
 $("#nav-stop").onclick = () => send("NAV STOP");
 
+// -------------------------------------------------------------- gyroscope
+
+function renderImu() {
+  const { present, level } = state.imu;
+  const connected = state.connected;
+  const el = $("#imu-state");
+  el.textContent = !connected ? "–" : !present ? "absent" : level ? "équilibre" : "détecté";
+  el.className = "sensor-state " + (!connected || !present ? "" : level ? "good" : "idle");
+  const box = $("#imu-level");
+  box.disabled = !connected || !present;
+  box.checked = connected && level;
+}
+
+function drawImu() {
+  const imu = state.imu;
+  const live = state.connected && imu.present && performance.now() - imu.at < 1000;
+  const fmt = (v) => (live ? `${v > 0 ? "+" : ""}${v.toFixed(1)}°` : "–");
+  $("#imu-roll").textContent = fmt(imu.roll);
+  $("#imu-pitch").textContent = fmt(imu.pitch);
+  $("#imu-corr").textContent = live && imu.level ? `${fmt(imu.corrRoll)} / ${fmt(imu.corrPitch)}` : "–";
+  // Horizon artificiel : le ciel en haut, le sol en bas, vus depuis l'arrière du robot.
+  const cv = $("#horizon");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = cv.clientWidth || 120;
+  if (cv.width !== Math.round(w * dpr)) {
+    cv.width = cv.height = Math.round(w * dpr);
+    cv.style.height = w + "px";
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const r = w / 2;
+  ctx.clearRect(0, 0, w, w);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(r, r, r - 1, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.translate(r, r);
+  const deg = Math.PI / 180;
+  // Roulis positif = côté gauche qui monte (le robot penche à droite) :
+  // l'horizon tourne dans l'autre sens. Tangage positif = nez qui plonge :
+  // l'horizon monte.
+  ctx.rotate(live ? -imu.roll * deg : 0);
+  const shift = -(live ? imu.pitch : 0) * (r / 20); // 20° = demi-hauteur
+  ctx.fillStyle = "#1f3b63";
+  ctx.fillRect(-w, -w, 2 * w, w + shift);
+  ctx.fillStyle = "#4a3520";
+  ctx.fillRect(-w, shift, 2 * w, w);
+  ctx.strokeStyle = "rgba(255,255,255,.75)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-w, shift);
+  ctx.lineTo(w, shift);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,.3)";
+  ctx.lineWidth = 1;
+  for (const d of [-10, 10]) {
+    const y = shift - d * (r / 20);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.25, y);
+    ctx.lineTo(r * 0.25, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+  // Maquette du robot, fixe au centre.
+  ctx.strokeStyle = "#fbbf24";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(r * 0.35, r);
+  ctx.lineTo(r * 0.8, r);
+  ctx.moveTo(r * 1.2, r);
+  ctx.lineTo(r * 1.65, r);
+  ctx.stroke();
+  ctx.fillStyle = "#fbbf24";
+  ctx.beginPath();
+  ctx.arc(r, r, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,.16)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(r, r, r - 1, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+$("#imu-level").onchange = (e) => send(`LEVEL ${e.target.checked ? 1 : 0}`);
+sliders.tiltRoll = bindSlider($("#tilt-roll"), (v) => `${v}°`);
+sliders.tiltPitch = bindSlider($("#tilt-pitch"), (v) => `${v}°`);
+const sendTilt = throttle(() => send(`TILT ${$("#tilt-roll").value} ${$("#tilt-pitch").value}`, true), 150);
+$("#tilt-roll").addEventListener("input", sendTilt);
+$("#tilt-pitch").addEventListener("input", sendTilt);
+
 // ----------------------------------------------------------------- montage
 
 function renderWiring(geom) {
@@ -1078,11 +1182,13 @@ function frame() {
   view.update(state.angles);
   view.render();
   if (activeTab === "drive") radar.draw();
+  if (activeTab === "body") drawImu();
   requestAnimationFrame(frame);
 }
 
 updateControls();
 renderSelection();
 renderSensor();
+renderImu();
 refreshPorts();
 requestAnimationFrame(frame);

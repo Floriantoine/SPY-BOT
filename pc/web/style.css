@@ -437,3 +437,12 @@ body.pilot #cam-reset, body.pilot #cam-follow { display: grid; }
   box-shadow: 0 6px 20px rgba(248, 113, 113, .25);
 }
 .obstacle-alert[hidden] { display: none; }
+
+/* Gyroscope */
+.imu-card h3 { display: flex; align-items: center; justify-content: space-between; }
+.imu-row { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+#horizon { width: 120px; height: 120px; flex: none; }
+.imu-values { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+.imu-values dt { color: var(--muted); }
+.imu-values dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.imu-card .sim-only { margin-top: 10px; }

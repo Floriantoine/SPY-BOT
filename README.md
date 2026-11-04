@@ -137,6 +137,18 @@ Carte « Seul » de l'onglet Pilotage :
 - Le suivi (commande `FOLLOW`) existe côté robot mais n'est pas encore dans
   l'interface.
 
+## Gyroscope (MPU6050)
+
+MPU6050 vissé sur plaque_bas, à l'arrière droite (x −38,5 à −17,5, y −30 à
+−14), sur le même bus I²C (AD0 à la masse : 0x68), alimenté en 3,3 V par
+l'ESP32. Le robot doit rester immobile 1 s au démarrage (mesure du biais du
+gyroscope). Onglet **Corps**, carte « Gyroscope » : roulis et tangage mesurés
+(horizon artificiel) et **Garder le corps horizontal**, qui incline le corps
+(jusqu'à 10°) pour compenser une pente. En simulation, deux curseurs penchent
+le sol virtuel. Premier essai sur le robot : sur sol plat, une pose de roulis
++5° doit se lire +5° ; sinon, corriger `IMU_AXES` dans `hexapod/imu.py`
+(orientation de la carte). Pilote pas encore essayé sur le robot.
+
 ## Organisation du code
 
 | Fichier | Rôle |

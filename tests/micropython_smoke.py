@@ -9,6 +9,7 @@ sys.path.insert(0, ".")
 
 from hexapod import default_config  # noqa: E402
 from hexapod.controller import Controller  # noqa: E402
+from hexapod.imu import SimIMU  # noqa: E402
 from hexapod.sensor import SimRanger  # noqa: E402
 from hexapod.servo import DryRunDriver  # noqa: E402
 
@@ -71,3 +72,14 @@ for _ in range(80):
 assert "OBSTACLE 1" in out, "obstacle"
 assert ctrl.odom[0] < 400 - 40 - 156, ctrl.odom
 print("MicroPython OK")
+
+# Gyroscope simulé : auto-équilibrage sur une pente.
+imu = SimIMU()
+ctrl = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-smoke-calib.json", None, imu)
+ctrl.handle("STAND")
+run(4)
+assert ctrl.handle("TILT 5 0") == "OK TILT 5 0"
+assert ctrl.handle("LEVEL 1") == "IMU present 1 level 1"
+run(4)
+assert abs(imu.attitude.roll) < 0.02, imu.attitude.roll
+print("MicroPython IMU OK")

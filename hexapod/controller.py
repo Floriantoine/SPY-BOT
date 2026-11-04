@@ -38,6 +38,10 @@ Commandes (une par ligne, PC -> robot) :
     NAV [STOP]                    -> NAV off|follow|goto x y ; STOP reprend la main
                                   (un MOVE aussi)
     PERSON x y                    (simulation) la personne virtuelle marche jusque-là
+    IMU                           -> IMU present 0|1 level 0|1 : gyroscope MPU6050
+    LEVEL 1|0                     auto-équilibrage : le corps reste horizontal
+                                  (à l'assiette de POSE) même sur une pente
+    TILT roll pitch               (simulation) pente du sol en degrés
 
 Réponses (robot -> PC) : `OK ...`, `ERR ...`, `CAL {...}`, et ~20 fois par
 seconde une ligne de télémétrie :
@@ -53,6 +57,8 @@ Avec le capteur avant activé, en plus :
     P <x> <y> <cap>               position estimée du robot sur le sol (mm, mrad)
     NAV arrived | NAV stuck       but atteint / impossible à atteindre (puis NAV off)
     PERSON <x> <y>                (simulation) position de la personne virtuelle
+    I <roulis> <tangage> <corr. roulis> <corr. tangage>
+                                  assiette mesurée et correction, en 0,1°
 """
 
 import json
@@ -63,6 +69,7 @@ from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
 from .robot import Hexapod
+from .imu import Leveler
 from .nav import Navigator
 from .sensor import STOP_RANGE, Scanner
 
@@ -93,7 +100,7 @@ JOINTS = ("coxa", "femur", "tibia")
 
 
 class Controller:
-    def __init__(self, config, driver, calib_path="calib.json", ranger=None):
+    def __init__(self, config, driver, calib_path="calib.json", ranger=None, imu=None):
         self.robot = Hexapod(config, driver)
         # Capteur avant : `ranger` = VL53L1X, SimRanger (simulation) ou None (absent).
         self.scanner = Scanner(ranger, driver)
@@ -101,6 +108,9 @@ class Controller:
         self.odom = (0.0, 0.0, 0.0)  # position estimée du robot sur le sol (mm, mm, rad)
         self._pending = []  # lignes à envoyer avec la prochaine télémétrie
         self.nav = Navigator()  # aller à un point / suivre (GOTO, FOLLOW)
+        # Gyroscope : `imu` = MPU6050, SimIMU (simulation) ou None (absent).
+        self.imu = imu
+        self.leveler = Leveler()
         self.driver = driver
         self.calib_path = calib_path
         self.mode = OFF
@@ -169,6 +179,14 @@ class Controller:
                 r.command = GaitCommand()
             self._integrate(r.travel)
 
+        if self.imu is not None:
+            self.imu.update(dt, self.robot.pose)
+            att = self.imu.attitude
+            if self.mode == STAND and att.ready:
+                u = self.user_pose
+                self.leveler.update(dt, (att.roll, att.pitch), (u.roll, u.pitch))
+            else:
+                self.leveler.relax(dt)
         if hasattr(self.scanner.ranger, "tick"):
             self.scanner.ranger.tick(dt)  # simulation : la personne marche
         if self.mode != OFF:  # servos relâchés : le balayage attend
@@ -180,6 +198,9 @@ class Controller:
             lines.append(self.telemetry())
             x, y, th = self.odom
             lines.append("P %d %d %d" % (round(x), round(y), round(th * 1000)))
+            if self.imu is not None and self.imu.attitude.ready:
+                a, lv = self.imu.attitude, self.leveler
+                lines.append("I %d %d %d %d" % tuple(round(v * 1800 / math.pi) for v in (a.roll, a.pitch, lv.roll, lv.pitch)))
             ranger = self.scanner.ranger
             if hasattr(ranger, "tick"):
                 person = ranger.person
@@ -378,6 +399,22 @@ class Controller:
             self.scanner.enable(True)
             self._pending.append(self.scanner.status())
 
+    def cmd_imu(self):
+        return "IMU present %d level %d" % (self.imu is not None, self.leveler.enabled)
+
+    def cmd_level(self, on):
+        if on == "1" and self.imu is None:
+            return "ERR LEVEL : pas de gyroscope"
+        self.leveler.enabled = on == "1"
+        return self.cmd_imu()
+
+    def cmd_tilt(self, roll, pitch):
+        if not hasattr(self.imu, "ground_roll"):
+            return "ERR TILT : seulement en simulation"
+        self.imu.ground_roll = _clamp(float(roll), 15) * DEG
+        self.imu.ground_pitch = _clamp(float(pitch), 15) * DEG
+        return "OK TILT %.0f %.0f" % (self.imu.ground_roll / DEG, self.imu.ground_pitch / DEG)
+
     def cmd_obst(self, *args):
         ranger = self.scanner.ranger
         if not hasattr(ranger, "obstacles"):
@@ -431,8 +468,10 @@ class Controller:
         return getattr(leg, joint_name.lower())
 
     def _apply_pose(self):
-        p = self.user_pose
-        self.robot.pose = BodyPose(p.x, p.y, self.height + p.z, p.roll, p.pitch, p.yaw)
+        p, lv = self.user_pose, self.leveler
+        limit = 12 * DEG  # pose + correction d'assiette : reste dans la course des servos
+        self.robot.pose = BodyPose(p.x, p.y, self.height + p.z, _clamp(p.roll + lv.roll, limit),
+                                   _clamp(p.pitch + lv.pitch, limit), p.yaw)
 
     def _send_angles(self):
         for leg in self.robot.config.legs:

@@ -151,6 +151,25 @@
       </div>
 
       <div class="tab-page" id="tab-body">
+        <div class="card imu-card">
+          <h3>Gyroscope <span class="sensor-state" id="imu-state">–</span></h3>
+          <div class="imu-row">
+            <canvas id="horizon" width="120" height="120" aria-label="Horizon artificiel"></canvas>
+            <dl class="imu-values">
+              <dt>Roulis</dt><dd id="imu-roll">–</dd>
+              <dt>Tangage</dt><dd id="imu-pitch">–</dd>
+              <dt>Correction</dt><dd id="imu-corr">–</dd>
+            </dl>
+          </div>
+          <label class="toggle"><input type="checkbox" id="imu-level" disabled> Garder le corps horizontal</label>
+          <div class="sim-only" id="imu-sim" hidden>
+            <div class="field"><span>Pente du sol (gauche/droite)</span><output></output>
+              <input id="tilt-roll" type="range" min="-12" max="12" step="1" value="0"></div>
+            <div class="field"><span>Pente du sol (avant/arrière)</span><output></output>
+              <input id="tilt-pitch" type="range" min="-12" max="12" step="1" value="0"></div>
+            <p class="hint">Simulation : le sol est penché, le gyroscope simulé le sent.</p>
+          </div>
+        </div>
         <div class="card">
           <h3>Position du corps</h3>
           <div class="field"><span>Hauteur</span><output></output><input class="pose" data-i="2" type="range" min="-15" max="15" value="0"></div>

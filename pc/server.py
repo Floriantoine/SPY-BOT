@@ -24,6 +24,7 @@ sys.path.insert(0, ROOT)
 
 from hexapod import default_config  # noqa: E402
 from hexapod.controller import Controller  # noqa: E402
+from hexapod.imu import SimIMU  # noqa: E402
 from hexapod.sensor import SimRanger  # noqa: E402
 from hexapod.servo import DryRunDriver  # noqa: E402
 
@@ -71,7 +72,7 @@ class SimLink:
         calib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_calib.json")
         # Capteur avant simulé, avec quelques obstacles virtuels pour commencer.
         ranger = SimRanger([(450.0, 0.0, 40.0), (350.0, 320.0, 50.0), (750.0, -260.0, 60.0)])
-        self.ctrl = Controller(default_config(), DryRunDriver(), calib, ranger)
+        self.ctrl = Controller(default_config(), DryRunDriver(), calib, ranger, SimIMU())
         self.inbox = queue.Queue()
         self.running = True
         threading.Thread(target=self._loop, daemon=True).start()
@@ -185,6 +186,7 @@ class App:
             self.send("GEOM")
             self.send("GETCAL")
             self.send("SENSOR")
+            self.send("IMU")
         except RuntimeError:
             pass
 
