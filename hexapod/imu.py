@@ -53,15 +53,23 @@ class Attitude:
                 self.roll, self.pitch = _accel_angles(ax, ay, az)
                 self.ready = True
             return
-        gx, gy = gyro[0] - self._bias[0], gyro[1] - self._bias[1]
-        self.rate = (gx, gy)
-        roll = self.roll + gx * dt
-        pitch = self.pitch + gy * dt
+        gx, gy, gz = gyro[0] - self._bias[0], gyro[1] - self._bias[1], gyro[2] - self._bias[2]
+        # Vitesses du corps -> dérivées du roulis et du tangage (corps penché
+        # qui tourne : une part du lacet passe dans le roulis et le tangage).
+        sr, cr = math.sin(self.roll), math.cos(self.roll)
+        cp = math.cos(self.pitch)
+        tp = math.sin(self.pitch) / cp if abs(cp) > 1e-3 else 0.0
+        droll = gx + (gy * sr + gz * cr) * tp
+        dpitch = gy * cr - gz * sr
+        self.rate = (droll, dpitch)
+        roll = self.roll + droll * dt
+        pitch = self.pitch + dpitch * dt
         g = math.sqrt(ax * ax + ay * ay + az * az)
         if ACCEL_OK[0] < g < ACCEL_OK[1]:
             ar, ap = _accel_angles(ax, ay, az)
-            roll += (ar - roll) * ACCEL_TRUST
-            pitch += (ap - pitch) * ACCEL_TRUST
+            trust = min(1.0, ACCEL_TRUST * dt / 0.02)  # même constante de temps si un tick déborde
+            roll += (ar - roll) * trust
+            pitch += (ap - pitch) * trust
         self.roll, self.pitch = roll, pitch
 
 
@@ -70,6 +78,14 @@ def _accel_angles(ax, ay, az):
     roll = math.atan2(ay, az)
     pitch = math.atan2(-ax, math.sqrt(ay * ay + az * az))
     return roll, pitch
+
+
+def euler_rates_to_body(roll, pitch, droll, dpitch, dyaw):
+    """Vitesses de rotation (rad/s) dans le repère du corps pour des dérivées
+    des angles (lacet, tangage, roulis : ordre ZYX comme BodyPose)."""
+    sr, cr = math.sin(roll), math.cos(roll)
+    sp, cp = math.sin(pitch), math.cos(pitch)
+    return (droll - dyaw * sp, dpitch * cr + dyaw * sr * cp, -dpitch * sr + dyaw * cr * cp)
 
 
 def gravity_in_body(roll, pitch):
@@ -147,7 +163,8 @@ class MPU6050:
         gyro = _to_body([v / self.GYRO_SCALE for v in raw[3:]])
         return accel, gyro
 
-    def update(self, dt, pose=None, odom=None):
+    def update(self, dt, pose=None, odom=None, feet=None, swing=()):
+        """Mêmes arguments que SimIMU.update (ceux de la simulation sont ignorés)."""
         m = self.read()
         if m:
             self.attitude.update(dt, m[0], m[1])
@@ -181,22 +198,40 @@ class SimIMU:
             a, b, c, roll, pitch, self.air = rest_on(feet, odom, swing)
             # Le robot bascule sur ses nouveaux pieds posés en un instant
             # bref, pas d'un coup (souplesse des servos et des pièces).
-            k = 1.0 if self.plane is None else min(1.0, dt / ROCK_TIME) if dt else 0.0
-            p = self.plane or (a, b, c)
+            # Terrain qu'on vient d'activer : on part d'un sol à plat.
+            k = min(1.0, dt / ROCK_TIME) if dt else 0.0
+            p = self.plane or (a, 0.0, 0.0)
             self.plane = tuple(u + (v - u) * k for u, v in zip(p, (a, b, c)))
-            self._rest = (roll, pitch) if self._rest is None else (
-                self._rest[0] + (roll - self._rest[0]) * k, self._rest[1] + (pitch - self._rest[1]) * k)
+            r0 = self._rest or (0.0, 0.0)
+            self._rest = (r0[0] + (roll - r0[0]) * k, r0[1] + (pitch - r0[1]) * k)
             sr += self._rest[0]
             sp += self._rest[1]
         else:
-            self.plane, self.air, self._rest = None, [], None
+            self.plane, self.air = None, []
+            if self._rest:
+                # Terrain coupé : le robot revient à plat en douceur.
+                k = min(1.0, dt / ROCK_TIME) if dt else 0.0
+                r0 = self._rest
+                self._rest = (r0[0] * (1 - k), r0[1] * (1 - k))
+                if abs(self._rest[0]) + abs(self._rest[1]) < 1e-4:
+                    self._rest = None
+                else:
+                    sr += self._rest[0]
+                    sp += self._rest[1]
         self.slope = (sr, sp)
         roll = sr + pose.roll
         pitch = sp + pose.pitch
+        yaw = odom[2] if odom is not None else 0.0
         if self._prev is None:
-            self._prev = (roll, pitch)
-        gyro = ((roll - self._prev[0]) / dt if dt else 0.0, (pitch - self._prev[1]) / dt if dt else 0.0, 0.0)
-        self._prev = (roll, pitch)
+            self._prev = (roll, pitch, yaw)
+        if dt:
+            # Ce que mesure un vrai gyroscope : les vitesses de rotation dans
+            # le repère du corps, y compris le cap qui tourne (lacet).
+            dr, dp, dy = (roll - self._prev[0]) / dt, (pitch - self._prev[1]) / dt, (yaw - self._prev[2]) / dt
+            gyro = euler_rates_to_body(roll, pitch, dr, dp, dy)
+        else:
+            gyro = (0.0, 0.0, 0.0)
+        self._prev = (roll, pitch, yaw)
         self.attitude.update(dt, gravity_in_body(roll, pitch), gyro)
 
 

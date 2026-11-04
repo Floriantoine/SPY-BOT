@@ -74,9 +74,10 @@ Avec le capteur avant activé, en plus :
     PERSON <x> <y>                (simulation) position de la personne virtuelle
     I <roulis> <tangage> <corr. roulis> <corr. tangage>
                                   assiette mesurée et correction, en 0,1°
-    B <roulis> <tangage> <sol roulis> <sol tangage>
+    B <roulis> <tangage> <sol roulis> <sol tangage> <posés>
                                   assiette du corps par rapport aux pieds et
-                                  pente du sol (simulation), en 0,1°
+                                  pente du sol (simulation), en 0,1° ; pieds
+                                  posés (bit i = i-ème patte de la config)
     LIMIT pose 1|0                pose du corps réduite / de nouveau complète
     G <a> <b> <c> <pied> <dz>     (simulation, terrain) plan des pieds posés :
                                   z = a + b·x + c·y (mm ; b, c × 10 000), et un
@@ -241,7 +242,7 @@ class Controller:
                 lines.append("LIMIT pose 0")
 
         if self.imu is not None:
-            self.imu.update(dt, self.robot.applied, self.odom, *self._sim_feet())
+            self.imu.update(dt, self.robot.applied, self.body_odom(), *self._sim_feet())
             att = self.imu.attitude
             if self.mode == STAND and att.ready:
                 u = self.user_pose
@@ -262,7 +263,7 @@ class Controller:
             lines.append(self.telemetry())
             lines.append(self.measures(self.since_telemetry))
             self.since_telemetry = 0.0
-            x, y, th = self.odom
+            x, y, th = self.body_odom()
             lines.append("P %d %d %d" % (round(x), round(y), round(th * 1000)))
             if self.imu is not None and self.imu.attitude.ready:
                 a, lv = self.imu.attitude, self.leveler
@@ -270,7 +271,8 @@ class Controller:
             # Assiette du corps par rapport aux pieds, et pente du sol (simulation) : pour la 3D.
             b = self.robot.applied
             gr, gp = getattr(self.imu, "slope", (0.0, 0.0))
-            lines.append("B %d %d %d %d" % tuple(round(v * 1800 / math.pi) for v in (b.roll, b.pitch, gr, gp)))
+            lines.append("B %d %d %d %d %d" % (tuple(round(v * 1800 / math.pi) for v in (b.roll, b.pitch, gr, gp))
+                                                + (self._stance_mask(),)))
             plane = getattr(self.imu, "plane", None)
             if plane:
                 lines.append("G %d %d %d %d %d" % ((round(plane[0]), round(plane[1] * 10000), round(plane[2] * 10000))
@@ -301,7 +303,7 @@ class Controller:
             a = self.angles[leg.name]
             values += [a.coxa, a.femur, a.tibia]
         phase = self.robot.gait.phase
-        return "T %s %.3f %s" % (self.mode, phase, " ".join(str(int(v * 1000)) for v in values))
+        return "T %s %.3f %s" % (self.mode, phase, " ".join(str(round(v * 1000)) for v in values))
 
     # --- commandes --------------------------------------------------------
 
@@ -551,6 +553,24 @@ class Controller:
             if self._upright_time >= 1.0:
                 self.tilted = False
                 lines.append("TILT 0")
+
+    def _stance_mask(self):
+        """Pieds posés : bit i = i-ème patte de la config (pour la 3D)."""
+        r = self.robot
+        walking = r.walking_legs()
+        mask = 0
+        for i, leg in enumerate(r.config.legs):
+            if leg.name in walking and r.offsets[leg.name][2] < 0.5:
+                mask |= 1 << i
+        return mask
+
+    def body_odom(self):
+        """Position du corps sur le sol : l'odométrie suit le centre de la
+        démarche ; à 4 pattes le corps s'en écarte (balancement)."""
+        x, y, th = self.odom
+        sx, sy = self.robot.gait.shift
+        c, s = math.cos(th), math.sin(th)
+        return (x + c * sx - s * sy, y + s * sx + c * sy, th)
 
     def _ground_ref(self):
         """Un pied posé qui touche le terrain (indice dans la config) et sa

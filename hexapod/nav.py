@@ -37,6 +37,7 @@ FOLLOW_TRACK = 250.0  # mm : la cible ne saute pas plus loin entre deux mesures
 FOLLOW_LOST = 2.5  # s sans la revoir : on prend ce qui est le plus proche devant
 STUCK_TIME = 10.0  # s sans se rapprocher du but : on abandonne
 STUCK_GAIN = 30.0  # mm à gagner dans ce temps
+REPLAN = 0.1  # s : le chemin libre n'est recherché que toutes les 0,1 s (temps de calcul sur l'ESP32)
 
 
 class Navigator:
@@ -50,6 +51,7 @@ class Navigator:
         self._seen = 0.0  # s depuis la dernière mesure de la cible
         self._best = None  # aller à un point : meilleure distance au but
         self._since_best = 0.0
+        self._plan, self._plan_age = None, 0.0
 
     @property
     def active(self):
@@ -62,6 +64,7 @@ class Navigator:
         self._last = 0.0
         self._best = None
         self._since_best = 0.0
+        self._plan, self._plan_age = None, 0.0
 
     def follow(self, speed=None):
         self.mode, self.goal = "follow", None
@@ -112,6 +115,14 @@ class Navigator:
         # Directions de la plus proche du but à la plus éloignée ; à écart
         # égal, celle qu'on suivait déjà (pas d'hésitation gauche-droite).
         b = bearing / DEG
+        self._plan_age += dt
+        if self._plan is not None and self._plan_age < REPLAN:
+            return self._plan, None
+        self._plan_age = 0.0
+        self._plan = self._choose(scanner, pose, b, bearing, speed, look)
+        return self._plan, None
+
+    def _choose(self, scanner, pose, b, bearing, speed, look):
         options = [a for a in range(-SIDE, SIDE + 1, STEP)]
         options.sort(key=lambda a: abs(a - b) + 0.3 * abs(a - self._last))
         if abs(b) <= SIDE:
@@ -119,10 +130,10 @@ class Navigator:
         for a in options:
             if not _blocked(scanner, pose, a * DEG, speed, look):
                 self._last = a
-                return self._walk(a * DEG, speed), None
+                return self._walk(a * DEG, speed)
         # Rien de libre devant : tourner sur place, du côté du but, pour chercher un passage.
         turn = self.yaw_rate if (bearing if abs(bearing) > 1e-3 else self._last) >= 0 else -self.yaw_rate
-        return GaitCommand(0.0, 0.0, turn), None
+        return GaitCommand(0.0, 0.0, turn)
 
     def _walk(self, a, speed):
         yaw = max(-self.yaw_rate, min(self.yaw_rate, YAW_GAIN * a))

@@ -142,6 +142,37 @@ class LevelTest(unittest.TestCase):
             return d / t
         self.assertGreater(speed(1), 0.95 * speed(0))
 
+    def test_real_driver_runs_in_the_control_loop(self):
+        import struct
+        from hexapod.imu import MPU6050
+
+        class FakeI2C:
+            def writeto_mem(self, addr, reg, data):
+                pass
+
+            def scan(self):
+                return [0x68]
+
+            def readfrom_mem(self, addr, reg, n):
+                return struct.pack(">hhhhhhh", 0, 0, 8192, 0, 0, 0, 0)  # à plat, immobile
+
+        c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json", None, MPU6050(FakeI2C()))
+        c.handle("STAND")
+        lines = run(c, 2.0)
+        self.assertTrue(any(l.startswith("I ") for l in lines))
+        self.assertTrue(any(l.startswith("M ") for l in lines))
+
+    def test_yaw_while_tilted_does_not_fool_the_attitude(self):
+        from hexapod.imu import euler_rates_to_body
+        a = Attitude()
+        roll, pitch, yaw = 0.0, 10 * DEG, 0.0
+        for _ in range(60):
+            a.update(0.02, gravity_in_body(roll, pitch), (0.0, 0.0, 0.0))
+        for _ in range(500):  # tourne à 0,6 rad/s sur une pente de 10°
+            a.update(0.02, gravity_in_body(roll, pitch), euler_rates_to_body(roll, pitch, 0.0, 0.0, 0.6))
+        self.assertAlmostEqual(a.roll / DEG, 0, delta=0.3)
+        self.assertAlmostEqual(a.pitch / DEG, 10, delta=0.3)
+
     def test_absent(self):
         c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
         self.assertEqual(c.handle("IMU"), "IMU present 0 level 0 feel 0")

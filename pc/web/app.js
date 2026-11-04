@@ -102,9 +102,10 @@ events.onmessage = (e) => {
   }
   if (kind === "B") {
     const deci = rest.split(" ").map(Number);
-    const [r, p, gr, gp] = deci.map((v) => (v / 1800) * Math.PI);
+    const [r, p, gr, gp] = deci.slice(0, 4).map((v) => (v / 1800) * Math.PI);
     view.setAttitude(r, p, gr, gp);
-    metrics.att = deci.map((v) => v / 10);
+    if (deci.length > 4) view.setStance(deci[4]);
+    metrics.att = deci.slice(0, 4).map((v) => v / 10);
     return;
   }
   if (kind === "M") {
@@ -265,6 +266,7 @@ function setConnected(connected, name = "") {
     view.setGoal(null);
     view.setPerson(null);
     view.setAttitude(0, 0, 0, 0);
+    view.setStance(null);
     view.setTerrain(null);
     renderNav();
   }

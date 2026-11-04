@@ -506,7 +506,13 @@ export class RobotView {
     const lowest = Math.min(...tips.map((p) => p.y)) - footR;
     this.ground.position.y = lowest;
     const tolerance = Math.max(1.5, 0.02 * this.geom.tibia);
-    this._odometry(tips.map((p, i) => (p.y - footR - lowest < tolerance ? p.clone().applyMatrix4(THREE_TO_ROBOT) : null)));
+    // Pieds posés : dits par le robot quand il les envoie (un pied allongé
+    // au-dessus d'un trou ou posé sur un caillou n'est pas à la hauteur des
+    // autres), sinon devinés d'après la hauteur.
+    const mask = this._stance;
+    const planted = tips.map((p, i) =>
+      mask == null ? p.y - footR - lowest < tolerance : (mask >> i) & 1 && p.y - footR - lowest < 30);
+    this._odometry(tips.map((p, i) => (planted[i] ? p.clone().applyMatrix4(THREE_TO_ROBOT) : null)));
     // Terrain : calé sur un pied posé qui le touche (un pied allongé au-dessus
     // d'un trou ne doit pas faire descendre le sol).
     let groundY = lowest;
@@ -520,9 +526,9 @@ export class RobotView {
     const sel = this.selection;
 
     this.legs.forEach((leg, i) => {
-      const onGround = tips[i].y - footR - lowest < tolerance;
+      const onGround = planted[i];
       leg.contact.visible = onGround;
-      leg.contact.position.set(tips[i].x, lowest + 0.5, tips[i].z);
+      leg.contact.position.set(tips[i].x, (mask == null ? lowest : tips[i].y - footR) + 0.5, tips[i].z);
       const j = sel && sel[0] === leg.name ? sel[1] : -1;
       leg.labels.forEach((label, n) => {
         const atLimit = this.limits.has(leg.name + ":" + n);
@@ -691,6 +697,11 @@ export class RobotView {
 
   /** Assiette du corps par rapport aux pieds, et pente du sol sous le robot
    * (simulation), en radians. */
+  /** Pieds posés envoyés par le robot (bit i = i-ème patte de la géométrie), ou null. */
+  setStance(mask) {
+    this._stance = mask;
+  }
+
   setAttitude(roll, pitch, groundRoll, groundPitch) {
     this._attGoal = [roll, pitch, groundRoll, groundPitch];
     this._att ||= [...this._attGoal];
