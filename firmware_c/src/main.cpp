@@ -15,7 +15,7 @@
 #include "pca9685.h"
 
 static const unsigned long LOOP_MS = 20;  // 50 Hz
-static const size_t LINE_MAX = 120;
+static const size_t CMD_LINE_MAX = 120;
 
 unsigned long platform_micros() { return micros(); }
 long platform_free_memory() { return (long)ESP.getFreeHeap(); }
@@ -63,7 +63,7 @@ public:
 static PCA9685Driver driver;
 static NvsStore store;
 static Controller* ctrl = NULL;
-static char line_buf[LINE_MAX + 1];
+static char line_buf[CMD_LINE_MAX + 1];
 static size_t line_len = 0;
 static unsigned long last_ms = 0;
 static unsigned long reported_errors = 0;
@@ -99,7 +99,7 @@ static void read_commands() {
                 if (reply) Serial.println(reply);
             }
             line_len = 0;
-        } else if (line_len < LINE_MAX) {
+        } else if (line_len < CMD_LINE_MAX) {
             line_buf[line_len++] = (char)ch;
         }
     }

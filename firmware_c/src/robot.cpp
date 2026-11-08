@@ -120,7 +120,7 @@ double leg_margin(const Leg& leg, const LegAngles& a) {
     if (v < worst) worst = v;
     v = c->hi_rad - a.tibia;
     if (v < worst) worst = v;
-    double fold = fold_limit_rad(a.femur, leg.def->middle) + a.tibia + HALF_PI;
+    double fold = fold_limit_rad(a.femur, leg.def->middle) + a.tibia + K_HALF_PI;
     worst = worst * DEG_PER_RAD + SERVO_MARGIN;
     fold = fold * DEG_PER_RAD + FOLD_MARGIN;
     return fold < worst ? fold : worst;
@@ -136,7 +136,7 @@ bool leg_ok(const Leg& leg, const LegAngles& a) {
     c = &leg.joint[2];
     v = a.tibia;
     if (v < c->lo_rad || v > c->hi_rad) return false;
-    if (femur <= MINUS_HALF_PI || -v - HALF_PI > fold_limit_rad(femur, leg.def->middle)) return false;
+    if (femur <= K_MINUS_HALF_PI || -v - K_HALF_PI > fold_limit_rad(femur, leg.def->middle)) return false;
     // Fémur levé : la coxa doit moins tourner (bord de la plaque du haut).
     return femur <= RAD_45 || fabs(a.coxa) <= RAD_55 - (femur - RAD_45) / 3.0;
 }
@@ -242,7 +242,7 @@ struct ProfScope {
 // Hexapod (robot.py)
 // =============================================================================
 
-static double sq(double v) { return pow(v, 2.0); }  // v ** 2 de Python
+static double py_sq(double v) { return pow(v, 2.0); }  // v ** 2 de Python
 
 static double rate(double value, double target, double accel, double decel) {
     // Freinage (vers zéro, ou changement de sens) plus fort que l'accélération.
@@ -255,7 +255,7 @@ static double approach(double value, double target, double step) {
 }
 
 static double fraction_inside(double x, double y, double mx, double my, double radius) {
-    if (sq(x + mx) + sq(y + my) <= radius * radius) return 1.0;
+    if (py_sq(x + mx) + py_sq(y + my) <= radius * radius) return 1.0;
     double a = mx * mx + my * my;
     double b = 2 * (x * mx + y * my);
     double c = x * x + y * y - radius * radius;
@@ -516,21 +516,21 @@ bool Hexapod::search(double top_s, double top_l, double* s_out, double* l_out, A
 bool Hexapod::feet_settled() const {
     for (int n = 0; n < NLEGS; n++) {
         const double *o = offsets[n], *h = home[n], *g = home_goal[n];
-        if (sq(o[0] - h[0]) + sq(o[1] - h[1]) > STOP_TOL * STOP_TOL) return false;
-        if (replace_feet && sq(h[0] - g[0]) + sq(h[1] - g[1]) > HOME_REPLACE * HOME_REPLACE) return false;
+        if (py_sq(o[0] - h[0]) + py_sq(o[1] - h[1]) > STOP_TOL * STOP_TOL) return false;
+        if (replace_feet && py_sq(h[0] - g[0]) + py_sq(h[1] - g[1]) > HOME_REPLACE * HOME_REPLACE) return false;
     }
     return true;
 }
 
 // --- place des pieds selon la pose ------------------------------------------
 
-static double degrees(double x) { return x * (180.0 / PY_PI); }   // math.degrees
-static double radians(double x) { return x * (PY_PI / 180.0); }   // math.radians
+static double py_degrees(double x) { return x * (180.0 / PY_PI); }   // math.degrees
+static double py_radians(double x) { return x * (PY_PI / 180.0); }   // math.radians
 
 bool Hexapod::refresh_home() {
     const BodyPose &p = pose, &b = base_pose;
-    double key[6] = {p.x - b.x, p.y - b.y, p.z - b.z, degrees(p.roll - b.roll), degrees(p.pitch - b.pitch),
-                     degrees(p.yaw - b.yaw)};
+    double key[6] = {p.x - b.x, p.y - b.y, p.z - b.z, py_degrees(p.roll - b.roll), py_degrees(p.pitch - b.pitch),
+                     py_degrees(p.yaw - b.yaw)};
     if (home_checked_valid_) {
         bool same = true;
         for (int i = 0; i < 6 && same; i++) same = key[i] == home_checked_[i];
@@ -541,7 +541,7 @@ bool Hexapod::refresh_home() {
         for (int i = 1; i < 6; i++) m = pymax(m, fabs(key[i] - home_key_[n][i]));
         if (m <= HOME_POSE_MM) continue;
         memcpy(home_key_[n], key, sizeof(key));
-        BodyPose q = body_pose(key[0], key[1], key[2], radians(key[3]), radians(key[4]), radians(key[5]));
+        BodyPose q = body_pose(key[0], key[1], key[2], py_radians(key[3]), py_radians(key[4]), py_radians(key[5]));
         double r = best_radius(n, q);
         home_goal[n][0] = r * radial_[n][0];
         home_goal[n][1] = r * radial_[n][1];
