@@ -21,6 +21,8 @@ sys.path.insert(0, ROOT)
 from hexapod import config as cfg  # noqa: E402
 from hexapod import controller as ctl  # noqa: E402
 from hexapod import gait as gait_mod  # noqa: E402
+from hexapod import imu as imu_mod  # noqa: E402
+from hexapod import nav as nav_mod  # noqa: E402
 from hexapod import robot as rob  # noqa: E402
 from hexapod import sensor as sensor_mod  # noqa: E402
 from hexapod import servo as servo_mod  # noqa: E402
@@ -97,6 +99,10 @@ def main():
     w("    double neutral_x, neutral_y, neutral_z;")
     w("    int middle;    // patte du milieu (sangle de la batterie)")
     w("    int tripod_a;  // trépied A (RF, LM, RR)")
+    w("    int quad;      // rang dans gait.QUAD_ORDER, -1 si repliée à 4 pattes")
+    w("    int tucked;    // repliée à 4 pattes (gait.QUAD_TUCKED)")
+    w("    int diagonal;  // patte opposée en diagonale (gait._diagonal), -1 sinon")
+    w("    double tuck_x, tuck_y, tuck_z;  // pied replié, repère corps (Hexapod.tucked_foot)")
     w("    JointDef joint[3];  // coxa, fémur, tibia")
     w("};")
     w("static const LegDef CFG_LEGS[NLEGS] = {")
@@ -105,9 +111,13 @@ def main():
         ca, sa = math.cos(leg.mount_angle), math.sin(leg.mount_angle)
         js = ", ".join("{%d, %d, %s, %d, %s, %s}" % (j.board, j.channel, f(j.zero_deg), j.direction, f(j.min_deg), f(j.max_deg))
                        for j in (leg.coxa, leg.femur, leg.tibia))
-        w('    {"%s", %s, %s, %s, %s, %s, %s, %s, %s, %d, %d, {%s}},' % (
+        quad = gait_mod.QUAD_ORDER.index(leg.name) if leg.name in gait_mod.QUAD_ORDER else -1
+        diag = names.index(gait_mod._diagonal(leg.name)) if quad >= 0 else -1
+        t = trig.tucked_foot(leg)
+        w('    {"%s", %s, %s, %s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %d, %s, %s, %s, {%s}},' % (
             leg.name, f(leg.mount_x), f(leg.mount_y), f(leg.mount_angle), f(ca), f(sa),
-            f(p[0]), f(p[1]), f(p[2]), leg.name in cfg.MIDDLE_LEGS, leg.name in gait_mod.TRIPOD_A, js))
+            f(p[0]), f(p[1]), f(p[2]), leg.name in cfg.MIDDLE_LEGS, leg.name in gait_mod.TRIPOD_A,
+            quad, leg.name in gait_mod.QUAD_TUCKED, diag, f(t[0]), f(t[1]), f(t[2]), js))
     w("};")
     w("// Voisines dans le sens trigo (robot.AROUND), en indices de CFG_LEGS.")
     w("static const int CFG_AROUND[NLEGS] = {%s};" % ", ".join(str(names.index(n)) for n in rob.AROUND))
@@ -128,7 +138,8 @@ def main():
     w("// --- robot.py ---")
     for name in ("ACCEL", "YAW_ACCEL", "DECEL", "YAW_DECEL", "STOP_TOL", "TUCK_TIME", "POSE_RECOVER",
                  "SERVO_MARGIN", "FOLD_MARGIN", "NEIGHBOUR_LIMIT", "HOME_STEP", "HOME_REPLACE", "HOME_PERIOD",
-                 "HOME_POSE_MM", "REACH_MARGIN", "REACH_COXA", "REACH_MAX", "REACH_POSE", "LIFT_MIN", "LIFT_STEP"):
+                 "HOME_POSE_MM", "REACH_MARGIN", "REACH_COXA", "REACH_MAX", "REACH_POSE", "LIFT_MIN", "LIFT_STEP",
+                 "TOUCH_FROM", "TOUCH_RATE", "FEEL_SMOOTH", "SINK_WINDOW", "EXTEND_SPEED", "GROUND_MAX"):
         w("static const double %s = %s;" % (name, f(getattr(rob, name))))
     w("static const double HOME_RANGE_LO = %s;" % f(rob.HOME_RANGE[0]))
     w("static const double HOME_RANGE_HI = %s;" % f(rob.HOME_RANGE[1]))
@@ -138,17 +149,70 @@ def main():
     w("// --- gait.py ---")
     g = gait_mod.TripodGait()
     w("static const double GAIT_PERIOD = %s;  // TripodGait() par défaut" % f(g.period))
+    w("static const double QUAD_SHIFT = %s;" % f(gait_mod.QUAD_SHIFT))
+    w("// Rang dans QUAD_ORDER -> indice de CFG_LEGS.")
+    w("static const int CFG_QUAD_ORDER[4] = {%s};" % ", ".join(str(names.index(n)) for n in gait_mod.QUAD_ORDER))
+    q = trig.quad
+    w("// QuadGait de Hexapod (robot.py) : réglages de départ.")
+    w("static const double QUAD_PERIOD = %s;" % f(q.period))
+    w("static const double QUAD_STEP_HEIGHT = %s;" % f(q.step_height))
+    w("static const double QUAD_MAX_STRIDE = %s;" % f(q.max_stride))
+    w("static const double QUAD_SWAY = %s;" % f(q.sway))
+    w("static const double TRIPOD_STEP_HEIGHT = %s;" % f(trig.tripod.step_height))
+    w("static const double TRIPOD_MAX_STRIDE = %s;" % f(trig.tripod.max_stride))
     w("")
     w("// --- controller.py ---")
     for name in ("RISE_TIME", "WAKE_STAGGER", "WAKE_BLEND", "WATCHDOG", "TELEMETRY_PERIOD", "TEST_DURATION",
-                 "TEST_AMPLITUDE", "DEG"):
+                 "TEST_AMPLITUDE", "DEG", "TILT_STOP", "TILT_OK", "SLOW_RATE", "SLOW_SPAN", "SLOW_MIN",
+                 "SLOW_RECOVER"):
         w("static const double %s = %s;" % (name, f(getattr(ctl, name))))
     w("static const double CALIBRATION_POSE[3] = {%s, %s, %s};" % tuple(f(v) for v in ctl.CALIBRATION_POSE))
     w("")
-    w("// --- sensor.py (capteur absent : seulement l'état affiché) ---")
+    w("// --- sensor.py ---")
     w("static const double STOP_DEFAULT = %s;" % f(sensor_mod.STOP_DEFAULT))
     w("static const double STOP_RANGE_LO = %s;" % f(sensor_mod.STOP_RANGE[0]))
     w("static const double STOP_RANGE_HI = %s;" % f(sensor_mod.STOP_RANGE[1]))
+    for name in ("PAN_AXIS_X", "CHIP_OFFSET", "PAN_LIMIT", "SCAN_STEP", "SCAN_PERIOD", "SCAN_TIMEOUT", "WALK_HALF",
+                 "MIN_RANGE", "MAX_RANGE", "POINT_LIFE", "FOOT_RADIUS"):
+        w("static const double %s = %s;" % (name, f(getattr(sensor_mod, name))))
+    w("static const double SENSOR_DEG = %s;" % f(sensor_mod.DEG))
+    w("// Mesures gardées au plus (une toutes les SCAN_PERIOD s pendant POINT_LIFE s), avec de la marge.")
+    w("#define SCAN_MAX_POINTS %d" % (int(math.ceil(sensor_mod.POINT_LIFE / sensor_mod.SCAN_PERIOD)) + 16))
+    w("static const double PATH_MARGIN = %s;  // Scanner.path_blocked(margin=...)" % f(
+        inspect.signature(sensor_mod.Scanner.path_blocked).parameters["margin"].default))
+    w("#define PAN_BOARD %d" % sensor_mod.PAN_SERVO[0])
+    w("#define PAN_CHANNEL %d" % sensor_mod.PAN_SERVO[1])
+    w("#define PAN_DIRECTION %d" % sensor_mod.PAN_DIRECTION)
+    w("#define VL53_ADDRESS 0x%02x" % sensor_mod.VL53L1X.ADDRESS)
+    w("#define VL53_MODEL_ID 0x%04x" % sensor_mod.VL53L1X.MODEL_ID)
+    cfgb = sensor_mod._DEFAULT_CONFIG
+    w("#define VL53_CONFIG_LEN %d" % len(cfgb))
+    w("// Registres 0x2D.. du VL53L1X (sensor._DEFAULT_CONFIG).")
+    w("static const unsigned char VL53_DEFAULT_CONFIG[VL53_CONFIG_LEN] = {")
+    for i in range(0, len(cfgb), 16):
+        w("    " + ", ".join("0x%02X" % b for b in cfgb[i:i + 16]) + ",")
+    w("};")
+    w("")
+    w("// --- imu.py ---")
+    w("#define IMU_ADDRESS 0x%02x" % imu_mod.ADDRESS)
+    w("static const int IMU_AXES[3][2] = {%s};" % ", ".join("{%d, %d}" % a for a in imu_mod.IMU_AXES))
+    for name in ("ACCEL_TRUST", "BIAS_TIME", "LEVEL_GAIN", "LEVEL_LIMIT"):
+        w("static const double %s = %s;" % (name, f(getattr(imu_mod, name))))
+    w("static const double ACCEL_OK_LO = %s;" % f(imu_mod.ACCEL_OK[0]))
+    w("static const double ACCEL_OK_HI = %s;" % f(imu_mod.ACCEL_OK[1]))
+    w("static const double IMU_ACCEL_SCALE = %s;" % f(imu_mod.MPU6050.ACCEL_SCALE))
+    w("static const double IMU_GYRO_SCALE = %s;" % f(imu_mod.MPU6050.GYRO_SCALE))
+    w("")
+    w("// --- nav.py ---")
+    for name in ("ARRIVE", "LOOKAHEAD", "SEE", "YAW_GAIN", "MIN_SPEED", "FOLLOW_DIST", "FOLLOW_RANGE", "FOLLOW_SIDE",
+                 "FOLLOW_FRESH", "FOLLOW_DEAD", "FOLLOW_TRACK", "FOLLOW_LOST", "STUCK_TIME", "STUCK_GAIN", "REPLAN"):
+        w("static const double NAV_%s = %s;" % (name, f(getattr(nav_mod, name))))
+    w("static const double NAV_DEG = %s;" % f(nav_mod.DEG))
+    w("#define NAV_STEP %d" % nav_mod.STEP)
+    w("#define NAV_SIDE %d" % nav_mod.SIDE)
+    nv = nav_mod.Navigator()
+    w("static const double NAV_SPEED = %s;  // Navigator() par défaut" % f(nv.speed))
+    w("static const double NAV_YAW_RATE = %s;" % f(nv.yaw_rate))
     w("")
     w("// --- servo.py (PCA9685Driver) ---")
     sig = inspect.signature(servo_mod.PCA9685Driver.__init__).parameters
