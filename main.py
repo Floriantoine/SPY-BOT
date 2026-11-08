@@ -53,7 +53,19 @@ def read_commands(ctrl, poll, buf):
     return buf
 
 
+def full_speed():
+    """ESP32 à 240 MHz (MicroPython démarre souvent à 160) : le calcul de
+    l'IK de 18 servos tient alors plus facilement dans les 20 ms d'un cycle."""
+    try:
+        import machine
+
+        machine.freq(240000000)
+    except (ImportError, AttributeError, ValueError):
+        pass
+
+
 def main():
+    full_speed()
     driver = PCA9685Driver()
     # Capteur avant (VL53L1X) sur le même bus I²C, s'il est branché.
     ranger = VL53L1X.probe(driver.i2c)
