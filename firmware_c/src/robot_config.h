@@ -24,7 +24,7 @@ struct LegDef {
     double neutral_x, neutral_y, neutral_z;
     int middle;    // patte du milieu (sangle de la batterie)
     int tripod_a;  // trépied A (RF, LM, RR)
-    int quad;      // rang dans gait.QUAD_ORDER, -1 si repliée à 4 pattes
+    int quad_rank; // rang dans gait.QUAD_ORDER, -1 si repliée à 4 pattes
     int tucked;    // repliée à 4 pattes (gait.QUAD_TUCKED)
     int diagonal;  // patte opposée en diagonale (gait._diagonal), -1 sinon
     double tuck_x, tuck_y, tuck_z;  // pied replié, repère corps (Hexapod.tucked_foot)

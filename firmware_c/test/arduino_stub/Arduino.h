@@ -9,6 +9,9 @@
 #include <string.h>
 #include <math.h>
 #include <limits.h>
+/* newlib xtensa (sys/types.h) : macros BSD visibles sous Arduino-ESP32 */
+#define quad quad_t
+#define physadr physadr_t
 #ifndef LINE_MAX
 #define LINE_MAX 2048  // newlib/xtensa : limits.h via FreeRTOS
 #endif

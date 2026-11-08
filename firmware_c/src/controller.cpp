@@ -725,9 +725,9 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         // Pas plus haut que prévu par la config : le tibia toucherait la coxa.
         double top = CFG_STEP_HEIGHT;
         if (!pyfloat(a[1], &v[1])) return err_float(name, a[1]);
-        r.tripod.step_height = r.quad.step_height = pymax(5.0, pymin(top, v[1]));
+        r.tripod.step_height = r.gait4.step_height = pymax(5.0, pymin(top, v[1]));
         // À 4 pattes, chaque patte fait son pas à tour de rôle : cycle deux fois plus long.
-        r.quad.period = 2 * r.tripod.period;
+        r.gait4.period = 2 * r.tripod.period;
         snprintf(reply_, OUT_SIZE, "OK GAIT %.2f %.0f", r.tripod.period, r.tripod.step_height);
         return reply_;
     }

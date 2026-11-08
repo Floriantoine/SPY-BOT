@@ -270,7 +270,7 @@ void QuadGait::advance(double dt, bool moving) {
 }
 
 double QuadGait::swing(int leg) const {
-    int idx = CFG_LEGS[leg].quad;
+    int idx = CFG_LEGS[leg].quad_rank;
     if (idx < 0) return -1.0;  // patte repliée : gérée par Hexapod
     double w = swing_part();
     double u = pymod(phase - (idx + QUAD_SHIFT) / 4, 1.0);
@@ -278,7 +278,7 @@ double QuadGait::swing(int leg) const {
 }
 
 double QuadGait::time_to_lift(int leg) const {
-    double u = pymod(phase - (CFG_LEGS[leg].quad + QUAD_SHIFT) / 4, 1.0);
+    double u = pymod(phase - (CFG_LEGS[leg].quad_rank + QUAD_SHIFT) / 4, 1.0);
     return (1.0 - u) * period;
 }
 
@@ -340,13 +340,13 @@ Hexapod::Hexapod(ServoDriver* d, AnglePool* p) : driver(d), pool(p) {
         neutral[i][2] = CFG_LEGS[i].neutral_z;
     }
     // À 4 pattes, le corps se balance en plus du pas (réglages de robot.py).
-    quad.period = QUAD_PERIOD;
-    quad.step_height = QUAD_STEP_HEIGHT;
-    quad.max_stride = QUAD_MAX_STRIDE;
-    quad.sway = QUAD_SWAY;
-    quad.planner = this;
-    quad.target_x = quad.target_y = 0.0;
-    quad.reset();
+    gait4.period = QUAD_PERIOD;
+    gait4.step_height = QUAD_STEP_HEIGHT;
+    gait4.max_stride = QUAD_MAX_STRIDE;
+    gait4.sway = QUAD_SWAY;
+    gait4.planner = this;
+    gait4.target_x = gait4.target_y = 0.0;
+    gait4.reset();
     gait = &tripod;
     legs = 6;
     tuck = 0.0;
@@ -398,7 +398,7 @@ int Hexapod::set_legs(int n) {
     if (n == legs) return 0;
     if (!(command.is_zero() && at_rest())) return 2;
     legs = n;
-    gait = n == 4 ? (Gait*)&quad : (Gait*)&tripod;
+    gait = n == 4 ? (Gait*)&gait4 : (Gait*)&tripod;
     // Les pieds restent où ils sont (posés, à moins de STOP_TOL de leur place).
     gait->reset();
     current = gait_command();
@@ -895,8 +895,8 @@ void Hexapod::plan_sway(int slot, double* out_x, double* out_y) {
     const double q[4][2] = {{f[0][0], f[0][1]}, {f[0][2], f[0][3]}, {f[1][0], f[1][1]}, {f[1][2], f[1][3]}};
     double m = nx * q[0][0] + ny * q[0][1];
     for (int i = 1; i < 4; i++) m = pymax(m, nx * q[i][0] + ny * q[i][1]);
-    double need = quad.sway + m;
-    need = pymax(0.0, pymin(quad.sway, need));
+    double need = gait4.sway + m;
+    need = pymax(0.0, pymin(gait4.sway, need));
     *out_x = nx * need;
     *out_y = ny * need;
 }

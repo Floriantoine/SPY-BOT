@@ -4,6 +4,11 @@
 # une compilation ESP32. ARDUINO est défini : main.cpp, pca9685.cpp et
 # wire_bus.cpp sont vérifiés aussi. Usage : sh firmware_c/test/check_arduino.sh
 cd "$(dirname "$0")/.." || exit 1
+# newlib xtensa : sys/types.h fait "#define quad quad_t" (et physadr), mais
+# pas dans toutes les unités de compilation : interdire ces noms dans src/.
+if grep -nwE 'quad|physadr' src/*.cpp src/*.h; then
+    echo "ERREUR : nom réservé par newlib (macro) ci-dessus"; exit 1
+fi
 for f in src/*.cpp; do
     g++ -std=gnu++11 -fsyntax-only -Wall -DARDUINO=10819 -DESP32 -Itest/arduino_stub -Isrc -include Arduino.h "$f" || exit 1
 done

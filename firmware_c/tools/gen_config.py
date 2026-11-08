@@ -99,7 +99,7 @@ def main():
     w("    double neutral_x, neutral_y, neutral_z;")
     w("    int middle;    // patte du milieu (sangle de la batterie)")
     w("    int tripod_a;  // trépied A (RF, LM, RR)")
-    w("    int quad;      // rang dans gait.QUAD_ORDER, -1 si repliée à 4 pattes")
+    w("    int quad_rank; // rang dans gait.QUAD_ORDER, -1 si repliée à 4 pattes")
     w("    int tucked;    // repliée à 4 pattes (gait.QUAD_TUCKED)")
     w("    int diagonal;  // patte opposée en diagonale (gait._diagonal), -1 sinon")
     w("    double tuck_x, tuck_y, tuck_z;  // pied replié, repère corps (Hexapod.tucked_foot)")

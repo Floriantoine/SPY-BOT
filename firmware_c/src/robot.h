@@ -164,7 +164,7 @@ public:
     ServoDriver* driver;
     AnglePool* pool;
     TripodGait tripod;
-    QuadGait quad;
+    QuadGait gait4;
     Gait* gait;
     int legs;     // pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
     double tuck;  // 0 = pattes du milieu au sol, 1 = repliées
