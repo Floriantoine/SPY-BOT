@@ -1,5 +1,5 @@
 // Cinématique inverse, démarche tripode et suivi des pieds : portage de
-// hexapod/leg_ik.py, body_ik.py, gait.py et robot.py (6 pattes seulement).
+// hexapod/leg_ik.py, body_ik.py, gait.py et robot.py (6 et 4 pattes, sol deviné).
 // Les calculs suivent le Python opération par opération (mêmes résultats).
 #pragma once
 #include "driver.h"
@@ -101,22 +101,51 @@ private:
     int nholders_;
 };
 
-// --- démarche tripode (gait.py) ------------------------------------------------
+// --- démarches (gait.py) ------------------------------------------------------
 
-struct TripodGait {
+class Hexapod;
+
+// TripodGait ou QuadGait (Hexapod.gait pointe sur l'une des deux).
+struct Gait {
     double period, step_height, max_stride, phase;
-    double shift_x, shift_y;
+    double shift_x, shift_y;  // décalage du corps (balancement à 4 pattes)
+    virtual ~Gait() {}
+    virtual double stance_time() const = 0;
+    virtual bool at_rest() const = 0;
+    virtual void reset() = 0;
+    virtual void advance(double dt, bool moving) = 0;
+    // Avancement (0..1) du pas, ou -1 si le pied est au sol (None en Python).
+    virtual double swing(int leg) const = 0;
+    virtual double time_to_lift(int leg) const = 0;
+};
+
+struct TripodGait : public Gait {
     double stance_time() const { return period / 2; }
     bool at_rest() const { return phase == 0.0 || phase == 0.5; }
     void reset() { phase = 0.0; }
     void advance(double dt, bool moving);
-    // Avancement (0..1) du pas, ou -1 si le pied est au sol (None en Python).
+    double swing(int leg) const;
+    double time_to_lift(int leg) const;
+};
+
+struct QuadGait : public Gait {
+    double sway;
+    Hexapod* planner;  // plan(slot) = Hexapod::plan_sway
+    bool has_target;
+    double target_x, target_y;
+    int slot;
+    double from_x, from_y;
+    double swing_part() const;
+    double stance_time() const { return (1.0 - swing_part()) * period; }
+    bool at_rest() const;
+    void reset();
+    void advance(double dt, bool moving);
     double swing(int leg) const;
     double time_to_lift(int leg) const;
 };
 
 // Pour PROF : temps passé dans chaque partie.
-enum ProfPart { PROF_I2C, PROF_IK, PROF_PIEDS, PROF_PLACE, PROF_SERVOS, PROF_TELEM, PROF_TICK, PROF_UPDATE, PROF_PARTS };
+enum ProfPart { PROF_CAPTEUR, PROF_GYRO, PROF_I2C, PROF_IK, PROF_PIEDS, PROF_PLACE, PROF_SERVOS, PROF_TELEM, PROF_TICK, PROF_UPDATE, PROF_PARTS };
 extern const char* const PROF_NAMES[PROF_PARTS];
 struct Profiler {
     bool on;
@@ -135,12 +164,19 @@ public:
     ServoDriver* driver;
     AnglePool* pool;
     TripodGait tripod;
+    QuadGait quad;
+    Gait* gait;
+    int legs;     // pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
+    double tuck;  // 0 = pattes du milieu au sol, 1 = repliées
     double neutral[NLEGS][3];
     GaitCommand command, current;
     BodyPose pose, base_pose, applied;
     double pose_scale, lift_scale;
     double offsets[NLEGS][3];
-    double ground[NLEGS];  // toujours 0 (pas de gyroscope)
+    double ground[NLEGS];  // hauteur du sol devinée au gyroscope (feel)
+    double feel_rate[2];
+    bool feel_ground;
+    double time_scale;
     double travel[3];
     bool replace_feet;
     double home[NLEGS][2], home_goal[NLEGS][2];
@@ -149,21 +185,31 @@ public:
     bool solve_key_valid;   // _solve_key (None si faux)
 
     bool at_rest() const;
-    bool tuck_settled() const { return true; }  // 6 pattes : rien de replié
+    bool tuck_settled() const { return tuck == (legs == 4 ? 1.0 : 0.0); }
+    bool walking(int leg) const { return !(legs == 4 && CFG_LEGS[leg].tucked); }
+    // set_legs : 0 si fait, 1 si n n'est pas 4 ou 6, 2 si le robot n'est pas arrêté pieds posés.
+    int set_legs(int n);
     void reset_gait();
+    void feel(double dt, double roll_rate, double pitch_rate);
     // solve() : faux si une patte ne peut pas atteindre sa cible (UnreachableError).
     bool solve(const BodyPose& pose, double lift, AngleSet* out);
     // update() : avance la démarche et envoie les angles. Faux si UnreachableError.
     bool update(double dt, AngleSet** out);
     AngleSet* solve_limited(double dt, bool* unreachable);
     BodyPose effective_pose(double scale) const;
+    void plan_sway(int slot, double* x, double* y);
 
 private:
-    enum { KEY_LEN = 3 * NLEGS + 16 };
+    enum { KEY_LEN = 4 * NLEGS + 20 };
     double lift_[NLEGS][2];
     bool has_lift_[NLEGS];
+    double ground_lift_[NLEGS];
+    bool has_ground_lift_[NLEGS];
+    bool touched_[NLEGS];
     bool placed_[NLEGS];
     bool rest_key_valid_;
+    const Gait* rest_key_gait_;
+    int rest_key_legs_;
     double rest_key_phase_;
     double solve_key_[KEY_LEN];
     double radial_[NLEGS][2];
@@ -172,12 +218,15 @@ private:
     double home_wait_;
     double home_key_[NLEGS][6];
     bool home_checked_valid_;
+    int home_checked_legs_;
     double home_checked_[6];
     bool reach_cache_valid_;
+    const Gait* reach_cache_gait_;
     double reach_cache_key_[12];
     GaitCommand reach_cache_out_;
     double halves_[NLEGS];
 
+    void forget_ground();
     bool solve_checked(const BodyPose& pose, double lift, AngleSet* out);
     bool try_(double scale, double lift, AngleSet* out);
     bool search(double top_s, double top_l, double* s_out, double* l_out, AngleSet* out);

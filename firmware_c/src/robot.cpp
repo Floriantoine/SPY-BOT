@@ -195,7 +195,7 @@ AngleSet* AnglePool::alloc() {
 }
 
 // =============================================================================
-// Démarche tripode (gait.py)
+// Démarches (gait.py)
 // =============================================================================
 
 void TripodGait::advance(double dt, bool moving) {
@@ -217,11 +217,76 @@ double TripodGait::time_to_lift(int leg) const {
     return (1.0 - p) * period;
 }
 
+double QuadGait::swing_part() const { return (1.0 - QUAD_SHIFT) / 4; }
+
+bool QuadGait::at_rest() const {
+    double q = phase * 4;
+    return fabs(q - (double)pyround(q)) < 1e-9;
+}
+
+void QuadGait::reset() {
+    phase = 0.0;
+    slot = 0;
+    has_target = false;
+    shift_x = shift_y = from_x = from_y = 0.0;
+}
+
+void QuadGait::advance(double dt, bool moving) {
+    if (!moving && at_rest()) {
+        // Arrêté : le corps revient doucement au centre, pieds au sol.
+        double step = 60.0 * dt;
+        double x = shift_x, y = shift_y;
+        double n = sqrt(x * x + y * y);
+        double k = n != 0.0 ? pymax(0.0, n - step) / n : 0.0;
+        shift_x = from_x = x * k;
+        shift_y = from_y = y * k;
+        return;
+    }
+    double new_phase = phase + dt / period;
+    if (!moving) {
+        // Arrêt au prochain quart : tous les pieds au sol.
+        new_phase = pymin(new_phase, (double)((long long)(phase * 4 + 1e-9) + 1) / 4.0);
+    }
+    phase = pymod(new_phase, 1.0);
+    if (fabs(phase - 1.0) < 1e-9) phase = 0.0;
+    int s = (int)((long long)(phase * 4 + 1e-9) % 4);
+    if (s != slot || !has_target) {
+        slot = s;
+        from_x = shift_x;
+        from_y = shift_y;
+        planner->plan_sway(s, &target_x, &target_y);
+        has_target = true;
+    }
+    double u = pymin(1.0, pymax(0.0, phase * 4 - s));
+    if (u < QUAD_SHIFT) {
+        double q = u / QUAD_SHIFT;
+        q = q * q * (3 - 2 * q);
+        shift_x = from_x + (target_x - from_x) * q;
+        shift_y = from_y + (target_y - from_y) * q;
+    } else {
+        shift_x = target_x;
+        shift_y = target_y;
+    }
+}
+
+double QuadGait::swing(int leg) const {
+    int idx = CFG_LEGS[leg].quad;
+    if (idx < 0) return -1.0;  // patte repliée : gérée par Hexapod
+    double w = swing_part();
+    double u = pymod(phase - (idx + QUAD_SHIFT) / 4, 1.0);
+    return u < w - 1e-9 ? u / w : -1.0;
+}
+
+double QuadGait::time_to_lift(int leg) const {
+    double u = pymod(phase - (CFG_LEGS[leg].quad + QUAD_SHIFT) / 4, 1.0);
+    return (1.0 - u) * period;
+}
+
 // =============================================================================
 // PROF
 // =============================================================================
 
-const char* const PROF_NAMES[PROF_PARTS] = {"i2c", "ik", "pieds", "place", "servos", "telem", "tick", "update"};
+const char* const PROF_NAMES[PROF_PARTS] = {"capteur", "gyro", "i2c", "ik", "pieds", "place", "servos", "telem", "tick", "update"};
 Profiler g_prof;
 
 void Profiler::add(int part, unsigned long t0) {
@@ -265,8 +330,8 @@ static double fraction_inside(double x, double y, double mx, double my, double r
 
 Hexapod::Hexapod(ServoDriver* d, AnglePool* p) : driver(d), pool(p) {
     tripod.period = GAIT_PERIOD;
-    tripod.step_height = CFG_STEP_HEIGHT;
-    tripod.max_stride = CFG_MAX_STRIDE;
+    tripod.step_height = TRIPOD_STEP_HEIGHT;
+    tripod.max_stride = TRIPOD_MAX_STRIDE;
     tripod.phase = 0.0;
     tripod.shift_x = tripod.shift_y = 0.0;
     for (int i = 0; i < NLEGS; i++) {
@@ -274,17 +339,36 @@ Hexapod::Hexapod(ServoDriver* d, AnglePool* p) : driver(d), pool(p) {
         neutral[i][1] = CFG_LEGS[i].neutral_y;
         neutral[i][2] = CFG_LEGS[i].neutral_z;
     }
+    // À 4 pattes, le corps se balance en plus du pas (réglages de robot.py).
+    quad.period = QUAD_PERIOD;
+    quad.step_height = QUAD_STEP_HEIGHT;
+    quad.max_stride = QUAD_MAX_STRIDE;
+    quad.sway = QUAD_SWAY;
+    quad.planner = this;
+    quad.target_x = quad.target_y = 0.0;
+    quad.reset();
+    gait = &tripod;
+    legs = 6;
+    tuck = 0.0;
     command = current = gait_command();
     pose = base_pose = applied = body_pose();
     pose_scale = lift_scale = 1.0;
     memset(offsets, 0, sizeof(offsets));
-    memset(ground, 0, sizeof(ground));
+    memset(lift_, 0, sizeof(lift_));
     memset(has_lift_, 0, sizeof(has_lift_));
-    memset(placed_, 0, sizeof(placed_));
     rest_key_valid_ = false;
+    rest_key_gait_ = NULL;
+    rest_key_legs_ = 0;
     rest_key_phase_ = 0.0;
+    memset(ground, 0, sizeof(ground));
+    memset(ground_lift_, 0, sizeof(ground_lift_));
+    memset(has_ground_lift_, 0, sizeof(has_ground_lift_));
+    memset(touched_, 0, sizeof(touched_));
+    feel_rate[0] = feel_rate[1] = 0.0;
     last_angles = written = NULL;
     solve_key_valid = false;
+    feel_ground = false;
+    time_scale = 1.0;
     travel[0] = travel[1] = travel[2] = 0.0;
     for (int i = 0; i < NLEGS; i++) {
         double dx = neutral[i][0] - CFG_LEGS[i].mount_x, dy = neutral[i][1] - CFG_LEGS[i].mount_y;
@@ -295,19 +379,37 @@ Hexapod::Hexapod(ServoDriver* d, AnglePool* p) : driver(d), pool(p) {
     reach_table(0);
     for (int i = 0; i < NLEGS; i++) home_target_[i] = home_margin(i, body_pose(), 0.0);
     home_wait_ = 0.0;
+    memset(placed_, 0, sizeof(placed_));
     replace_feet = true;
     memset(home, 0, sizeof(home));
     memset(home_goal, 0, sizeof(home_goal));
     memset(home_key_, 0, sizeof(home_key_));
     home_checked_valid_ = false;
+    home_checked_legs_ = 0;
     reach_cache_valid_ = false;
+    reach_cache_gait_ = NULL;
     memset(halves_, 0, sizeof(halves_));
     pool->hold(&last_angles);
     pool->hold(&written);
 }
 
+int Hexapod::set_legs(int n) {
+    if (n != 4 && n != 6) return 1;
+    if (n == legs) return 0;
+    if (!(command.is_zero() && at_rest())) return 2;
+    legs = n;
+    gait = n == 4 ? (Gait*)&quad : (Gait*)&tripod;
+    // Les pieds restent où ils sont (posés, à moins de STOP_TOL de leur place).
+    gait->reset();
+    current = gait_command();
+    memset(has_lift_, 0, sizeof(has_lift_));
+    memset(placed_, 0, sizeof(placed_));
+    rest_key_valid_ = false;
+    return 0;
+}
+
 void Hexapod::reset_gait() {
-    tripod.reset();
+    gait->reset();
     current = gait_command();
     memset(offsets, 0, sizeof(offsets));
     memset(has_lift_, 0, sizeof(has_lift_));
@@ -318,12 +420,62 @@ void Hexapod::reset_gait() {
     memset(home_key_, 0, sizeof(home_key_));
     home_checked_valid_ = false;
     reach_cache_valid_ = false;
+    forget_ground();
+}
+
+void Hexapod::forget_ground() {
     memset(ground, 0, sizeof(ground));
+    memset(has_ground_lift_, 0, sizeof(has_ground_lift_));
+    memset(touched_, 0, sizeof(touched_));
+    feel_rate[0] = feel_rate[1] = 0.0;
+}
+
+void Hexapod::feel(double dt, double roll_rate, double pitch_rate) {
+    // Devine au gyroscope où le sol n'est pas à la hauteur prévue (robot.feel).
+    if (!feel_ground) return;
+    double fr = feel_rate[0], fp = feel_rate[1];
+    double k = dt != 0.0 ? pymin(1.0, dt / FEEL_SMOOTH) : 1.0;
+    roll_rate = fr + (roll_rate - fr) * k;
+    pitch_rate = fp + (pitch_rate - fp) * k;
+    feel_rate[0] = roll_rate;
+    feel_rate[1] = pitch_rate;
+    const Gait& g = *gait;
+    int push = -1, sink = -1;
+    double push_score = 0.0, sink_score = 0.0;
+    for (int n = 0; n < NLEGS; n++) {
+        if (!walking(n)) continue;
+        double x = neutral[n][0], y = neutral[n][1];
+        // > 0 : le coin de ce pied monte.
+        double score = (roll_rate * y - pitch_rate * x) / sqrt(x * x + y * y);
+        double s = g.swing(n);
+        if (s >= 0.0 && s > TOUCH_FROM && !touched_[n]) {
+            if (score > TOUCH_RATE && (push < 0 || score > push_score)) {
+                push = n;
+                push_score = score;
+            }
+        } else if (s < 0.0 && g.time_to_lift(n) > (1.0 - SINK_WINDOW) * g.stance_time()) {
+            if (score < -TOUCH_RATE && (sink < 0 || score < sink_score)) {
+                sink = n;
+                sink_score = score;
+            }
+        }
+    }
+    if (push >= 0) {
+        int n = push;
+        double dz = offsets[n][2];
+        double z = ground[n] + lift_scale * dz;  // là où est vraiment le pied
+        if (z <= GROUND_MAX) {
+            touched_[n] = true;
+            ground[n] = z;
+            offsets[n][2] = 0.0;
+        }
+    }
+    if (sink >= 0) ground[sink] = pymax(-GROUND_MAX, ground[sink] - EXTEND_SPEED * dt);
 }
 
 bool Hexapod::at_rest() const {
-    double sx = tripod.shift_x, sy = tripod.shift_y;
-    return current.is_zero() && tripod.at_rest() && sx * sx + sy * sy < 0.25 && feet_settled();
+    double sx = gait->shift_x, sy = gait->shift_y;  // 4 pattes : corps revenu au centre
+    return current.is_zero() && gait->at_rest() && sx * sx + sy * sy < 0.25 && feet_settled();
 }
 
 BodyPose Hexapod::effective_pose(double scale) const {
@@ -338,8 +490,9 @@ BodyPose Hexapod::effective_pose(double scale) const {
 // Retourne 1 si réussi, 0 si une patte ne passe pas le contrôle, -1 si hors de portée.
 static int solve_impl(const Hexapod& h, const BodyPose& pose, double lift, bool checked, AngleSet* out) {
     Rot R = rotation(pose.roll, pose.pitch, pose.yaw);
-    double sx = h.tripod.shift_x, sy = h.tripod.shift_y;
+    double sx = h.gait->shift_x, sy = h.gait->shift_y;
     double bx = sx + pose.x, by = sy + pose.y, bz = pose.z;
+    double tuck = h.tuck;
     for (int i = 0; i < NLEGS; i++) {
         const double* p = h.neutral[i];
         const double* o = h.offsets[i];
@@ -350,6 +503,12 @@ static int solve_impl(const Hexapod& h, const BodyPose& pose, double lift, bool 
         double fy = R.m[0][1] * dx + R.m[1][1] * dy + R.m[2][1] * dz;
         double fz = R.m[0][2] * dx + R.m[1][2] * dy + R.m[2][2] * dz;
         const LegDef& d = CFG_LEGS[i];
+        if (tuck > 0.0 && d.tucked) {
+            double k = tuck * tuck * (3 - 2 * tuck);
+            fx = fx + (d.tuck_x - fx) * k;
+            fy = fy + (d.tuck_y - fy) * k;
+            fz = fz + (d.tuck_z - fz) * k;
+        }
         double ca = d.cos_a, sa = d.sin_a;
         double ex = fx - d.mount_x, ey = fy - d.mount_y;
         if (!leg_ik(ca * ex + sa * ey, ca * ey - sa * ex, fz, &out->leg[i])) return -1;
@@ -370,8 +529,11 @@ bool Hexapod::try_(double scale, double lift, AngleSet* out) {
 
 bool Hexapod::update(double dt, AngleSet** out) {
     ProfScope prof(PROF_UPDATE);
-    // 6 pattes : tuck reste à 0, pas de repli.
-    GaitCommand target = command;
+    double goal = legs == 4 ? 1.0 : 0.0;
+    double step = dt / TUCK_TIME;
+    tuck = goal > tuck ? pymin(goal, tuck + step) : pymax(goal, tuck - step);
+    // Pas de marche tant que les pattes du milieu bougent.
+    GaitCommand target = tuck_settled() ? command : gait_command();
     GaitCommand c = current;
     current = gait_command(approach(c.vx, target.vx, rate(c.vx, target.vx, ACCEL, DECEL) * dt),
                            approach(c.vy, target.vy, rate(c.vy, target.vy, ACCEL, DECEL) * dt),
@@ -386,8 +548,9 @@ bool Hexapod::update(double dt, AngleSet** out) {
         }
         if (changed) home_wait_ = HOME_PERIOD;
     }
-    double gdt = dt * 1.0;  // time_scale : 1 sans gyroscope
-    tripod.advance(gdt, !(current.is_zero() && feet_settled()));
+    // Démarche ralentie si le corps bascule trop vite (gyroscope).
+    double gdt = dt * time_scale;
+    gait->advance(gdt, !(current.is_zero() && feet_settled()));
     {
         ProfScope pp(PROF_PIEDS);
         move_feet(gdt);
@@ -416,6 +579,11 @@ AngleSet* Hexapod::solve_limited(double dt, bool* unreachable) {
     int k = 0;
     for (int i = 0; i < NLEGS; i++)
         for (int j = 0; j < 3; j++) key[k++] = offsets[i][j];
+    for (int i = 0; i < NLEGS; i++) key[k++] = ground[i];
+    key[k++] = gait->shift_x;
+    key[k++] = gait->shift_y;
+    key[k++] = tuck;
+    key[k++] = legs;
     const double rest[] = {p.x, p.y, p.z, p.roll, p.pitch, p.yaw, b.x, b.y, b.z, b.roll, b.pitch, b.yaw, s, l, rs, rl};
     for (int i = 0; i < 16; i++) key[k++] = rest[i];
     if (solve_key_valid && last_angles != NULL) {
@@ -515,6 +683,7 @@ bool Hexapod::search(double top_s, double top_l, double* s_out, double* l_out, A
 
 bool Hexapod::feet_settled() const {
     for (int n = 0; n < NLEGS; n++) {
+        if (!walking(n)) continue;  // 4 pattes : celles du milieu sont repliées
         const double *o = offsets[n], *h = home[n], *g = home_goal[n];
         if (py_sq(o[0] - h[0]) + py_sq(o[1] - h[1]) > STOP_TOL * STOP_TOL) return false;
         if (replace_feet && py_sq(h[0] - g[0]) + py_sq(h[1] - g[1]) > HOME_REPLACE * HOME_REPLACE) return false;
@@ -531,12 +700,13 @@ bool Hexapod::refresh_home() {
     const BodyPose &p = pose, &b = base_pose;
     double key[6] = {p.x - b.x, p.y - b.y, p.z - b.z, py_degrees(p.roll - b.roll), py_degrees(p.pitch - b.pitch),
                      py_degrees(p.yaw - b.yaw)};
-    if (home_checked_valid_) {
+    if (home_checked_valid_ && legs == home_checked_legs_) {
         bool same = true;
         for (int i = 0; i < 6 && same; i++) same = key[i] == home_checked_[i];
         if (same) return false;  // rien n'a changé depuis le dernier tour complet
     }
     for (int n = 0; n < NLEGS; n++) {
+        if (!walking(n)) continue;
         double m = fabs(key[0] - home_key_[n][0]);
         for (int i = 1; i < 6; i++) m = pymax(m, fabs(key[i] - home_key_[n][i]));
         if (m <= HOME_POSE_MM) continue;
@@ -548,6 +718,7 @@ bool Hexapod::refresh_home() {
         return true;
     }
     memcpy(home_checked_, key, sizeof(key));
+    home_checked_legs_ = legs;
     home_checked_valid_ = true;
     return false;
 }
@@ -579,9 +750,9 @@ double Hexapod::home_margin(int leg, const BodyPose& q, double r) {
     const double* p = neutral[leg];
     double ux = radial_[leg][0], uy = radial_[leg][1];
     double x0 = p[0] + r * ux, y0 = p[1] + r * uy;
-    double h = 0.35 * tripod.max_stride;
+    double h = 0.35 * tripod.max_stride;  // pied posé : un peu moins d'un demi-pas autour
     double worst = 1e9;
-    const double ks[4][2] = {{0.0, 0.0}, {h, 0.0}, {-h, 0.0}, {0.0, tripod.step_height}};
+    const double ks[4][2] = {{0.0, 0.0}, {h, 0.0}, {-h, 0.0}, {0.0, gait->step_height}};
     Rot R = rotation(q.roll, q.pitch, q.yaw);
     for (int i = 0; i < 4; i++) {
         double k = ks[i][0], dz = ks[i][1];
@@ -633,7 +804,8 @@ void Hexapod::reach_table(int leg) {
 }
 
 double Hexapod::half_stride(int leg, double vx, double vy) const {
-    const TripodGait& g = tripod;
+    const Gait& g = *gait;
+    if (gait != &tripod) return g.max_stride / 2;  // à 4 pattes : le balancement prend de la place
     double speed = sqrt(vx * vx + vy * vy);
     if (speed < 1e-6) return g.max_stride / 2;
     double a = pymod(atan2(vy, vx) - CFG_LEGS[leg].mount_angle, 2 * PY_PI) * REACH_DIRS / (2 * PY_PI);
@@ -657,18 +829,19 @@ double Hexapod::reach_share() const {
 }
 
 GaitCommand Hexapod::command_in_reach() {
-    const TripodGait& g = tripod;
+    const Gait& g = *gait;
     const GaitCommand& cmd = current;
     const BodyPose &p = pose, &b = base_pose;
-    double key[12] = {cmd.vx, cmd.vy, cmd.yaw_rate, g.stance_time(), g.max_stride, p.x - b.x,
-                      p.y - b.y, p.z - b.z, p.roll - b.roll, p.pitch - b.pitch, p.yaw - b.yaw, 0.0};
-    if (reach_cache_valid_) {
+    double key[12] = {cmd.vx, cmd.vy, cmd.yaw_rate, g.stance_time(), g.max_stride, (double)legs, p.x - b.x,
+                      p.y - b.y, p.z - b.z, p.roll - b.roll, p.pitch - b.pitch, p.yaw - b.yaw};
+    if (reach_cache_valid_ && reach_cache_gait_ == gait) {
         bool same = true;
         for (int i = 0; i < 12 && same; i++) same = key[i] == reach_cache_key_[i];
         if (same) return reach_cache_out_;
     }
     double k = 1.0;
     for (int n = 0; n < NLEGS; n++) {
+        if (!walking(n)) continue;
         // ground_velocity(neutral, cmd)
         double vx = -(cmd.vx - cmd.yaw_rate * neutral[n][1]);
         double vy = -(cmd.vy + cmd.yaw_rate * neutral[n][0]);
@@ -678,42 +851,111 @@ GaitCommand Hexapod::command_in_reach() {
     }
     GaitCommand out = k >= 1.0 ? cmd : gait_command(cmd.vx * k, cmd.vy * k, cmd.yaw_rate * k);
     memcpy(reach_cache_key_, key, sizeof(key));
+    reach_cache_gait_ = gait;
     reach_cache_out_ = out;
     reach_cache_valid_ = true;
     return out;
 }
 
+void Hexapod::plan_sway(int slot, double* out_x, double* out_y) {
+    // Décalage du corps avant le pas de la patte n° slot (QUAD_ORDER) : à `sway`
+    // mm à l'intérieur du triangle des 3 pieds qui restent au sol.
+    const Gait& g = *gait;
+    int lifted = CFG_QUAD_ORDER[slot];
+    int partner = CFG_LEGS[lifted].diagonal;
+    int ab[2];
+    int nab = 0;
+    for (int i = 0; i < 4; i++) {
+        int n = CFG_QUAD_ORDER[i];
+        if (n != lifted && n != partner && nab < 2) ab[nab++] = n;
+    }
+    GaitCommand cmd = command_in_reach();
+    double dt = g.period / 4;
+    double f[3][4];  // a, b, partenaire : x0, y0, x1, y1
+    const int which[3] = {ab[0], ab[1], partner};
+    for (int i = 0; i < 3; i++) {
+        int n = which[i];
+        const double* p = neutral[n];
+        double x = p[0] + offsets[n][0], y = p[1] + offsets[n][1];
+        double vx = -(cmd.vx - cmd.yaw_rate * y), vy = -(cmd.vy + cmd.yaw_rate * x);
+        f[i][0] = x;
+        f[i][1] = y;
+        f[i][2] = x + vx * dt;
+        f[i][3] = y + vy * dt;
+    }
+    double a0x = f[0][0], a0y = f[0][1], b0x = f[1][0], b0y = f[1][1];
+    double ex = b0x - a0x, ey = b0y - a0y;
+    double e = sqrt(ex * ex + ey * ey);
+    double nx = -ey / e, ny = ex / e;
+    double px = f[2][0], py = f[2][1];
+    if (nx * (px - a0x) + ny * (py - a0y) < 0) {
+        nx = -nx;  // normale tournée vers le pied opposé
+        ny = -ny;
+    }
+    const double q[4][2] = {{f[0][0], f[0][1]}, {f[0][2], f[0][3]}, {f[1][0], f[1][1]}, {f[1][2], f[1][3]}};
+    double m = nx * q[0][0] + ny * q[0][1];
+    for (int i = 1; i < 4; i++) m = pymax(m, nx * q[i][0] + ny * q[i][1]);
+    double need = quad.sway + m;
+    need = pymax(0.0, pymin(quad.sway, need));
+    *out_x = nx * need;
+    *out_y = ny * need;
+}
+
 void Hexapod::move_feet(double dt) {
-    TripodGait& g = tripod;
+    Gait& g = *gait;
     GaitCommand cmd = command_in_reach();
     bool rest = cmd.is_zero() && g.at_rest();
-    if (rest && rest_key_valid_ && rest_key_phase_ == g.phase) {
+    if (rest && rest_key_valid_ && rest_key_gait_ == gait && rest_key_legs_ == legs && rest_key_phase_ == g.phase) {
         // Immobile, tous les pieds posés, et déjà calculé une fois ainsi : rien ne bouge.
         travel[0] = travel[1] = travel[2] = 0.0;
+        for (int n = 0; n < NLEGS; n++)
+            if (legs == 4 && CFG_LEGS[n].tucked) offsets[n][0] = offsets[n][1] = offsets[n][2] = 0.0;
         return;
     }
     double cvx = cmd.vx, cvy = cmd.vy, yaw = cmd.yaw_rate;
     double st2 = g.stance_time() / 2;
     int stance[NLEGS];
+    double swings[NLEGS];
     int nstance = 0;
     for (int n = 0; n < NLEGS; n++) {
+        if (!walking(n)) continue;
         double dx = offsets[n][0], dy = offsets[n][1];
         const double* p = neutral[n];
-        double s = g.swing(n);
+        double s = swings[n] = g.swing(n);
         if (s < 0.0) {  // au sol
             placed_[n] = false;
             if (has_lift_[n]) {
                 has_lift_[n] = false;
-                // Il vient de se poser : il finit son pas sur le point visé.
-                double hx = home[n][0], hy = home[n][1];
-                dx = hx - (yaw * p[1] - cvx) * st2;
-                dy = hy + (cvy + yaw * p[0]) * st2;
-                offsets[n][0] = dx;
-                offsets[n][1] = dy;
-                offsets[n][2] = 0.0;
+                has_ground_lift_[n] = false;
+                if (touched_[n]) {
+                    touched_[n] = false;  // déjà posé (sur un caillou) : il reste où il est
+                } else {
+                    // Il vient de se poser : il finit son pas sur le point visé.
+                    double hx = home[n][0], hy = home[n][1];
+                    dx = hx - (yaw * p[1] - cvx) * st2;
+                    dy = hy + (cvy + yaw * p[0]) * st2;
+                    offsets[n][0] = dx;
+                    offsets[n][1] = dy;
+                    offsets[n][2] = 0.0;
+                }
             }
             stance[nstance++] = n;
         } else {
+            if (touched_[n]) {
+                // Posé sur ce qu'il a touché : il recule avec le sol comme un pied d'appui.
+                if (!has_lift_[n]) {
+                    has_lift_[n] = true;
+                    lift_[n][0] = dx;
+                    lift_[n][1] = dy;
+                }
+                if (s > 0.0 && !placed_[n]) {
+                    placed_[n] = true;
+                    home[n][0] = home_goal[n][0];
+                    home[n][1] = home_goal[n][1];
+                }
+                stance[nstance++] = n;
+                continue;
+            }
             // En l'air : de là où il s'est levé jusqu'à un demi-pas en avant.
             if (!has_lift_[n]) {
                 has_lift_[n] = true;
@@ -729,7 +971,12 @@ void Hexapod::move_feet(double dt) {
             double hx = home[n][0], hy = home[n][1];
             double tx = hx - (yaw * p[1] - cvx) * st2, ty = hy + (cvy + yaw * p[0]) * st2;
             double k = s * s * (3 - 2 * s);
-            ground[n] = ground[n] * (1.0 - k);
+            // Il redescend vers le sol prévu (le plan des pieds).
+            if (!has_ground_lift_[n]) {
+                has_ground_lift_[n] = true;
+                ground_lift_[n] = ground[n];
+            }
+            ground[n] = ground_lift_[n] * (1.0 - k);
             double z = g.step_height * sin(PY_PI * s);
             offsets[n][0] = lx + (tx - lx) * k;
             offsets[n][1] = ly + (ty - ly) * k;
@@ -747,7 +994,8 @@ void Hexapod::move_feet(double dt) {
         double vx = yaw * y - cvx, vy = -cvy - yaw * x;
         moves[n][0] = vx * dt;
         moves[n][1] = vy * dt;
-        double lift = g.time_to_lift(n);
+        // Pied déjà posé sur un caillou en fin de pas : il se lève au prochain cycle.
+        double lift = swings[n] < 0.0 ? g.time_to_lift(n) : 0.0;
         double hx = home[n][0], hy = home[n][1];
         double half = halves_[n];
         if (lift > dt) {
@@ -770,7 +1018,11 @@ void Hexapod::move_feet(double dt) {
     } else {
         travel[0] = travel[1] = travel[2] = 0.0;
     }
+    for (int n = 0; n < NLEGS; n++)
+        if (legs == 4 && CFG_LEGS[n].tucked) offsets[n][0] = offsets[n][1] = offsets[n][2] = 0.0;
     rest_key_valid_ = rest;
+    rest_key_gait_ = gait;
+    rest_key_legs_ = legs;
     rest_key_phase_ = g.phase;
 }
 
