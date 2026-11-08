@@ -134,6 +134,40 @@ class MissingBoardTest(unittest.TestCase):
         self.assertTrue(all(a == 0x40 for a, _ in i2c.writes))
 
 
+class BatchWriteTest(unittest.TestCase):
+    """Une patte = une seule écriture I²C de 12 octets, rien si inchangé."""
+
+    def test_leg_in_one_write(self):
+        class FakeI2C:
+            def __init__(self):
+                self.writes = []
+
+            def writeto_mem(self, address, reg, data):
+                self.writes.append((address, reg, bytes(data)))
+
+            def readfrom_mem(self, address, reg, n):
+                return bytes(n)
+
+        import time
+        if not hasattr(time, "sleep_us"):
+            time.sleep_us = lambda us: None
+        i2c = FakeI2C()
+        driver = PCA9685Driver(i2c)
+        i2c.writes.clear()
+        driver.set_angles(0, 5, (90.0, 100.0, 80.0))
+        self.assertEqual(len(i2c.writes), 1)
+        address, reg, data = i2c.writes[0]
+        self.assertEqual((address, reg, len(data)), (0x40, 0x06 + 4 * 5, 12))
+        one = PCA9685Driver(FakeI2C())
+        one.boards[0].i2c.writes.clear()
+        one.set_angle(0, 6, 100.0)  # même impulsion que voie par voie
+        self.assertEqual(one.boards[0].i2c.writes[0][2], data[4:8])
+        driver.set_angles(0, 5, (90.0, 100.0, 80.0))
+        self.assertEqual(len(i2c.writes), 1)  # inchangé : pas d'écriture
+        driver.set_angle(0, 6, 100.0)
+        self.assertEqual(len(i2c.writes), 1)  # même cache que voie par voie
+
+
 class NoSlipTest(unittest.TestCase):
     """Les pieds posés ne glissent jamais : entre deux instants, tous les pieds
     au sol bougent exactement pareil (vus du corps), même au démarrage, à

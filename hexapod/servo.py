@@ -65,6 +65,23 @@ class PCA9685:
         self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, data)
         self._last[channel] = off
 
+    def set_pulses_us(self, channel, pulses):
+        """Plusieurs voies consécutives en une seule écriture I²C (registres
+        en auto-incrément) : bien plus rapide que voie par voie sur l'ESP32."""
+        k = self.freq * 4096 / 1000000
+        offs = [int(us * k) for us in pulses]
+        last = self._last
+        if all(last.get(channel + i) == o for i, o in enumerate(offs)):
+            return  # inchangé
+        data = bytearray(4 * len(offs))
+        for i, o in enumerate(offs):
+            last.pop(channel + i, None)  # si l'écriture échoue, on réessaiera
+            data[4 * i + 2] = o & 0xFF
+            data[4 * i + 3] = o >> 8
+        self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, data)
+        for i, o in enumerate(offs):
+            last[channel + i] = o
+
     def off(self, channel):
         # Bit « full off » : le servo n'est plus alimenté en consigne.
         self._last.pop(channel, None)
@@ -84,7 +101,9 @@ class PCA9685Driver:
         if i2c is None:
             from machine import I2C, Pin
 
-            i2c = I2C(0, sda=Pin(sda), scl=Pin(scl), freq=100000)  # 100 kHz : plus tolérant aux parasites des servos
+            # 400 kHz : toutes les puces du bus le supportent (PCA9685, MPU6050,
+            # VL53L1X) ; 4 fois moins de temps pour écrire les 18 servos.
+            i2c = I2C(0, sda=Pin(sda), scl=Pin(scl), freq=400000)
         # Une carte absente ne bloque pas le démarrage : ses servos sont
         # ignorés et `missing` la signale au PC.
         self.i2c = i2c  # partagé avec le capteur avant
@@ -112,6 +131,17 @@ class PCA9685Driver:
                 # Écriture I²C perdue (parasites des servos) : la consigne
                 # suivante, 20 ms plus tard, la remplace.
                 self.errors += 1
+
+    def set_angles(self, board, channel, degs):
+        """Servos sur des voies consécutives de la même carte (une patte)."""
+        if not self.boards[board]:
+            return
+        c, k, lo, hi = self.center_us, self.us_per_deg, self.min_us, self.max_us
+        pulses = [max(lo, min(hi, c + (d - 90.0) * k)) for d in degs]
+        try:
+            self.boards[board].set_pulses_us(channel, pulses)
+        except OSError:
+            self.errors += 1
 
     def relax(self):
         for board in self.boards:

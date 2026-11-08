@@ -37,6 +37,19 @@ class ControllerTest(unittest.TestCase):
         run(self.ctrl, 0.5)
         self.assertEqual(self.driver.angles, {})
 
+    def test_servos_resent_after_power_cycle(self):
+        # Immobile, les angles ne sont plus renvoyés ; après un relâchement,
+        # ils doivent l'être de nouveau.
+        self.ctrl.handle("STAND")
+        run(self.ctrl, 4.0)
+        self.driver.angles.clear()
+        run(self.ctrl, 0.2)
+        self.assertEqual(self.driver.angles, {})  # rien de nouveau à envoyer
+        self.ctrl.handle("POWER 0")
+        self.ctrl.handle("STAND")
+        run(self.ctrl, 4.0)
+        self.assertEqual(len(self.driver.angles), 18)
+
     def test_stand_from_off_powers_on_first(self):
         c = self.ctrl
         self.assertEqual(c.handle("STAND"), "OK STAND")

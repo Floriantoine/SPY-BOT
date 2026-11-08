@@ -60,6 +60,7 @@ REACH_MAX = 70.0  # mm : demi-pas maximal
 # (max_stride / 2) : complètement à REACH_POSE mm ou REACH_POSE / 2 degrés.
 REACH_POSE = 10.0
 LIFT_MIN = 0.5  # pas pas moins hauts que la moitié de la hauteur réglée
+LIFT_STEP = 0.1  # pas un peu moins haut, essayé avant la recherche complète
 BISECT = 4  # essais pour trouver ce qui est possible (précision 1/16)
 
 
@@ -104,6 +105,8 @@ class Hexapod:
         self._touched = set()  # pieds en l'air qui ont déjà touché quelque chose
         self.feel_rate = (0.0, 0.0)
         self._last_angles = None  # derniers angles valides (filet de sécurité)
+        self._solve_key = None
+        self._written = None  # derniers angles envoyés aux servos
         self.feel_ground = False
         self.time_scale = 1.0  # < 1 : la démarche ralentit (corps qui bascule trop vite)
         self.travel = (0.0, 0.0, 0.0)  # déplacement du corps au dernier update (mm, mm, rad, repère corps)
@@ -124,6 +127,8 @@ class Hexapod:
         self.home = {n: (0.0, 0.0) for n in self.neutral}
         self.home_goal = {n: (0.0, 0.0) for n in self.neutral}
         self._home_key = {n: (0.0,) * 6 for n in self.neutral}
+        self._home_checked, self._home_checked_legs = None, None
+        self._reach_cache = None
 
     def set_legs(self, n):
         """Passe en marche à 6 ou 4 pattes. Seulement à l'arrêt, pieds au sol."""
@@ -150,6 +155,8 @@ class Hexapod:
         self.home = {n: (0.0, 0.0) for n in self.neutral}
         self.home_goal = {n: (0.0, 0.0) for n in self.neutral}
         self._home_key = {n: (0.0,) * 6 for n in self.neutral}
+        self._home_checked, self._home_checked_legs = None, None
+        self._reach_cache = None
         self._forget_ground()
 
     def _forget_ground(self):
@@ -231,8 +238,11 @@ class Hexapod:
     def effective_pose(self, scale=1.0):
         """base_pose + scale × (pose - base_pose)."""
         b, p = self.base_pose, self.pose
-        return BodyPose(*(getattr(b, k) + scale * (getattr(p, k) - getattr(b, k))
-                          for k in ("x", "y", "z", "roll", "pitch", "yaw")))
+        if scale == 1.0:
+            return p
+        return BodyPose(b.x + scale * (p.x - b.x), b.y + scale * (p.y - b.y), b.z + scale * (p.z - b.z),
+                        b.roll + scale * (p.roll - b.roll), b.pitch + scale * (p.pitch - b.pitch),
+                        b.yaw + scale * (p.yaw - b.yaw))
 
     def solve(self, pose=None, lift=1.0, check=None):
         """Angles articulaires de chaque patte pour l'état courant (pose
@@ -279,10 +289,9 @@ class Hexapod:
         self.gait.advance(gdt, not (self.current.is_zero and self._feet_settled()))
         self._move_feet(gdt)
         angles = self.solve_limited(dt)
-        for leg in self.config.legs:
-            a = angles[leg.name]
-            for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
-                self.driver.set_angle(joint.board, joint.channel, ik_to_servo_deg(value, joint))
+        if angles is not self._written:  # mêmes angles qu'au tick d'avant : déjà envoyés
+            write_servos(self.driver, self.config.legs, angles)
+            self._written = angles
         return angles
 
     def solve_limited(self, dt=0.0):
@@ -292,8 +301,21 @@ class Hexapod:
         doucement quand c'est de nouveau possible."""
         s, l = self.pose_scale, self.lift_scale
         rs, rl = min(1.0, s + POSE_RECOVER * dt), min(1.0, l + POSE_RECOVER * dt)
+        # Rien n'a bougé depuis le dernier calcul (robot immobile) : mêmes angles.
+        p, b = self.pose, self.base_pose
+        key = (tuple(self.offsets.values()), tuple(self.ground.values()), self.gait.shift, self.tuck,
+               self.legs, p.x, p.y, p.z, p.roll, p.pitch, p.yaw, b.x, b.y, b.z, b.roll, b.pitch, b.yaw,
+               s, l, rs, rl)
+        if key == self._solve_key and self._last_angles is not None:
+            return self._last_angles
         found = None
-        for cs, cl in ((rs, rl), (rs, l), (s, l)):
+        tried = []
+        # Avant la recherche complète (une dizaine de calculs : trop lent pour
+        # l'ESP32), un pas un peu moins haut suffit le plus souvent.
+        for cs, cl in ((rs, rl), (rs, l), (s, l), (s, max(LIFT_MIN, l - LIFT_STEP))):
+            if (cs, cl) in tried:
+                continue  # même essai qu'avant (rien à récupérer) : déjà raté
+            tried.append((cs, cl))
             angles = self._try(cs, cl)
             if angles is not None:
                 found = (cs, cl, angles)
@@ -311,6 +333,8 @@ class Hexapod:
         self.pose_scale, self.lift_scale, angles = found
         self.applied = self.effective_pose(self.pose_scale)
         self._last_angles = angles
+        # Mêmes entrées la prochaine fois (rien à récupérer) : on réutilise.
+        self._solve_key = key if (rs, rl) == found[:2] else None
         return angles
 
     def _search(self, top_s, top_l):
@@ -375,6 +399,8 @@ class Hexapod:
         # La hauteur assise (base_pose) ne compte pas : on ne déplace pas les pieds pour s'asseoir.
         key = (p.x - b.x, p.y - b.y, p.z - b.z, math.degrees(p.roll - b.roll),
                math.degrees(p.pitch - b.pitch), math.degrees(p.yaw - b.yaw))
+        if key == self._home_checked and self.legs == self._home_checked_legs:
+            return False  # rien n'a changé depuis le dernier tour complet
         for leg in self.config.legs:
             n = leg.name
             if self.legs == 4 and n in QUAD_TUCKED:
@@ -387,6 +413,7 @@ class Hexapod:
             ux, uy = self._radial[n]
             self.home_goal[n] = (r * ux, r * uy)
             return True
+        self._home_checked, self._home_checked_legs = key, self.legs
         return False
 
     def _best_radius(self, leg, pose):
@@ -523,6 +550,14 @@ class Hexapod:
         de sa course juste avant de se lever (en tournant, ou à cause du pas
         de temps) : le corps marquerait alors une petite pause."""
         g, cmd = self.gait, self.current
+        p, b = self.pose, self.base_pose
+        # Même consigne, même pose, même démarche : même résultat (calcul
+        # coûteux sur l'ESP32, refait seulement quand quelque chose change).
+        key = (cmd.vx, cmd.vy, cmd.yaw_rate, g, g.stance_time, g.max_stride, self.legs,
+               p.x - b.x, p.y - b.y, p.z - b.z, p.roll - b.roll, p.pitch - b.pitch, p.yaw - b.yaw)
+        cached = self._reach_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
         k = 1.0
         self._halves = {}
         for n in self.walking_legs():
@@ -531,13 +566,19 @@ class Hexapod:
             step = math.sqrt(vx * vx + vy * vy) * g.stance_time
             if step > 1e-9:
                 k = min(k, 0.9 * 2 * half / step)
-        if k >= 1.0:
-            return cmd
-        return GaitCommand(cmd.vx * k, cmd.vy * k, cmd.yaw_rate * k)
+        out = cmd if k >= 1.0 else GaitCommand(cmd.vx * k, cmd.vy * k, cmd.yaw_rate * k)
+        self._reach_cache = (key, out)
+        return out
 
     def _move_feet(self, dt):
         g = self.gait
         cmd = self._command_in_reach()
+        if cmd.is_zero and g.at_rest and not self._lift:
+            # Immobile, tous les pieds posés : rien ne bouge (calcul évité).
+            self.travel = (0.0, 0.0, 0.0)
+            for n in QUAD_TUCKED if self.legs == 4 else ():
+                self.offsets[n] = (0.0, 0.0, 0.0)  # repliée : voir solve()
+            return
         stance = []
         for n in self.walking_legs():
             dx, dy, _ = self.offsets[n]
@@ -618,6 +659,21 @@ DEG_PER_RAD = 180.0 / math.pi
 AROUND = ("LF", "LM", "LR", "RR", "RM", "RF")  # sens trigo : coxa + = vers la suivante
 
 
+def write_servos(driver, legs, angles):
+    """Envoie les angles des pattes aux servos : une écriture par patte quand
+    le pilote sait le faire et que ses 3 servos se suivent sur une carte."""
+    batch = getattr(driver, "set_angles", None)
+    for leg in legs:
+        a = angles[leg.name]
+        c, f, t = leg.coxa, leg.femur, leg.tibia
+        degs = (ik_to_servo_deg(a.coxa, c), ik_to_servo_deg(a.femur, f), ik_to_servo_deg(a.tibia, t))
+        if batch and c.board == f.board == t.board and f.channel == c.channel + 1 and t.channel == c.channel + 2:
+            batch(c.board, c.channel, degs)
+        else:
+            for joint, d in zip((c, f, t), degs):
+                driver.set_angle(joint.board, joint.channel, d)
+
+
 def leg_margin(leg, a):
     """Plus petit écart (°) entre un servo de la patte et sa butée (ou entre le
     tibia et la coxa) ; négatif s'il est dépassé."""
@@ -634,10 +690,20 @@ def leg_ok(leg, a):
     """Servos de la patte dans leur course (avec marge), tibia sans toucher
     la coxa, coxa sans toucher la plaque du haut."""
     deg = DEG_PER_RAD
-    for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
-        d = 90.0 + joint.direction * (v * deg - joint.zero_deg) + joint.trim_deg
-        if d < joint.min_deg + SERVO_MARGIN or d > joint.max_deg - SERVO_MARGIN:
-            return False
+    # Écrit à plat (sans boucle sur des tuples) : appelée 6 fois par calcul,
+    # c'était la moitié du temps de l'IK sur l'ESP32.
+    j = leg.coxa
+    d = 90.0 + j.direction * (a.coxa * deg - j.zero_deg) + j.trim_deg
+    if d < j.min_deg + SERVO_MARGIN or d > j.max_deg - SERVO_MARGIN:
+        return False
+    j = leg.femur
+    d = 90.0 + j.direction * (a.femur * deg - j.zero_deg) + j.trim_deg
+    if d < j.min_deg + SERVO_MARGIN or d > j.max_deg - SERVO_MARGIN:
+        return False
+    j = leg.tibia
+    d = 90.0 + j.direction * (a.tibia * deg - j.zero_deg) + j.trim_deg
+    if d < j.min_deg + SERVO_MARGIN or d > j.max_deg - SERVO_MARGIN:
+        return False
     femur = a.femur * deg
     if femur <= -90.0 or -a.tibia * deg - 90.0 > tibia_fold_limit(femur, leg.name in MIDDLE_LEGS) - FOLD_MARGIN:
         return False

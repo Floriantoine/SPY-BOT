@@ -64,10 +64,13 @@ def _fold_table(femur_deg):
     pts = TIBIA_FOLD_LIMITS
     if femur_deg <= pts[0][0]:
         return pts[0][1]
-    for (f0, t0), (f1, t1) in zip(pts, pts[1:]):
+    f0, t0 = pts[0]
+    for i in range(1, len(pts)):  # sans zip ni tranche : rapide sur l'ESP32
+        f1, t1 = pts[i]
         if femur_deg <= f1:
             return t0 + (t1 - t0) * (femur_deg - f0) / (f1 - f0)
-    return pts[-1][1]
+        f0, t0 = f1, t1
+    return t0
 
 
 class JointServo:

@@ -54,8 +54,17 @@ def body_to_leg_frame(foot_body, leg):
     """Passe du repère corps au repère de la patte `leg` (LegConfig)."""
     dx = foot_body[0] - leg.mount_x
     dy = foot_body[1] - leg.mount_y
-    c, s = math.cos(leg.mount_angle), math.sin(leg.mount_angle)
+    c, s = _trig(leg)
     return (c * dx + s * dy, -s * dx + c * dy, foot_body[2])
+
+
+def _trig(leg):
+    """cos et sin de l'orientation de la patte, gardés (calculés une fois)."""
+    t = getattr(leg, "_trig", None)
+    if t is None or t[0] != leg.mount_angle:
+        a = leg.mount_angle
+        t = leg._trig = (a, math.cos(a), math.sin(a))
+    return t[1], t[2]
 
 
 def leg_to_body_frame(foot_leg, leg):

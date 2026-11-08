@@ -72,6 +72,7 @@ def main():
     # Gyroscope MPU6050 (0x68), même bus. Robot immobile au démarrage : biais mesuré pendant 1 s.
     imu = MPU6050.probe(driver.i2c)
     ctrl = Controller(default_config(), driver, "calib.json", ranger, imu)
+    ctrl.telemetry_period = 0.1  # 10 par seconde : laisse le temps de calcul aux servos
     poll = select.poll()
     poll.register(sys.stdin, select.POLLIN)
     buf = ""

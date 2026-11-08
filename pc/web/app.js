@@ -1261,8 +1261,11 @@ function metricsText() {
     : [];
   const head = "# SPY-BOT mesures (" + (state.sim ? "simulation" : "robot") + "), " + new Date().toLocaleString("fr-FR") +
     "\n# t_s mode v_reelle v_demandee marge_servo_deg pose_% levee_% roulis_deg tangage_deg tick_ms";
-  // Une ligne M toutes les 50 ms côté robot (elles arrivent parfois groupées).
-  const body = rows.map(([, ...r], i) => [(i * 0.05).toFixed(2), ...r].join(" "));
+  // Une ligne M par télémétrie (toutes les 50 ms en simulation, 100 ms sur
+  // l'ESP32) ; elles arrivent parfois groupées : l'heure de réception est
+  // arrondie à la période la plus proche.
+  const step = rows.length > 1 ? Math.max(0.05, Math.round((rows[rows.length - 1][0] - rows[0][0]) / (rows.length - 1) / 50) * 0.05) : 0.05;
+  const body = rows.map(([, ...r], i) => [(i * step).toFixed(2), ...r].join(" "));
   return [head, ...prof, ...body].join("\n");
 }
 

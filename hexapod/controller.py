@@ -129,6 +129,7 @@ WAKE_STAGGER = 0.25  # s entre deux pattes dont la position est inconnue
 WAKE_BLEND = 1.0  # s pour rejoindre la posture assise depuis une position connue
 WATCHDOG = 1.0  # s sans MOVE -> arrêt (assez long pour ne pas couper la marche si une commande arrive en retard)
 TELEMETRY_PERIOD = 0.05  # s
+_T_FORMAT = "T %s %.3f" + " %d" * 18
 TILT_STOP = 20 * math.pi / 180  # rad : au-delà, arrêt de sécurité
 TILT_OK = 12 * math.pi / 180  # rad : il repart quand il est revenu en dessous
 # Démarche ralentie quand le corps bascule vite (avec FEEL)
@@ -166,7 +167,11 @@ class Controller:
         self._free_time = 0.0
         self._went = 0.0  # mm parcourus depuis la dernière ligne M
         self._tick_us = 0  # plus long tick depuis la dernière ligne M
+        self._margin_of, self._margin = None, 0.0
         self.since_move = 0.0
+        # Télémétrie : 20 fois par seconde ; l'ESP32 (main.py) en envoie moins,
+        # chaque envoi lui coûte ~10 ms de calcul.
+        self.telemetry_period = TELEMETRY_PERIOD
         self.since_telemetry = TELEMETRY_PERIOD
         self.angles = self._safe_solve() or self._zero_angles()
         self.load_calibration()
@@ -259,7 +264,7 @@ class Controller:
             lines += self.scanner.tick(dt, self.odom, self.wanted)
 
         self.since_telemetry += dt
-        if self.since_telemetry >= TELEMETRY_PERIOD:
+        if self.since_telemetry >= self.telemetry_period:
             lines.append(self.telemetry())
             lines.append(self.measures(self.since_telemetry))
             self.since_telemetry = 0.0
@@ -294,7 +299,10 @@ class Controller:
         servo à sa butée (0,1°), pose et levée gardées (%), plus long tick (µs)."""
         r = self.robot
         w = self.wanted
-        margin = min(leg_margin(leg, self.angles[leg.name]) for leg in r.config.legs)
+        if self._margin_of is not self.angles:  # angles inchangés : même marge
+            self._margin_of = self.angles
+            self._margin = min(leg_margin(leg, self.angles[leg.name]) for leg in r.config.legs)
+        margin = self._margin
         line = "M %d %d %d %d %d %d" % (
             round(self._went / period) if period else 0, round(math.sqrt(w.vx * w.vx + w.vy * w.vy)),
             round(margin * 10), round(r.pose_scale * 100), round(r.lift_scale * 100), self._tick_us)
@@ -302,12 +310,11 @@ class Controller:
         return line
 
     def telemetry(self):
-        values = []
+        values = [self.mode, self.robot.gait.phase]
         for leg in self.robot.config.legs:
             a = self.angles[leg.name]
-            values += [a.coxa, a.femur, a.tibia]
-        phase = self.robot.gait.phase
-        return "T %s %.3f %s" % (self.mode, phase, " ".join(str(round(v * 1000)) for v in values))
+            values += [round(a.coxa * 1000), round(a.femur * 1000), round(a.tibia * 1000)]
+        return _T_FORMAT % tuple(values)
 
     # --- commandes --------------------------------------------------------
 
@@ -516,7 +523,8 @@ class Controller:
         r = self.robot
         parts = [(self, "tick", "tick"), (r, "update", "update"), (r, "solve_limited", "ik"),
                  (r, "_move_feet", "pieds"), (r, "_refresh_home", "place"),
-                 (self.driver, "set_angle", "servos"), (self, "telemetry", "telem"),
+                 (self.driver, "set_angle", "servos"), (self.driver, "set_angles", "servos"),
+                 (self, "telemetry", "telem"),
                  (self, "measures", "telem")]
         if self.imu is not None:
             parts.append((self.imu, "update", "gyro"))
@@ -750,6 +758,9 @@ class Controller:
         # Position de départ connue seulement si les servos tenaient déjà une
         # pose (calibration, test) ; après un relâchement, elle est inconnue.
         known = self.mode != OFF
+        # Butées peut-être changées (calibration), servos relâchés : tout
+        # recalculer et tout renvoyer.
+        self.robot._solve_key = self.robot._written = None
         self.wake_from = {n: LegAngles(a.coxa, a.femur, a.tibia) for n, a in self.angles.items()} if known else None
         self.wake_time = 0.0
         self.stand_after_wake = False
