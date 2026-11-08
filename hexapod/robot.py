@@ -2,11 +2,11 @@
 
 import math
 
-from .body_ik import BodyPose, body_to_leg_frame, foot_in_body, leg_to_body_frame, rotation_matrix
-from .config import MIDDLE_LEGS, tibia_fold_limit
+from .body_ik import BodyPose, _trig, body_to_leg_frame, foot_in_body, leg_to_body_frame, rotation_matrix
+from .config import BATTERY_FOLD, MIDDLE_LEGS, STRAP_FOLD, TIBIA_FOLD_LIMITS
 from .gait import QUAD_ORDER, QUAD_TUCKED, GaitCommand, QuadGait, TripodGait, _diagonal, ground_velocity
 from .leg_ik import LegAngles, UnreachableError, leg_fk, leg_ik
-from .servo import DryRunDriver, ik_to_servo_deg
+from .servo import DryRunDriver
 
 # La consigne de marche change progressivement (démarrages et arrêts doux).
 ACCEL = 250.0  # mm/s²
@@ -98,6 +98,7 @@ class Hexapod:
         self.applied = BodyPose()  # pose réellement appliquée
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}  # pied - neutre (mm)
         self._lift = {}  # pieds en l'air : position (dx, dy) au moment de se lever
+        self._rest_key = None  # _move_feet : état immobile déjà calculé
         # Hauteur du sol sous chaque pied, devinée au gyroscope (feel) : + = plus
         # haut que prévu (caillou), - = plus bas (trou). Ajoutée au pied.
         self.ground = {n: 0.0 for n in self.neutral}
@@ -145,6 +146,7 @@ class Hexapod:
         self.current = GaitCommand()
         self._lift = {}
         self._placed = set()
+        self._rest_key = None
 
     def reset_gait(self):
         self.gait.reset()
@@ -152,6 +154,7 @@ class Hexapod:
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}
         self._lift = {}
         self._placed = set()
+        self._rest_key = None
         self.home = {n: (0.0, 0.0) for n in self.neutral}
         self.home_goal = {n: (0.0, 0.0) for n in self.neutral}
         self._home_key = {n: (0.0,) * 6 for n in self.neutral}
@@ -253,20 +256,35 @@ class Hexapod:
         """
         c = self.config
         pose = self.pose if pose is None else pose
-        targets = self.foot_targets(lift)
+        # foot_targets(), foot_in_body() et body_to_leg_frame() écrits ici à
+        # plat, avec peu d'opérations : sur l'ESP32 chaque calcul flottant
+        # crée un objet, et ce calcul est fait à chaque tick.
+        (r00, r01, r02), (r10, r11, r12), (r20, r21, r22) = rotation_matrix(pose.roll, pose.pitch, pose.yaw)
+        sx, sy = self.gait.shift
+        bx, by, bz = sx + pose.x, sy + pose.y, pose.z
+        cl, fl, tl = c.coxa_length, c.femur_length, c.tibia_length
+        neutral, offsets, ground = self.neutral, self.offsets, self.ground
+        tuck = self.tuck
         angles = {}
-        r = rotation_matrix(pose.roll, pose.pitch, pose.yaw)  # une fois pour les 6 pattes
         for leg in c.legs:
-            foot = foot_in_body(targets[leg.name], pose, r)
-            if leg.name in QUAD_TUCKED and self.tuck > 0.0:
+            n = leg.name
+            p, o = neutral[n], offsets[n]
+            dx = p[0] + o[0] - bx
+            dy = p[1] + o[1] - by
+            dz = p[2] + lift * o[2] + ground[n] - bz
+            fx = r00 * dx + r10 * dy + r20 * dz
+            fy = r01 * dx + r11 * dy + r21 * dz
+            fz = r02 * dx + r12 * dy + r22 * dz
+            if tuck > 0.0 and n in QUAD_TUCKED:
                 t = self.tucked_foot(leg)
-                s = self.tuck * self.tuck * (3 - 2 * self.tuck)
-                foot = tuple(a + (b - a) * s for a, b in zip(foot, t))
-            x, y, z = body_to_leg_frame(foot, leg)
-            a = leg_ik(x, y, z, c.coxa_length, c.femur_length, c.tibia_length)
+                k = tuck * tuck * (3 - 2 * tuck)
+                fx, fy, fz = fx + (t[0] - fx) * k, fy + (t[1] - fy) * k, fz + (t[2] - fz) * k
+            ca, sa = _trig(leg)
+            ex, ey = fx - leg.mount_x, fy - leg.mount_y
+            a = leg_ik(ca * ex + sa * ey, ca * ey - sa * ex, fz, cl, fl, tl)
             if check is not None and not check(leg, a):
                 return None
-            angles[leg.name] = a
+            angles[n] = a
         return angles
 
     def update(self, dt):
@@ -573,17 +591,25 @@ class Hexapod:
     def _move_feet(self, dt):
         g = self.gait
         cmd = self._command_in_reach()
-        if cmd.is_zero and g.at_rest and not self._lift:
-            # Immobile, tous les pieds posés : rien ne bouge (calcul évité).
+        rest = (g, self.legs, g.phase) if cmd.is_zero and g.at_rest else None
+        if rest is not None and rest == self._rest_key:
+            # Immobile, tous les pieds posés, et déjà calculé une fois ainsi :
+            # rien ne bouge (calcul évité).
             self.travel = (0.0, 0.0, 0.0)
             for n in QUAD_TUCKED if self.legs == 4 else ():
                 self.offsets[n] = (0.0, 0.0, 0.0)  # repliée : voir solve()
             return
+        # Vitesse au sol d'un pied en (x, y) = ground_velocity() :
+        # (yaw × y - vx, -vy - yaw × x), écrit à plat (calcul fait à chaque tick).
+        cvx, cvy, yaw = cmd.vx, cmd.vy, cmd.yaw_rate
+        st2 = g.stance_time / 2
+        offsets, neutral, home = self.offsets, self.neutral, self.home
         stance = []
+        swings = {}
         for n in self.walking_legs():
-            dx, dy, _ = self.offsets[n]
-            p = self.neutral[n]
-            s = g.swing(n)
+            dx, dy, _ = offsets[n]
+            p = neutral[n]
+            s = swings[n] = g.swing(n)
             if s is None:
                 self._placed.discard(n)
                 if self._lift.pop(n, None) is not None:
@@ -592,32 +618,33 @@ class Hexapod:
                         self._touched.discard(n)  # déjà posé (sur un caillou) : il reste où il est
                     else:
                         # Il vient de se poser : il finit son pas sur le point visé.
-                        vx, vy = ground_velocity(p, cmd)
-                        hx, hy = self.home[n]
-                        dx, dy = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
-                        self.offsets[n] = (dx, dy, 0.0)
+                        hx, hy = home[n]
+                        dx, dy = hx - (yaw * p[1] - cvx) * st2, hy + (cvy + yaw * p[0]) * st2
+                        offsets[n] = (dx, dy, 0.0)
                 stance.append(n)
             else:
+                if n in self._touched:
+                    # Posé sur ce qu'il a touché : il ne glisse pas, il recule
+                    # avec le sol comme un pied d'appui.
+                    self._lift.setdefault(n, (dx, dy))
+                    if s > 0.0 and n not in self._placed:
+                        self._placed.add(n)
+                        home[n] = self.home_goal[n]
+                    stance.append(n)
+                    continue
                 # En l'air : de là où il s'est levé jusqu'à un demi-pas en avant.
                 lx, ly = self._lift.setdefault(n, (dx, dy))
                 if s > 0.0 and n not in self._placed:
                     self._placed.add(n)
-                    self.home[n] = self.home_goal[n]  # il se pose à sa meilleure place
-                vx, vy = ground_velocity(p, cmd)
-                hx, hy = self.home[n]
-                tx, ty = hx - vx * g.stance_time / 2, hy - vy * g.stance_time / 2
+                    home[n] = self.home_goal[n]  # il se pose à sa meilleure place
+                hx, hy = home[n]
+                tx, ty = hx - (yaw * p[1] - cvx) * st2, hy + (cvy + yaw * p[0]) * st2
                 k = s * s * (3 - 2 * s)
-                if n in self._touched:
-                    # Posé sur ce qu'il a touché : il ne glisse pas, il recule
-                    # avec le sol comme un pied d'appui.
-                    stance.append(n)
-                    continue
-                else:
-                    # Il redescend vers le sol prévu (le plan des pieds).
-                    g0 = self._ground_lift.setdefault(n, self.ground[n])
-                    self.ground[n] = g0 * (1.0 - k)
-                    z = g.step_height * math.sin(math.pi * s)
-                self.offsets[n] = (lx + (tx - lx) * k, ly + (ty - ly) * k, z)
+                # Il redescend vers le sol prévu (le plan des pieds).
+                g0 = self._ground_lift.setdefault(n, self.ground[n])
+                self.ground[n] = g0 * (1.0 - k)
+                z = g.step_height * math.sin(math.pi * s)
+                offsets[n] = (lx + (tx - lx) * k, ly + (ty - ly) * k, z)
         # Au sol, les pieds reculent à la vitesse du corps. Si l'un d'eux
         # arrive au bout de sa course (accélération en plein pas), le corps
         # ralentit un instant : même réduction pour tous, aucun pied ne glisse.
@@ -629,12 +656,13 @@ class Hexapod:
         moves = {}
         k = 1.0
         for n in stance:
-            dx, dy, _ = self.offsets[n]
-            p = self.neutral[n]
-            vx, vy = ground_velocity((p[0] + dx, p[1] + dy), cmd)
+            dx, dy, _ = offsets[n]
+            p = neutral[n]
+            x, y = p[0] + dx, p[1] + dy
+            vx, vy = yaw * y - cvx, -cvy - yaw * x
             moves[n] = (vx * dt, vy * dt)
             # Pied déjà posé sur un caillou en fin de pas : il se lève au prochain cycle.
-            lift = g.time_to_lift(n) if g.swing(n) is None else 0.0
+            lift = g.time_to_lift(n) if swings[n] is None else 0.0
             hx, hy = self.home[n]
             half = self._halves[n]
             if lift > dt:
@@ -653,9 +681,16 @@ class Hexapod:
         self.travel = (cmd.vx * k * dt, cmd.vy * k * dt, cmd.yaw_rate * k * dt) if stance else (0.0, 0.0, 0.0)
         for n in QUAD_TUCKED if self.legs == 4 else ():
             self.offsets[n] = (0.0, 0.0, 0.0)  # repliée : voir solve()
+        self._rest_key = rest
 
 
 DEG_PER_RAD = 180.0 / math.pi
+_HALF_PI = math.pi / 2
+_MINUS_HALF_PI = -_HALF_PI
+_RAD_45, _RAD_55 = math.radians(45.0), math.radians(55.0)
+_FOLD_RAD = tuple((math.radians(f), math.radians(t - FOLD_MARGIN)) for f, t in TIBIA_FOLD_LIMITS)
+_BATTERY_RAD = (math.radians(BATTERY_FOLD[0]), math.radians(BATTERY_FOLD[1] - FOLD_MARGIN))
+_STRAP_RAD = (math.radians(STRAP_FOLD[0]), math.radians(STRAP_FOLD[1] - FOLD_MARGIN))
 AROUND = ("LF", "LM", "LR", "RR", "RM", "RF")  # sens trigo : coxa + = vers la suivante
 
 
@@ -668,11 +703,17 @@ def write_servos(driver, legs, angles):
     for leg in legs:
         a = angles[leg.name]
         for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
-            d = ik_to_servo_deg(v, joint)
+            # = ik_to_servo_deg(v, joint), avec ses constantes gardées.
+            k = _joint(joint)
+            d = k[7] + k[8] * v
+            d = k[3] if d < k[3] else k[4] if d > k[4] else d
             if batch is None:
                 driver.set_angle(joint.board, joint.channel, d)
             else:
-                boards.setdefault(joint.board, {})[joint.channel] = d
+                b = boards.get(joint.board)
+                if b is None:
+                    b = boards[joint.board] = {}
+                b[joint.channel] = d
     for board, channels in boards.items():
         order = sorted(channels)
         start = order[0]
@@ -688,38 +729,78 @@ def write_servos(driver, legs, angles):
 def leg_margin(leg, a):
     """Plus petit écart (°) entre un servo de la patte et sa butée (ou entre le
     tibia et la coxa) ; négatif s'il est dépassé."""
-    deg = DEG_PER_RAD
     worst = 1e9
-    for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
-        d = 90.0 + joint.direction * (v * deg - joint.zero_deg) + joint.trim_deg
-        worst = min(worst, d - joint.min_deg, joint.max_deg - d)
-    femur = a.femur * deg
-    return min(worst, tibia_fold_limit(femur, leg.name in MIDDLE_LEGS) - (-a.tibia * deg - 90.0))
+    for j, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+        lo, hi = _joint_range(j)  # butées moins SERVO_MARGIN
+        worst = min(worst, v - lo, hi - v)
+    fold = _fold_limit_rad(a.femur, leg.name in MIDDLE_LEGS) + a.tibia + _HALF_PI  # moins FOLD_MARGIN
+    return min(worst * DEG_PER_RAD + SERVO_MARGIN, fold * DEG_PER_RAD + FOLD_MARGIN)
 
 
 def leg_ok(leg, a):
     """Servos de la patte dans leur course (avec marge), tibia sans toucher
     la coxa, coxa sans toucher la plaque du haut."""
-    deg = DEG_PER_RAD
-    # Écrit à plat (sans boucle sur des tuples) : appelée 6 fois par calcul,
-    # c'était la moitié du temps de l'IK sur l'ESP32.
-    j = leg.coxa
-    d = 90.0 + j.direction * (a.coxa * deg - j.zero_deg) + j.trim_deg
-    if d < j.min_deg + SERVO_MARGIN or d > j.max_deg - SERVO_MARGIN:
+    # Tout en radians, bornes calculées d'avance : sur l'ESP32 chaque calcul
+    # flottant crée un objet ; appelée 6 fois par tick.
+    lo, hi = _joint_range(leg.coxa)
+    v = a.coxa
+    if v < lo or v > hi:
         return False
-    j = leg.femur
-    d = 90.0 + j.direction * (a.femur * deg - j.zero_deg) + j.trim_deg
-    if d < j.min_deg + SERVO_MARGIN or d > j.max_deg - SERVO_MARGIN:
+    lo, hi = _joint_range(leg.femur)
+    femur = a.femur
+    if femur < lo or femur > hi:
         return False
-    j = leg.tibia
-    d = 90.0 + j.direction * (a.tibia * deg - j.zero_deg) + j.trim_deg
-    if d < j.min_deg + SERVO_MARGIN or d > j.max_deg - SERVO_MARGIN:
+    lo, hi = _joint_range(leg.tibia)
+    v = a.tibia
+    if v < lo or v > hi:
         return False
-    femur = a.femur * deg
-    if femur <= -90.0 or -a.tibia * deg - 90.0 > tibia_fold_limit(femur, leg.name in MIDDLE_LEGS) - FOLD_MARGIN:
+    if femur <= _MINUS_HALF_PI or -v - _HALF_PI > _fold_limit_rad(femur, leg.name in MIDDLE_LEGS):
         return False
     # Fémur levé : la coxa doit moins tourner (bord de la plaque du haut).
-    return femur <= 45.0 or abs(a.coxa * deg) <= 55.0 - (femur - 45.0) / 3.0
+    return femur <= _RAD_45 or abs(a.coxa) <= _RAD_55 - (femur - _RAD_45) / 3.0
+
+
+def _joint_range(j):
+    """Angles IK (rad) permis pour ce servo (butées moins SERVO_MARGIN)."""
+    c = _joint(j)
+    return c[5], c[6]
+
+
+def _joint(j):
+    """Constantes d'un servo, gardées sur lui et recalculées si sa
+    calibration change : bornes IK (rad) de leg_ok, et (a, b) tels que
+    angle servo = a + b × angle IK (rad), avant les butées."""
+    c = getattr(j, "_consts", None)
+    if (c is None or c[0] != j.direction or c[1] != j.zero_deg or c[2] != j.trim_deg
+            or c[3] != j.min_deg or c[4] != j.max_deg):
+        # d = 90 + direction * (deg - zero) + trim, borné à [min, max] ± marge.
+        u = (j.min_deg + SERVO_MARGIN - 90.0 - j.trim_deg) / j.direction + j.zero_deg
+        w = (j.max_deg - SERVO_MARGIN - 90.0 - j.trim_deg) / j.direction + j.zero_deg
+        c = j._consts = (j.direction, j.zero_deg, j.trim_deg, j.min_deg, j.max_deg,
+                         (min(u, w) - 1e-9) / DEG_PER_RAD, (max(u, w) + 1e-9) / DEG_PER_RAD,
+                         90.0 - j.direction * j.zero_deg + j.trim_deg, j.direction * DEG_PER_RAD)
+    return c
+
+
+def _fold_limit_rad(femur, middle):
+    """tibia_fold_limit - FOLD_MARGIN, en radians, pour un fémur en radians."""
+    pts = _FOLD_RAD
+    f0, t0 = pts[0]
+    if femur <= f0:
+        v = t0
+    else:
+        v = pts[-1][1]
+        for i in range(1, len(pts)):
+            f1, t1 = pts[i]
+            if femur <= f1:
+                v = t0 + (t1 - t0) * (femur - f0) / (f1 - f0)
+                break
+            f0, t0 = f1, t1
+    if femur <= _BATTERY_RAD[0] and v > _BATTERY_RAD[1]:
+        v = _BATTERY_RAD[1]
+    if middle and femur <= _STRAP_RAD[0] and v > _STRAP_RAD[1]:
+        v = _STRAP_RAD[1]
+    return v
 
 
 def neighbours_ok(angles):

@@ -32,20 +32,37 @@ class LegAngles:
 
 def leg_ik(x, y, z, coxa_length, femur_length, tibia_length):
     """Retourne les angles articulaires qui placent le pied en (x, y, z)."""
-    coxa = math.atan2(y, x)
-    r = math.sqrt(x * x + y * y) - coxa_length  # distance horizontale depuis le fémur
-    d = math.sqrt(r * r + z * z)  # distance fémur -> pied
-    if d > femur_length + tibia_length or d < abs(femur_length - tibia_length) or d == 0:
+    # Écrit avec peu d'opérations : sur l'ESP32 chaque calcul flottant crée
+    # un objet (et le ramasse-miettes coûte cher) ; appelée 6 fois par tick.
+    k = _consts(coxa_length, femur_length, tibia_length)
+    r = _sqrt(x * x + y * y) - coxa_length  # distance horizontale depuis le fémur
+    dd = r * r + z * z
+    d = _sqrt(dd)  # distance fémur -> pied
+    if d > k[3] or d < k[4] or d == 0:
         raise UnreachableError("pied hors de portée : (%.1f, %.1f, %.1f), d=%.1f" % (x, y, z, d))
 
     # Loi des cosinus dans le plan (r, z).
-    f2, t2 = femur_length * femur_length, tibia_length * tibia_length
-    cos_knee = (f2 + t2 - d * d) / (2 * femur_length * tibia_length)
-    cos_shoulder = (f2 + d * d - t2) / (2 * femur_length * d)
-    knee = math.acos(_clamp(cos_knee))  # angle intérieur fémur/tibia
-    femur = math.atan2(z, r) + math.acos(_clamp(cos_shoulder))
-    tibia = knee - math.pi
-    return LegAngles(coxa, femur, tibia)
+    cos_knee = (k[5] - dd) / k[6]
+    cos_shoulder = (k[7] + dd) / (k[8] * d)
+    cos_knee = -1.0 if cos_knee < -1.0 else 1.0 if cos_knee > 1.0 else cos_knee
+    cos_shoulder = -1.0 if cos_shoulder < -1.0 else 1.0 if cos_shoulder > 1.0 else cos_shoulder
+    # acos(cos_knee) : angle intérieur fémur/tibia.
+    return LegAngles(_atan2(y, x), _atan2(z, r) + _acos(cos_shoulder), _acos(cos_knee) - _PI)
+
+
+_k = (None, None, None)
+
+
+def _consts(c, f, t):
+    """Termes de leg_ik qui ne dépendent que des longueurs (gardés)."""
+    global _k
+    k = _k
+    if k[0] != c or k[1] != f or k[2] != t:
+        k = _k = (c, f, t, f + t, abs(f - t), f * f + t * t, 2 * f * t, f * f - t * t, 2 * f)
+    return k
+
+
+_sqrt, _atan2, _acos, _PI = math.sqrt, math.atan2, math.acos, math.pi
 
 
 def leg_fk(angles, coxa_length, femur_length, tibia_length):
@@ -71,7 +88,3 @@ def leg_joint_positions(angles, coxa_length, femur_length, tibia_length):
         (knee_r * c, knee_r * s, knee_z),
         foot,
     ]
-
-
-def _clamp(v):
-    return max(-1.0, min(1.0, v))

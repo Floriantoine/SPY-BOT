@@ -71,16 +71,22 @@ class PCA9685:
         k = self.freq * 4096 / 1000000
         offs = [int(us * k) for us in pulses]
         last = self._last
-        if all(last.get(channel + i) == o for i, o in enumerate(offs)):
+        same = True
+        for i in range(len(offs)):  # sans enumerate ni all() : rapide sur l'ESP32
+            if last.get(channel + i) != offs[i]:
+                same = False
+                break
+        if same:
             return  # inchangé
         data = bytearray(4 * len(offs))
-        for i, o in enumerate(offs):
+        for i in range(len(offs)):
+            o = offs[i]
             last.pop(channel + i, None)  # si l'écriture échoue, on réessaiera
             data[4 * i + 2] = o & 0xFF
             data[4 * i + 3] = o >> 8
         self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, data)
-        for i, o in enumerate(offs):
-            last[channel + i] = o
+        for i in range(len(offs)):
+            last[channel + i] = offs[i]
 
     def off(self, channel):
         # Bit « full off » : le servo n'est plus alimenté en consigne.
@@ -136,8 +142,12 @@ class PCA9685Driver:
         """Servos sur des voies consécutives de la même carte (une patte)."""
         if not self.boards[board]:
             return
-        c, k, lo, hi = self.center_us, self.us_per_deg, self.min_us, self.max_us
-        pulses = [max(lo, min(hi, c + (d - 90.0) * k)) for d in degs]
+        k, lo, hi = self.us_per_deg, self.min_us, self.max_us
+        c = self.center_us - 90.0 * k
+        pulses = []
+        for d in degs:
+            us = c + d * k
+            pulses.append(lo if us < lo else hi if us > hi else us)
         try:
             self.boards[board].set_pulses_us(channel, pulses)
         except OSError:

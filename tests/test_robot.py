@@ -290,3 +290,52 @@ class BodyV6FoldTest(unittest.TestCase):
         self.assertGreater(limit(-53), 40)  # autres pattes : pas de sangle
         self.assertLessEqual(limit(-73), 30)  # batterie
         self.assertEqual(limit(-30, True), limit(-30))  # postures normales inchangées
+
+
+class FastPathTest(unittest.TestCase):
+    """Raccourcis de calcul pour l'ESP32 : mêmes résultats que le calcul complet."""
+
+    def test_leg_ok_follows_trim(self):
+        from hexapod.robot import leg_ok, leg_margin
+        h = Hexapod(default_config())
+        leg = h.config.legs[0]
+        a = h.solve()[leg.name]
+        self.assertTrue(leg_ok(leg, a))
+        before = leg_margin(leg, a)
+        # Calibration changée : les bornes gardées sont recalculées.
+        leg.femur.trim_deg = 300.0  # servo bien au-delà de sa butée
+        self.assertFalse(leg_ok(leg, a))
+        self.assertLess(leg_margin(leg, a), before)
+        leg.femur.trim_deg = 0.0
+        self.assertTrue(leg_ok(leg, a))
+
+    def test_servo_degrees_match(self):
+        from hexapod.robot import write_servos
+        from hexapod.servo import DryRunDriver
+        h = Hexapod(default_config())
+        h.config.legs[2].tibia.trim_deg = 7.0
+        d = DryRunDriver()
+        angles = h.solve()
+        write_servos(d, h.config.legs, angles)
+        for leg in h.config.legs:
+            a = angles[leg.name]
+            for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+                self.assertAlmostEqual(d.angles[(joint.board, joint.channel)], ik_to_servo_deg(v, joint), 9)
+
+    def test_idle_after_walking_skips_feet(self):
+        h = Hexapod(default_config())
+        h.command = GaitCommand(40.0, 0.0, 0.0)
+        for _ in range(100):
+            h.update(0.02)
+        h.command = GaitCommand()
+        for _ in range(200):
+            h.update(0.02)
+        self.assertTrue(h.at_rest)
+        self.assertIsNotNone(h._rest_key)  # pieds immobiles : plus recalculés
+        offsets = dict(h.offsets)
+        h.update(0.02)
+        self.assertEqual(h.offsets, offsets)
+        h.command = GaitCommand(40.0, 0.0, 0.0)
+        for _ in range(20):
+            h.update(0.02)
+        self.assertNotEqual(h.offsets, offsets)  # il repart
