@@ -112,6 +112,10 @@ events.onmessage = (e) => {
     gotMetrics(rest.split(" ").map(Number));
     return;
   }
+  if (kind === "PROF") {
+    gotProf(rest);
+    return;
+  }
   if (kind === "G") {
     const [a, b, c, foot = -1, dz = 0] = rest.split(" ").map(Number);
     view.setTerrainPlane(a, b / 1e4, c / 1e4, foot, dz / 10);
@@ -267,6 +271,7 @@ function setConnected(connected, name = "") {
     view.setPerson(null);
     view.setAttitude(0, 0, 0, 0);
     view.setStance(null);
+    $("#metrics-prof").checked = false;
     view.setTerrain(null);
     renderNav();
   }
@@ -1207,7 +1212,7 @@ renderDraft();
 // ---------------------------------------------------------- mesures
 
 // Une ligne M par télémétrie (20 par seconde) : on garde 30 s pour les copier.
-const metrics = { rows: [], att: [0, 0, 0, 0], shownAt: 0 };
+const metrics = { rows: [], att: [0, 0, 0, 0], shownAt: 0, prof: [] };
 const METRICS_KEEP = 30000; // ms
 
 function gotMetrics([speed, wanted, margin, pose, lift, tickUs]) {
@@ -1231,14 +1236,34 @@ function gotMetrics([speed, wanted, margin, pose, lift, tickUs]) {
   set("#m-tick", (tickUs / 1000).toFixed(1), tickUs > 15000 ? "bad" : tickUs > 8000 ? "warn" : "");
 }
 
+// Lignes PROF (une par seconde, avec « Détail du calcul ») : temps moyen de
+// chaque partie du calcul du robot, ajoutées à la copie.
+function gotProf(rest) {
+  const now = performance.now();
+  metrics.prof.push([now, state.mode, rest]);
+  while (metrics.prof.length && now - metrics.prof[0][0] > METRICS_KEEP) metrics.prof.shift();
+}
+
+$("#metrics-prof").addEventListener("change", (e) => {
+  if (!state.connected) {
+    e.target.checked = false;
+    return toast("Connecte d'abord le robot ou la simulation", "err");
+  }
+  send("PROF " + (e.target.checked ? 1 : 0));
+});
+
 function metricsText() {
   const rows = metrics.rows;
   if (!rows.length) return "";
+  const prof = metrics.prof.length
+    ? ["# Détail du calcul (ms en moyenne par cycle, une ligne par seconde)",
+       ...metrics.prof.map(([, mode, r]) => "# PROF " + mode + " " + r)]
+    : [];
   const head = "# SPY-BOT mesures (" + (state.sim ? "simulation" : "robot") + "), " + new Date().toLocaleString("fr-FR") +
     "\n# t_s mode v_reelle v_demandee marge_servo_deg pose_% levee_% roulis_deg tangage_deg tick_ms";
   // Une ligne M toutes les 50 ms côté robot (elles arrivent parfois groupées).
   const body = rows.map(([, ...r], i) => [(i * 0.05).toFixed(2), ...r].join(" "));
-  return [head, ...body].join("\n");
+  return [head, ...prof, ...body].join("\n");
 }
 
 $("#metrics-copy").addEventListener("click", async (e) => {
