@@ -23,8 +23,22 @@ class BodyPose:
         self.yaw = yaw
 
 
+_last_rotation = (None, None)
+
+
 def rotation_matrix(roll, pitch, yaw):
-    """R = Rz(yaw) · Ry(pitch) · Rx(roll)."""
+    """R = Rz(yaw) · Ry(pitch) · Rx(roll). La dernière est gardée : le plus
+    souvent, la pose du corps ne change pas d'un calcul à l'autre."""
+    global _last_rotation
+    key = (roll, pitch, yaw)
+    if _last_rotation[0] == key:
+        return _last_rotation[1]
+    r = _rotation(roll, pitch, yaw)
+    _last_rotation = (key, r)
+    return r
+
+
+def _rotation(roll, pitch, yaw):
     cr, sr = math.cos(roll), math.sin(roll)
     cp, sp = math.cos(pitch), math.sin(pitch)
     cy, sy = math.cos(yaw), math.sin(yaw)

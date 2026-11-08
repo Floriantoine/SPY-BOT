@@ -660,18 +660,29 @@ AROUND = ("LF", "LM", "LR", "RR", "RM", "RF")  # sens trigo : coxa + = vers la s
 
 
 def write_servos(driver, legs, angles):
-    """Envoie les angles des pattes aux servos : une écriture par patte quand
-    le pilote sait le faire et que ses 3 servos se suivent sur une carte."""
+    """Envoie les angles des pattes aux servos. Quand le pilote sait le
+    faire, les voies qui se suivent sur une même carte partent en une seule
+    écriture I²C (avec le câblage par défaut : une par carte)."""
     batch = getattr(driver, "set_angles", None)
+    boards = {}
     for leg in legs:
         a = angles[leg.name]
-        c, f, t = leg.coxa, leg.femur, leg.tibia
-        degs = (ik_to_servo_deg(a.coxa, c), ik_to_servo_deg(a.femur, f), ik_to_servo_deg(a.tibia, t))
-        if batch and c.board == f.board == t.board and f.channel == c.channel + 1 and t.channel == c.channel + 2:
-            batch(c.board, c.channel, degs)
-        else:
-            for joint, d in zip((c, f, t), degs):
+        for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+            d = ik_to_servo_deg(v, joint)
+            if batch is None:
                 driver.set_angle(joint.board, joint.channel, d)
+            else:
+                boards.setdefault(joint.board, {})[joint.channel] = d
+    for board, channels in boards.items():
+        order = sorted(channels)
+        start = order[0]
+        run = []
+        for ch in order:
+            if run and ch != start + len(run):
+                batch(board, start, run)  # trou dans les voies : nouvelle écriture
+                start, run = ch, []
+            run.append(channels[ch])
+        batch(board, start, run)
 
 
 def leg_margin(leg, a):

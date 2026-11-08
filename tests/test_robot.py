@@ -167,6 +167,22 @@ class BatchWriteTest(unittest.TestCase):
         driver.set_angle(0, 6, 100.0)
         self.assertEqual(len(i2c.writes), 1)  # même cache que voie par voie
 
+    def test_whole_robot_in_two_writes(self):
+        # Câblage par défaut : voies 2 à 10 sur chaque carte, une écriture par carte.
+        from hexapod import default_config
+        from hexapod.robot import Hexapod, write_servos
+
+        class Batch:
+            def __init__(self):
+                self.calls = []
+
+            def set_angles(self, board, channel, degs):
+                self.calls.append((board, channel, len(degs)))
+
+        h = Hexapod(default_config(), Batch())
+        write_servos(h.driver, h.config.legs, h.solve())
+        self.assertEqual(sorted(h.driver.calls), [(0, 2, 9), (1, 2, 9)])
+
 
 class NoSlipTest(unittest.TestCase):
     """Les pieds posés ne glissent jamais : entre deux instants, tous les pieds
