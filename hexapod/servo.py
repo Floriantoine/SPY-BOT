@@ -2,14 +2,6 @@
 
 import math
 
-try:
-    import micropython  # @micropython.native : compilé en code machine sur l'ESP32
-except ImportError:  # CPython (PC, simulation) : décorateur sans effet
-    class micropython:
-        @staticmethod
-        def native(f):
-            return f
-
 from .config import I2C_ADDRESSES
 
 DEG_PER_RAD = 180.0 / math.pi
@@ -148,7 +140,6 @@ class PCA9685Driver:
                 # suivante, 20 ms plus tard, la remplace.
                 self.errors += 1
 
-    @micropython.native
     def set_angles(self, board, channel, degs):
         """Servos sur des voies consécutives de la même carte : une écriture I²C."""
         b = self.boards[board]

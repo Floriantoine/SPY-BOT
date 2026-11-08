@@ -2,14 +2,6 @@
 
 import math
 
-try:
-    import micropython  # @micropython.native : compilé en code machine sur l'ESP32
-except ImportError:  # CPython (PC, simulation) : décorateur sans effet
-    class micropython:
-        @staticmethod
-        def native(f):
-            return f
-
 from .body_ik import BodyPose, _trig, body_to_leg_frame, foot_in_body, leg_to_body_frame, rotation_matrix
 from .config import BATTERY_FOLD, MIDDLE_LEGS, STRAP_FOLD, TIBIA_FOLD_LIMITS
 from .gait import QUAD_ORDER, QUAD_TUCKED, GaitCommand, QuadGait, TripodGait, _diagonal, ground_velocity
@@ -255,7 +247,6 @@ class Hexapod:
                         b.roll + scale * (p.roll - b.roll), b.pitch + scale * (p.pitch - b.pitch),
                         b.yaw + scale * (p.yaw - b.yaw))
 
-    @micropython.native
     def solve(self, pose=None, lift=1.0, check=None):
         """Angles articulaires de chaque patte pour l'état courant (pose
         demandée, ou `pose` ; pieds levés à `lift` × la hauteur de pas).
@@ -597,7 +588,6 @@ class Hexapod:
         self._reach_cache = (key, out)
         return out
 
-    @micropython.native
     def _move_feet(self, dt):
         g = self.gait
         cmd = self._command_in_reach()
@@ -704,7 +694,6 @@ _STRAP_RAD = (math.radians(STRAP_FOLD[0]), math.radians(STRAP_FOLD[1] - FOLD_MAR
 AROUND = ("LF", "LM", "LR", "RR", "RM", "RF")  # sens trigo : coxa + = vers la suivante
 
 
-@micropython.native
 def write_servos(driver, legs, angles):
     """Envoie les angles des pattes aux servos. Quand le pilote sait le
     faire, les voies qui se suivent sur une même carte partent en une seule
@@ -737,7 +726,6 @@ def write_servos(driver, legs, angles):
         batch(board, start, run)
 
 
-@micropython.native
 def leg_margin(leg, a):
     """Plus petit écart (°) entre un servo de la patte et sa butée (ou entre le
     tibia et la coxa) ; négatif s'il est dépassé."""
@@ -767,7 +755,6 @@ def leg_margin(leg, a):
     return fold if fold < worst else worst
 
 
-@micropython.native
 def leg_ok(leg, a):
     """Servos de la patte dans leur course (avec marge), tibia sans toucher
     la coxa, coxa sans toucher la plaque du haut."""
@@ -807,7 +794,6 @@ def _joint(j):
     return c
 
 
-@micropython.native
 def _fold_limit_rad(femur, middle):
     """tibia_fold_limit - FOLD_MARGIN, en radians, pour un fémur en radians."""
     pts = _FOLD_RAD

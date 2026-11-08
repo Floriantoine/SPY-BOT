@@ -15,14 +15,6 @@ hexapode. Compatible MicroPython (ESP32).
 
 import math
 
-try:
-    import micropython  # @micropython.native : compilé en code machine sur l'ESP32
-except ImportError:  # CPython (PC, simulation) : décorateur sans effet
-    class micropython:
-        @staticmethod
-        def native(f):
-            return f
-
 
 class UnreachableError(ValueError):
     """La position demandée est hors de portée de la patte."""
@@ -38,7 +30,6 @@ class LegAngles:
         return "LegAngles(%.4f, %.4f, %.4f)" % (self.coxa, self.femur, self.tibia)
 
 
-@micropython.native
 def leg_ik(x, y, z, coxa_length, femur_length, tibia_length):
     """Retourne les angles articulaires qui placent le pied en (x, y, z)."""
     # Écrit avec peu d'opérations : sur l'ESP32 chaque calcul flottant crée
