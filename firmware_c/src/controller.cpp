@@ -16,11 +16,14 @@ static double py_sqrt_sum_sq(double a, double b) { return sqrt(pow(a, 2.0) + pow
 
 // =============================================================================
 
-Controller::Controller(ServoDriver* driver, CalibStore* store)
+Controller::Controller(ServoDriver* driver, CalibStore* store, Ranger* ranger, Imu* imu_)
     : telemetry_period(TELEMETRY_PERIOD),
       mode(MODE_OFF),
       angles(NULL),
       robot(driver, &pool_),
+      scanner(ranger, driver),
+      imu(imu_),
+      tilted(false),
       driver_(driver),
       store_(store) {
     pool_.hold(&angles);
@@ -44,7 +47,10 @@ Controller::Controller(ServoDriver* driver, CalibStore* store)
     stand_after_wake_ = false;
     test_time_ = 0.0;
     test_leg_ = test_joint_ = 0;
-    stop_dist_ = STOP_DEFAULT;
+    upright_time_ = 0.0;
+    pending_len_ = 0;
+    pending_[0] = 0;
+    out_len_ = 0;
     prof_time_ = 0.0;
     prof_cycles_ = 0;
     memset(&g_prof, 0, sizeof(g_prof));
@@ -93,16 +99,108 @@ const char* Controller::err_float(const char* name, const char* arg) {
 
 // --- boucle -------------------------------------------------------------------
 
+void Controller::pend_line(const char* text) {
+    size_t n = strlen(text);
+    if (pending_len_ + n + 2 > sizeof(pending_)) return;
+    if (pending_len_) pending_[pending_len_++] = '\n';
+    memcpy(pending_ + pending_len_, text, n + 1);
+    pending_len_ += n;
+}
+
+GaitCommand Controller::filter(const GaitCommand& wanted, bool to_pending) {
+    // Consigne envoyée à la démarche : l'avance est coupée si un obstacle
+    // barre le chemin (tourner et reculer restent possibles).
+    bool was = scanner.blocked;
+    bool blocked = scanner.check(odom_, wanted);
+    if (blocked != was) {
+        if (to_pending)
+            pend_line(blocked ? "OBSTACLE 1" : "OBSTACLE 0");
+        else
+            out_line("OBSTACLE %d", (int)blocked);
+    }
+    if (blocked) return gait_command(0.0, 0.0, wanted.yaw_rate);
+    return wanted;
+}
+
+void Controller::auto_sensor() {
+    // Se déplacer seul sans regarder devant soi : le capteur s'allume.
+    if (scanner.present() && !scanner.enabled) {
+        scanner.enable(true);
+        pend_line(sensor_status());
+    }
+}
+
+void Controller::govern(double dt) {
+    // Corps qui bascule vite : la démarche ralentit, puis reprend sa vitesse.
+    Hexapod& r = robot;
+    if (!r.feel_ground) {
+        r.time_scale = 1.0;
+        return;
+    }
+    double fr = r.feel_rate[0], fp = r.feel_rate[1];
+    double rate = sqrt(fr * fr + fp * fp);
+    double goal = pymax(SLOW_MIN, pymin(1.0, 1.0 - (rate - SLOW_RATE) / SLOW_SPAN));
+    if (goal < r.time_scale)
+        r.time_scale = goal;
+    else
+        r.time_scale = pymin(goal, r.time_scale + SLOW_RECOVER * dt);
+}
+
+void Controller::tilt_guard(double dt) {
+    // Arrêt de sécurité : penché de plus de TILT_STOP ; repart sous TILT_OK depuis 1 s.
+    const Attitude& att = imu->attitude;
+    double tilt = pymax(fabs(att.roll), fabs(att.pitch));
+    if (tilt > TILT_STOP) {
+        upright_time_ = 0.0;
+        if (!tilted) {
+            tilted = true;
+            out_line("TILT 1");
+        }
+    } else if (tilted) {
+        upright_time_ = tilt < TILT_OK ? upright_time_ + dt : 0.0;
+        if (upright_time_ >= 1.0) {
+            tilted = false;
+            out_line("TILT 0");
+        }
+    }
+}
+
 const char* Controller::tick(double dt) {
     unsigned long t0 = platform_micros();
     out_len_ = 0;
     out_[0] = 0;
+    if (pending_len_) {  // lignes en attente (réponses différées des commandes)
+        out_line("%s", pending_);
+        pending_len_ = 0;
+        pending_[0] = 0;
+    }
     Hexapod& r = robot;
-    if (mode != MODE_STAND) wanted_ = gait_command();
+    char st[96];
+    if (mode != MODE_STAND) {
+        wanted_ = gait_command();
+        if (nav.active()) {
+            nav.stop();
+            nav.status(st, sizeof(st));
+            out_line("%s", st);
+        }
+    }
     if (mode == MODE_STAND) {
         since_move_ += dt;
-        if (since_move_ > WATCHDOG) wanted_ = gait_command();
-        r.command = wanted_;  // pas de capteur avant : rien ne bloque
+        if (nav.active()) {
+            // Le robot se pilote seul : pas besoin de MOVE.
+            since_move_ = 0.0;
+            NavEvent event;
+            wanted_ = nav.command(odom_, &scanner, dt, &event);
+            if (event != NAV_NONE) {
+                out_line("NAV %s", event == NAV_ARRIVED ? "arrived" : "stuck");
+                nav.status(st, sizeof(st));
+                out_line("%s", st);
+            }
+        } else if (since_move_ > WATCHDOG) {
+            wanted_ = gait_command();
+        }
+        r.command = filter(wanted_, false);
+        if (tilted) r.command = gait_command();  // arrêt de sécurité : trop penché
     } else if (mode == MODE_STANDING) {
         height_ = pymin(0.0, height_ + sit_drop_ / RISE_TIME * dt);
         if (height_ == 0.0) mode = MODE_STAND;
@@ -153,6 +251,29 @@ const char* Controller::tick(double dt) {
         }
     }
 
+    if (imu != NULL) {
+        unsigned long tg = g_prof.on ? platform_micros() : 0;
+        imu->update(dt);
+        if (g_prof.on) g_prof.add(PROF_GYRO, tg);
+        const Attitude& att = imu->attitude;
+        if (mode == MODE_STAND && att.ready) {
+            const BodyPose& u = user_pose_;
+            leveler.update(dt, att.roll, att.pitch, u.roll, u.pitch);
+            r.feel(dt, att.rate[0], att.rate[1]);
+            govern(dt);
+            tilt_guard(dt);
+        } else {
+            leveler.relax(dt);
+            r.time_scale = 1.0;
+        }
+    }
+    if (mode != MODE_OFF) {  // servos relâchés : le balayage attend
+        unsigned long ts = g_prof.on ? platform_micros() : 0;
+        char line[64];
+        if (scanner.tick(dt, odom_, wanted_, line, sizeof(line))) out_line("%s", line);
+        if (g_prof.on) g_prof.add(PROF_CAPTEUR, ts);
+    }
+
     since_telemetry_ += dt;
     if (since_telemetry_ >= telemetry_period) {
         unsigned long tt = g_prof.on ? platform_micros() : 0;
@@ -160,13 +281,18 @@ const char* Controller::tick(double dt) {
         measures(since_telemetry_);
         if (g_prof.on) g_prof.add(PROF_TELEM, tt);
         since_telemetry_ = 0.0;
-        // body_odom() : à 6 pattes, le corps ne se décale pas (shift = 0).
+        // body_odom() : l'odométrie suit le centre de la démarche ; à 4 pattes le corps s'en écarte.
         double x = odom_[0], y = odom_[1], th = odom_[2];
-        double sx = r.tripod.shift_x, sy = r.tripod.shift_y;
+        double sx = r.gait->shift_x, sy = r.gait->shift_y;
         double c = cos(th), s = sin(th);
         double bx = x + c * sx - s * sy, by = y + s * sx + c * sy;
         out_line("P %lld %lld %lld", pyround(bx), pyround(by), pyround(th * 1000));
-        // Assiette du corps par rapport aux pieds ; pas de pente mesurée (0 0).
+        if (imu != NULL && imu->attitude.ready) {
+            const Attitude& at = imu->attitude;
+            out_line("I %lld %lld %lld %lld", pyround(at.roll * 1800 / PY_PI), pyround(at.pitch * 1800 / PY_PI),
+                     pyround(leveler.roll * 1800 / PY_PI), pyround(leveler.pitch * 1800 / PY_PI));
+        }
+        // Assiette du corps par rapport aux pieds ; pente du sol : simulation seulement (0 0).
         const BodyPose& b = r.applied;
         out_line("B %lld %lld %lld %lld %d", pyround(b.roll * 1800 / PY_PI), pyround(b.pitch * 1800 / PY_PI),
                  pyround(0.0 * 1800 / PY_PI), pyround(0.0 * 1800 / PY_PI), stance_mask());
@@ -198,7 +324,7 @@ void Controller::measures(double period) {
 
 void Controller::telemetry() {
     if (out_len_ && out_len_ < OUT_SIZE - 1) out_[out_len_++] = '\n';
-    int n = snprintf(out_ + out_len_, OUT_SIZE - out_len_, "T %s %.3f", MODE_NAMES[mode], robot.tripod.phase);
+    int n = snprintf(out_ + out_len_, OUT_SIZE - out_len_, "T %s %.3f", MODE_NAMES[mode], robot.gait->phase);
     out_len_ += n;
     for (int i = 0; i < NLEGS; i++) {
         const LegAngles& a = angles->leg[i];
@@ -234,7 +360,7 @@ bool Controller::prof_line(double dt) {
 int Controller::stance_mask() const {
     int mask = 0;
     for (int i = 0; i < NLEGS; i++)
-        if (robot.offsets[i][2] < 0.5) mask |= 1 << i;
+        if (robot.walking(i) && robot.offsets[i][2] < 0.5) mask |= 1 << i;
     return mask;
 }
 
@@ -292,8 +418,10 @@ void Controller::load_calibration() {
 
 void Controller::apply_pose() {
     const BodyPose& p = user_pose_;
-    double limit = 12 * DEG;  // pose + correction d'assiette (0 sans gyroscope)
-    robot.pose = body_pose(p.x, p.y, height_ + p.z, clampv(p.roll + 0.0, limit), clampv(p.pitch + 0.0, limit), p.yaw);
+    const Leveler& lv = leveler;
+    double limit = 12 * DEG;  // pose + correction d'assiette : reste dans la course des servos
+    robot.pose = body_pose(p.x, p.y, height_ + p.z, clampv(p.roll + lv.roll, limit), clampv(p.pitch + lv.pitch, limit),
+                           p.yaw);
     robot.base_pose = body_pose(0.0, 0.0, height_);
 }
 
@@ -373,11 +501,27 @@ void Controller::wake_tick(double dt) {
 }
 
 const char* Controller::sensor_status() {
-    snprintf(status_, sizeof(status_), "SENSOR present 0 on 0 stop %d", (int)stop_dist_);
+    scanner.status(status_, sizeof(status_));
     return status_;
 }
 
-const char* Controller::imu_status() { return "IMU present 0 level 0 feel 0"; }
+const char* Controller::imu_status() {
+    snprintf(status_, sizeof(status_), "IMU present %d level %d feel %d", (int)(imu != NULL), (int)leveler.enabled,
+             (int)robot.feel_ground);
+    return status_;
+}
+
+const char* Controller::nav_status_reply(const char* name) {
+    char st[96];
+    if (nav.status(st, sizeof(st))) {
+        snprintf(reply_, OUT_SIZE, "%s", st);
+    } else if (strstr(st, "NaN")) {
+        snprintf(reply_, OUT_SIZE, "ERR %s : %s", name, st);  // ValueError
+    } else {
+        snprintf(reply_, OUT_SIZE, "ERR interne : OverflowError('%s')", st);  // pas attrapée par handle()
+    }
+    return reply_;
+}
 
 // =============================================================================
 // Commandes
@@ -555,10 +699,16 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
     }
     if (!strcmp(name, "MOVE")) {
         if (mode != MODE_STAND) return "ERR MOVE : le robot doit être debout";
+        if (nav.active()) {
+            nav.stop();  // on reprend la main
+            char st[96];
+            nav.status(st, sizeof(st));
+            pend_line(st);
+        }
         for (int i = 0; i < 3; i++)
             if (!pyfloat(a[i], &v[i])) return err_float(name, a[i]);
         wanted_ = gait_command(v[0], v[1], v[2] * DEG);
-        r.command = wanted_;
+        r.command = filter(wanted_, true);
         since_move_ = 0.0;
         return NULL;  // envoyé en continu : pas d'accusé de réception
     }
@@ -575,7 +725,9 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         // Pas plus haut que prévu par la config : le tibia toucherait la coxa.
         double top = CFG_STEP_HEIGHT;
         if (!pyfloat(a[1], &v[1])) return err_float(name, a[1]);
-        r.tripod.step_height = pymax(5.0, pymin(top, v[1]));
+        r.tripod.step_height = r.quad.step_height = pymax(5.0, pymin(top, v[1]));
+        // À 4 pattes, chaque patte fait son pas à tour de rôle : cycle deux fois plus long.
+        r.quad.period = 2 * r.tripod.period;
         snprintf(reply_, OUT_SIZE, "OK GAIT %.2f %.0f", r.tripod.period, r.tripod.step_height);
         return reply_;
     }
@@ -586,11 +738,12 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
             pyrepr_str(a[0], rs, sizeof(rs));
             return err(name, "invalid literal for int() with base 10: %s", rs);
         }
-        if (k != 6 && !r.command.is_zero()) return "ERR LEGS : arrêter le robot d'abord";
-        if (k != 4 && k != 6) return "ERR LEGS : 4 ou 6 pattes";
-        if (k == 6) return "OK LEGS 6";
-        if (!(r.command.is_zero() && r.at_rest())) return "ERR LEGS : attendre que les pieds soient posés";
-        return "ERR LEGS : marche à 4 pattes absente de la version C";
+        if (k != r.legs && !r.command.is_zero()) return "ERR LEGS : arrêter le robot d'abord";
+        int res = (k == 4 || k == 6) ? r.set_legs((int)k) : 1;
+        if (res == 1) return "ERR LEGS : 4 ou 6 pattes";
+        if (res == 2) return "ERR LEGS : attendre que les pieds soient posés";
+        snprintf(reply_, OUT_SIZE, "OK LEGS %d", r.legs);
+        return reply_;
     }
     if (!strcmp(name, "CAL")) {
         mode = MODE_CAL;
@@ -670,7 +823,7 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
                  d[11], d[12], d[13], d[14], d[15], d[16], d[17]);
         return reply_;
     }
-    // --- capteur avant, gyroscope, navigation, simulation : absents dans cette version ---
+    // --- capteur avant, navigation ---
     if (!strcmp(name, "SENSOR")) {
         char a0[16];
         if (n) upper_copy(a0, sizeof(a0), a[0]);
@@ -680,28 +833,38 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
                 return reply_;
             }
             if (!pyfloat(a[1], &v[0])) return err_float(name, a[1]);
-            stop_dist_ = pymax(STOP_RANGE_LO, pymin(STOP_RANGE_HI, v[0]));
+            scanner.stop_dist = pymax(STOP_RANGE_LO, pymin(STOP_RANGE_HI, v[0]));
         } else if (n) {
-            if (!strcmp(a[0], "1")) return "ERR SENSOR : capteur avant absent";
+            if (!strcmp(a[0], "1") && !scanner.present()) return "ERR SENSOR : capteur avant absent";
+            scanner.enable(!strcmp(a[0], "1"));
         }
         snprintf(reply_, OUT_SIZE, "%s", sensor_status());
         return reply_;
     }
     if (!strcmp(name, "GOTO")) {
         if (mode != MODE_STAND) return "ERR GOTO : le robot doit être debout";
+        auto_sensor();
         for (int i = 0; i < n; i++)
             if (!pyfloat(a[i], &v[i])) return err_float(name, a[i]);
-        return "ERR GOTO : navigation absente de la version C";
+        nav.go_to(v[0], v[1], n > 2, n > 2 ? v[2] : 0.0);
+        return nav_status_reply(name);
     }
     if (!strcmp(name, "FOLLOW")) {
         if (mode != MODE_STAND) return "ERR FOLLOW : le robot doit être debout";
-        return "ERR FOLLOW : il faut le capteur avant";
+        if (!scanner.present()) return "ERR FOLLOW : il faut le capteur avant";
+        auto_sensor();
+        if (n && !pyfloat(a[0], &v[0])) return err_float(name, a[0]);
+        nav.follow(n > 0, n ? v[0] : 0.0);
+        return nav_status_reply(name);
     }
     if (!strcmp(name, "NAV")) {
         char a0[16];
         if (n) upper_copy(a0, sizeof(a0), a[0]);
-        if (n && !strcmp(a0, "STOP")) wanted_ = gait_command();
-        return "NAV off";
+        if (n && !strcmp(a0, "STOP")) {
+            nav.stop();
+            wanted_ = gait_command();
+        }
+        return nav_status_reply(name);
     }
     if (!strcmp(name, "PERSON")) return "ERR PERSON : seulement en simulation";
     if (!strcmp(name, "IMU")) return imu_status();
@@ -718,11 +881,16 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         return "OK PROF 1";
     }
     if (!strcmp(name, "FEEL")) {
-        if (!strcmp(a[0], "1")) return "ERR FEEL : pas de gyroscope";
+        bool on = !strcmp(a[0], "1");
+        if (on && imu == NULL) return "ERR FEEL : pas de gyroscope";
+        r.feel_ground = on;
+        if (!on) r.time_scale = 1.0;
         return imu_status();
     }
     if (!strcmp(name, "LEVEL")) {
-        if (!strcmp(a[0], "1")) return "ERR LEVEL : pas de gyroscope";
+        bool on = !strcmp(a[0], "1");
+        if (on && imu == NULL) return "ERR LEVEL : pas de gyroscope";
+        leveler.enabled = on;
         return imu_status();
     }
     if (!strcmp(name, "TILT")) return "ERR TILT : seulement en simulation";

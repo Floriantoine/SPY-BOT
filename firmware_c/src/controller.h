@@ -1,9 +1,12 @@
 // Machine d'états du robot et protocole texte avec le PC : portage de
-// hexapod/controller.py, sans gyroscope, capteur avant ni navigation.
+// hexapod/controller.py (vrai robot : pas les commandes de la simulation).
 #pragma once
 #include <stddef.h>
 
+#include "imu.h"
+#include "nav.h"
 #include "robot.h"
+#include "sensor.h"
 
 // Où garder la calibration (NVS sur l'ESP32, mémoire en test).
 class CalibStore {
@@ -29,7 +32,8 @@ private:
 public:
     enum { OUT_SIZE = 4096 };
 
-    Controller(ServoDriver* driver, CalibStore* store);
+    // ranger, imu : capteur avant et gyroscope, NULL s'ils sont absents.
+    Controller(ServoDriver* driver, CalibStore* store, Ranger* ranger = NULL, Imu* imu = NULL);
 
     // À appeler à ~50 Hz. Retourne les lignes à envoyer (séparées par \n), ou NULL.
     const char* tick(double dt);
@@ -40,9 +44,14 @@ public:
     Mode mode;
     AngleSet* angles;
     Hexapod robot;
+    Scanner scanner;
+    Navigator nav;
+    Imu* imu;
+    Leveler leveler;
+    bool tilted;  // corps trop penché : arrêt de sécurité
 
-    const char* sensor_status();  // ligne SENSOR (capteur absent)
-    const char* imu_status();     // ligne IMU (gyroscope absent)
+    const char* sensor_status();  // ligne SENSOR (Scanner.status)
+    const char* imu_status();     // ligne IMU (cmd_imu)
 
 private:
     ServoDriver* driver_;
@@ -64,16 +73,23 @@ private:
     bool stand_after_wake_;
     double test_time_;
     int test_leg_, test_joint_;
-    double stop_dist_;  // SENSOR STOP (capteur absent : seulement retenu)
+    double upright_time_;
     double prof_time_;
     long prof_cycles_;
 
     char out_[OUT_SIZE];
     size_t out_len_;
+    char pending_[1024];  // lignes à envoyer avec la prochaine télémétrie
+    size_t pending_len_;
     char reply_[OUT_SIZE];
     char status_[64];
 
     void out_line(const char* fmt, ...);
+    void pend_line(const char* text);
+    GaitCommand filter(const GaitCommand& wanted, bool to_pending);
+    void auto_sensor();
+    void govern(double dt);
+    void tilt_guard(double dt);
     void telemetry();
     void measures(double period);
     bool prof_line(double dt);
@@ -94,5 +110,6 @@ private:
     const char* cmd_power(const char* on);
     const char* err(const char* name, const char* fmt, ...);
     const char* err_float(const char* name, const char* arg);
+    const char* nav_status_reply(const char* name);
     bool parse_joint(const char* name, const char* leg, const char* joint, JointServo** out, const char** error);
 };

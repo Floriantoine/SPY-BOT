@@ -20,3 +20,5 @@ public:
 unsigned long platform_micros();
 // Mémoire libre (octets), pour PROF ; -1 si inconnue.
 long platform_free_memory();
+// Attente en ms (delay() sur l'ESP32, rien en test) : démarrage du VL53L1X.
+void platform_delay_ms(unsigned ms);
