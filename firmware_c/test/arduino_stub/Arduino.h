@@ -2,7 +2,9 @@
 // d'Arduino-ESP32 2.x (copiées ici : PI, HALF_PI, sq(), degrees()...).
 // Ne sert qu'à test/check_arduino.sh, jamais à la compilation ESP32.
 #pragma once
+#include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -64,6 +66,7 @@ typedef unsigned int word;
 unsigned long millis();
 unsigned long micros();
 void delay(uint32_t);
+void delayMicroseconds(uint32_t);
 bool setCpuFrequencyMhz(uint32_t);
 class HardwareSerial {
 public:
@@ -78,3 +81,8 @@ public:
     size_t write(const uint8_t*, size_t n) { return n; }
 };
 extern HardwareSerial Serial;
+class EspClass {
+public:
+    uint32_t getFreeHeap() { return 0; }
+};
+extern EspClass ESP;

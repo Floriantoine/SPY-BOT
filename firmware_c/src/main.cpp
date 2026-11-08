@@ -4,21 +4,25 @@
 // sur le port série USB (115200 bauds) : l'appli PC (pc/server.py) marche
 // sans changement. Les servos restent relâchés jusqu'à POWER 1.
 //
-// Pas encore portés : gyroscope (IMU, LEVEL, FEEL), capteur avant (SENSOR),
-// navigation (GOTO, FOLLOW), marche à 4 pattes. Le robot répond qu'ils sont absents.
+// Gyroscope MPU6050 (0x68) et capteur avant VL53L1X (0x29) sur le même bus
+// I²C que les PCA9685, s'ils sont branchés (cherchés au démarrage, comme main.py).
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_system.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "controller.h"
 #include "pca9685.h"
+#include "wire_bus.h"
 
 static const unsigned long LOOP_MS = 20;  // 50 Hz
 static const size_t CMD_LINE_MAX = 120;
 
 unsigned long platform_micros() { return micros(); }
 long platform_free_memory() { return (long)ESP.getFreeHeap(); }
+void platform_delay_ms(unsigned ms) { delay(ms); }
 
 // Calibration (trims, sens des servos) dans la mémoire NVS de l'ESP32.
 class NvsStore : public CalibStore {
@@ -62,6 +66,9 @@ public:
 
 static PCA9685Driver driver;
 static NvsStore store;
+static WireBus bus;
+static Vl53l1x ranger_dev(&bus);
+static Mpu6050 imu_dev(&bus);
 static Controller* ctrl = NULL;
 static char line_buf[CMD_LINE_MAX + 1];
 static size_t line_len = 0;
@@ -114,7 +121,12 @@ void setup() {
     // Servos relâchés jusqu'à POWER 1 (aussi après un redémarrage sur erreur).
     driver.relax();
     esp_register_shutdown_handler(relax_on_shutdown);
-    static Controller controller(&driver, &store);
+    // Capteur avant (VL53L1X) sur le même bus I²C, s'il est branché.
+    Ranger* ranger = ranger_dev.probe() ? &ranger_dev : NULL;
+    // Gyroscope MPU6050 (0x68), même bus. Robot immobile au démarrage : biais
+    // mesuré pendant la première seconde.
+    Imu* imu = imu_dev.probe() ? &imu_dev : NULL;
+    static Controller controller(&driver, &store, ranger, imu);
     ctrl = &controller;
     Serial.println("HELLO SPY-BOT");
     Serial.print("OK BOOT ");
