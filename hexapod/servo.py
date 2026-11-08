@@ -2,6 +2,14 @@
 
 import math
 
+try:
+    import micropython  # @micropython.native : compilé en code machine sur l'ESP32
+except ImportError:  # CPython (PC, simulation) : décorateur sans effet
+    class micropython:
+        @staticmethod
+        def native(f):
+            return f
+
 from .config import I2C_ADDRESSES
 
 DEG_PER_RAD = 180.0 / math.pi
@@ -35,6 +43,7 @@ class PCA9685:
         self.address = address
         self.freq = freq
         self._last = {}  # dernière valeur écrite par voie
+        self._blocks = {}  # dernières écritures groupées (voie de départ -> octets)
         self._write(self.MODE1, 0x00)
         self.set_freq(freq)
 
@@ -61,6 +70,7 @@ class PCA9685:
         if self._last.get(channel) == off:
             return  # inchangé : moins de trafic I²C, moins de risque de parasite
         self._last.pop(channel, None)  # si l'écriture échoue, on réessaiera
+        self._blocks.clear()  # une voie change : les écritures groupées sont à refaire
         data = bytes([0, 0, off & 0xFF, off >> 8])
         self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, data)
         self._last[channel] = off
@@ -69,28 +79,28 @@ class PCA9685:
         """Plusieurs voies consécutives en une seule écriture I²C (registres
         en auto-incrément) : bien plus rapide que voie par voie sur l'ESP32."""
         k = self.freq * 4096 / 1000000
-        offs = [int(us * k) for us in pulses]
-        last = self._last
-        same = True
-        for i in range(len(offs)):  # sans enumerate ni all() : rapide sur l'ESP32
-            if last.get(channel + i) != offs[i]:
-                same = False
-                break
-        if same:
-            return  # inchangé
-        data = bytearray(4 * len(offs))
-        for i in range(len(offs)):
-            o = offs[i]
-            last.pop(channel + i, None)  # si l'écriture échoue, on réessaiera
+        data = bytearray(4 * len(pulses))
+        for i in range(len(pulses)):
+            o = int(pulses[i] * k)
             data[4 * i + 2] = o & 0xFF
             data[4 * i + 3] = o >> 8
+        self.write_block(channel, data)
+
+    def write_block(self, channel, data):
+        """Écrit les registres de voies consécutives (4 octets par voie),
+        sauf s'ils sont identiques à la dernière écriture réussie."""
+        if self._blocks.get(channel) == data:
+            return  # inchangé
+        if self._last:
+            self._last.clear()  # écritures voie par voie (calibration) à refaire
+        self._blocks.pop(channel, None)  # si l'écriture échoue, on réessaiera
         self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, data)
-        for i in range(len(offs)):
-            last[channel + i] = offs[i]
+        self._blocks[channel] = data
 
     def off(self, channel):
         # Bit « full off » : le servo n'est plus alimenté en consigne.
         self._last.pop(channel, None)
+        self._blocks.clear()
         self.i2c.writeto_mem(self.address, self.LED0_ON_L + 4 * channel, bytes([0, 0, 0, 0x10]))
 
 
@@ -138,18 +148,27 @@ class PCA9685Driver:
                 # suivante, 20 ms plus tard, la remplace.
                 self.errors += 1
 
+    @micropython.native
     def set_angles(self, board, channel, degs):
-        """Servos sur des voies consécutives de la même carte (une patte)."""
-        if not self.boards[board]:
+        """Servos sur des voies consécutives de la même carte : une écriture I²C."""
+        b = self.boards[board]
+        if not b:
             return
-        k, lo, hi = self.us_per_deg, self.min_us, self.max_us
-        c = self.center_us - 90.0 * k
-        pulses = []
-        for d in degs:
-            us = c + d * k
-            pulses.append(lo if us < lo else hi if us > hi else us)
+        # Angle -> valeur du registre PCA9685 en une multiplication :
+        # off = (center + (deg - 90) × us_per_deg) × freq × 4096 / 10⁶.
+        k = b.freq * 4096 / 1000000
+        lo, hi = self.min_us * k, self.max_us * k
+        a = (self.center_us - 90.0 * self.us_per_deg) * k
+        m = self.us_per_deg * k
+        n = len(degs)
+        data = bytearray(4 * n)
+        for i in range(n):
+            o = a + degs[i] * m
+            o = int(lo if o < lo else hi if o > hi else o)
+            data[4 * i + 2] = o & 0xFF
+            data[4 * i + 3] = o >> 8
         try:
-            self.boards[board].set_pulses_us(channel, pulses)
+            b.write_block(channel, data)
         except OSError:
             self.errors += 1
 

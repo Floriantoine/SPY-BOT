@@ -526,6 +526,9 @@ class Controller:
                  (self.driver, "set_angle", "servos"), (self.driver, "set_angles", "servos"),
                  (self, "telemetry", "telem"),
                  (self, "measures", "telem")]
+        for board in getattr(self.driver, "boards", ()):
+            if board:
+                parts.append((board, "write_block", "i2c"))  # bus seul (compris dans servos)
         if self.imu is not None:
             parts.append((self.imu, "update", "gyro"))
         parts.append((self.scanner, "tick", "capteur"))

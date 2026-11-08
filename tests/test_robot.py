@@ -164,8 +164,13 @@ class BatchWriteTest(unittest.TestCase):
         self.assertEqual(one.boards[0].i2c.writes[0][2], data[4:8])
         driver.set_angles(0, 5, (90.0, 100.0, 80.0))
         self.assertEqual(len(i2c.writes), 1)  # inchangé : pas d'écriture
-        driver.set_angle(0, 6, 100.0)
-        self.assertEqual(len(i2c.writes), 1)  # même cache que voie par voie
+        # Une voie changée seule (calibration) : l'écriture groupée suivante
+        # n'est pas sautée à tort.
+        driver.set_angle(0, 6, 120.0)
+        self.assertEqual(len(i2c.writes), 2)
+        driver.set_angles(0, 5, (90.0, 100.0, 80.0))
+        self.assertEqual(len(i2c.writes), 3)
+        self.assertEqual(i2c.writes[2][2], data)
 
     def test_whole_robot_in_two_writes(self):
         # Câblage par défaut : voies 2 à 10 sur chaque carte, une écriture par carte.
