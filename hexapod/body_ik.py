@@ -35,9 +35,11 @@ def rotation_matrix(roll, pitch, yaw):
     )
 
 
-def foot_in_body(foot_world, pose):
-    """Pied exprimé dans le repère du corps déplacé : R^T · (p - t)."""
-    r = rotation_matrix(pose.roll, pose.pitch, pose.yaw)
+def foot_in_body(foot_world, pose, r=None):
+    """Pied exprimé dans le repère du corps déplacé : R^T · (p - t).
+    `r` : rotation_matrix de la pose, si elle est déjà calculée."""
+    if r is None:
+        r = rotation_matrix(pose.roll, pose.pitch, pose.yaw)
     dx = foot_world[0] - pose.x
     dy = foot_world[1] - pose.y
     dz = foot_world[2] - pose.z

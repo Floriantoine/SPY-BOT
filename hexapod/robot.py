@@ -2,7 +2,7 @@
 
 import math
 
-from .body_ik import BodyPose, body_to_leg_frame, foot_in_body, leg_to_body_frame
+from .body_ik import BodyPose, body_to_leg_frame, foot_in_body, leg_to_body_frame, rotation_matrix
 from .config import MIDDLE_LEGS, tibia_fold_limit
 from .gait import QUAD_ORDER, QUAD_TUCKED, GaitCommand, QuadGait, TripodGait, _diagonal, ground_velocity
 from .leg_ik import LegAngles, UnreachableError, leg_fk, leg_ik
@@ -245,8 +245,9 @@ class Hexapod:
         pose = self.pose if pose is None else pose
         targets = self.foot_targets(lift)
         angles = {}
+        r = rotation_matrix(pose.roll, pose.pitch, pose.yaw)  # une fois pour les 6 pattes
         for leg in c.legs:
-            foot = foot_in_body(targets[leg.name], pose)
+            foot = foot_in_body(targets[leg.name], pose, r)
             if leg.name in QUAD_TUCKED and self.tuck > 0.0:
                 t = self.tucked_foot(leg)
                 s = self.tuck * self.tuck * (3 - 2 * self.tuck)

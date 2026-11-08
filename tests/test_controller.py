@@ -307,3 +307,29 @@ class StopTest(unittest.TestCase):
         self.assertGreater(margin, 0)
         self.assertEqual((pose, lift), (100, 100))
         self.assertGreater(tick, 0)
+
+
+class ProfTest(unittest.TestCase):
+    def test_prof_lines(self):
+        from hexapod import default_config
+        from hexapod.controller import Controller
+
+        class Driver:
+            errors = 0
+
+            def set_angle(self, *a):
+                pass
+
+            def relax(self):
+                pass
+
+        import tempfile, os
+        c = Controller(default_config(), Driver(), os.path.join(tempfile.mkdtemp(), "calib.json"))
+        self.assertEqual(c.handle("PROF 1"), "OK PROF 1")
+        c.handle("STAND")
+        out = "\n".join(filter(None, (c.tick(0.02) for _ in range(200))))
+        prof = [l for l in out.split("\n") if l.startswith("PROF")]
+        self.assertTrue(prof)
+        self.assertIn(" ik ", prof[-1])
+        self.assertEqual(c.handle("PROF 0"), "OK PROF 0")
+        self.assertNotIn("timed", repr(c.robot.solve_limited))

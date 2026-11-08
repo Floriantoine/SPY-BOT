@@ -283,6 +283,10 @@ class Controller:
                 if person:
                     lines.append("PERSON %d %d" % (round(person[0]), round(person[1])))
         self._tick_us = max(self._tick_us, ticks_diff(ticks_us(), t0))
+        if getattr(self, "_prof", None) is not None:
+            line = self._prof_line(dt)
+            if line:
+                lines.append(line)
         return "\n".join(lines) if lines else None
 
     def measures(self, period):
@@ -491,6 +495,68 @@ class Controller:
     def cmd_imu(self):
         return "IMU present %d level %d feel %d" % (self.imu is not None, self.leveler.enabled,
                                                     self.robot.feel_ground)
+
+    def cmd_prof(self, on):
+        """PROF 1 : temps moyen (ms) de chaque partie du cycle, une ligne PROF
+        par seconde ; PROF 0 pour arrêter. Sert à trouver ce qui ralentit l'ESP32."""
+        if on != "1":
+            for obj, name in getattr(self, "_prof_wrapped", ()):
+                try:
+                    delattr(obj, name)  # retour à la méthode de la classe
+                except AttributeError:
+                    pass
+            self._prof_wrapped = []
+            self._prof = None
+            return "OK PROF 0"
+        if getattr(self, "_prof", None) is not None:
+            return "OK PROF 1"
+        self._prof = {}
+        self._prof_time = 0.0
+        self._prof_wrapped = []
+        r = self.robot
+        parts = [(self, "tick", "tick"), (r, "update", "update"), (r, "solve_limited", "ik"),
+                 (r, "_move_feet", "pieds"), (r, "_refresh_home", "place"),
+                 (self.driver, "set_angle", "servos"), (self, "telemetry", "telem"),
+                 (self, "measures", "telem")]
+        if self.imu is not None:
+            parts.append((self.imu, "update", "gyro"))
+        parts.append((self.scanner, "tick", "capteur"))
+        for obj, name, label in parts:
+            if hasattr(obj, name):
+                setattr(obj, name, self._timed(getattr(obj, name), label))
+                self._prof_wrapped.append((obj, name))
+        return "OK PROF 1"
+
+    def _timed(self, f, label):
+        prof = self._prof
+
+        def timed(*args):
+            t = ticks_us()
+            out = f(*args)
+            prof[label] = prof.get(label, 0) + ticks_diff(ticks_us(), t)
+            return out
+
+        return timed
+
+    def _prof_line(self, dt):
+        """Ligne PROF (une par seconde) quand la mesure est active."""
+        prof = self._prof
+        self._prof_time += dt
+        prof["n"] = prof.get("n", 0) + 1
+        if self._prof_time < 1.0:
+            return None
+        n = prof.pop("n")
+        line = "PROF cycles %d" % n + "".join(
+            " %s %.1f" % (k, v / 1000.0 / n) for k, v in sorted(prof.items()))
+        try:
+            import gc
+
+            line += " memoire_libre %d" % gc.mem_free()
+        except (ImportError, AttributeError):
+            pass
+        prof.clear()
+        self._prof_time = 0.0
+        return line
 
     def cmd_feel(self, on):
         if on == "1" and self.imu is None:
