@@ -10,6 +10,8 @@ Le programme Python (`main.py`, `hexapod/`) ne change pas : il sert toujours
 
 ## Ce que fait la V2
 
+Tout ce que fait `main.py` sur le vrai robot :
+
 - Calibration : `CAL`, `TEST`, `TRIM`, `INVERT`, `SAVE`, `GETCAL` (gardée dans
   la mémoire NVS de l'ESP32 au lieu de `calib.json`).
 - Pilotage : `POWER`, démarrage en douceur (pattes une à une), `STAND`,
@@ -17,24 +19,50 @@ Le programme Python (`main.py`, `hexapod/`) ne change pas : il sert toujours
   longueur de pas selon la place de chaque patte), `POSE` (réduite
   automatiquement près des butées, ligne `LIMIT pose`), `GAIT`, chien de
   garde de 1 s, `PING`, `GEOM`, `PROF`.
-- Télémétrie `T`, `M`, `P`, `B` 20 fois par seconde (10 en MicroPython).
-- Mêmes calculs que le Python, opération par opération : sur PC, sur un
-  long scénario (marche dans toutes les directions, poses fortes,
-  calibration…), les angles des servos sont identiques au bit près
-  (`test/compare.py`).
+- Marche à 4 pattes : `LEGS 4` / `LEGS 6` (à l'arrêt, pieds posés), pattes
+  du milieu repliées et dépliées en 1 s, une patte en l'air à la fois, corps
+  qui se balance dans le triangle des 3 pieds au sol.
+- Gyroscope MPU6050 (0x68, même bus I²C que les PCA9685), cherché au
+  démarrage : biais mesuré pendant la première seconde (robot immobile),
+  filtre d'assiette, `IMU`, `LEVEL 1|0` (corps gardé horizontal sur une
+  pente), `FEEL 1|0` (sol deviné : un pied qui tape s'arrête, un pied
+  au-dessus d'un trou s'allonge, la marche ralentit si le corps bascule
+  vite), arrêt de sécurité au-delà de 20° (lignes `TILT 1` / `TILT 0`),
+  télémétrie `I`.
+- Capteur avant VL53L1X (0x29, même bus), cherché au démarrage, sur le servo
+  de balayage (carte 0x41, voie 11) : `SENSOR`, `SENSOR 1|0`, `SENSOR STOP
+  mm`, mesures `S`, arrêt devant un obstacle (`OBSTACLE 1|0` : avancer est
+  coupé, tourner et reculer restent possibles).
+- Navigation : `GOTO x y [vitesse]` (en contournant les obstacles vus),
+  `FOLLOW [vitesse]`, `NAV [STOP]`, lignes `NAV arrived|stuck|off|...`,
+  position `P` (odométrie).
+- Au démarrage, mêmes lignes que `main.py` : `HELLO SPY-BOT`, `OK BOOT ...`,
+  `SENSOR present ...`, `IMU present ...`, cartes PCA9685 absentes.
+- Télémétrie `T`, `M`, `P`, `B` (et `I`) 20 fois par seconde (10 en MicroPython).
+- Mêmes calculs que le Python, opération par opération : sur PC, sur de
+  longs scénarios, les angles des servos sont identiques au bit près
+  (`test/compare.py`, voir plus bas).
 
-## Ce qu'elle ne fait pas encore
+## Ce qu'elle ne fait pas (comme MicroPython sur le vrai robot)
 
-- Gyroscope (MPU6050) : `IMU` répond `IMU present 0 level 0 feel 0`,
-  `LEVEL 1` / `FEEL 1` sont refusés.
-- Capteur avant (VL53L1X) : `SENSOR` répond `SENSOR present 0 on 0 stop 80`.
-- Navigation (`GOTO`, `FOLLOW`) et marche à 4 pattes (`LEGS 4`) : refusées
-  avec un message `ERR`.
-- Commandes de la simulation (`TILT`, `TERRAIN`, `OBST`, `PERSON`) : `ERR`
-  comme sur le vrai robot en MicroPython.
+- Commandes de la simulation (`TILT`, `TERRAIN`, `OBST`, `PERSON`) : `ERR
+  ... seulement en simulation`, comme `main.py` sur le robot. Pas de lignes
+  `G` ni `PERSON`, pente du sol à 0 dans `B`.
 
-Différence voulue : au démarrage, les servos sont relâchés (bit « full off »
-des PCA9685) jusqu'à `POWER 1`, même si l'ESP32 a seulement redémarré.
+Pas encore essayé sur le robot : les pilotes du MPU6050 et du VL53L1X (ceux
+du Python non plus). Ils envoient exactement la même suite de registres que
+les pilotes Python (vérifié par `test/compare.py` sur un faux bus I²C), mais
+le vrai comportement des puces (temps de démarrage, mesures invalides,
+orientation de la carte du gyroscope : `IMU_AXES` dans `hexapod/imu.py`, puis
+`gen_config.py`) reste à vérifier sur le robot. À essayer d'abord :
+`IMU` puis `LEVEL 1` robot posé à plat, `SENSOR 1` en regardant les lignes `S`.
+
+Différences voulues :
+
+- Au démarrage, les servos sont relâchés (bit « full off » des PCA9685)
+  jusqu'à `POWER 1`, même si l'ESP32 a seulement redémarré.
+- Le capteur avant garde au plus 96 mesures (il n'en a jamais plus de 81 :
+  une toutes les 0,05 s pendant 4 s).
 
 ## Avant de flasher : sauver la calibration
 
@@ -88,11 +116,25 @@ mpremote connect COM6 fs cp -r hexapod : + fs cp main.py : + fs cp calib.json : 
 ## Pour les développeurs
 
 - `src/robot_config.h` est **généré** depuis le Python (géométrie, câblage,
-  butées, constantes, réponse `GEOM`) : après une modification de
-  `hexapod/*.py`, relancer depuis la racine du dépôt
-  `python3 firmware_c/tools/gen_config.py`.
-- `src/robot.*` (IK, démarche, robot), `src/controller.*` (protocole) et
-  `src/pyfmt.*` (nombres écrits comme Python) se compilent aussi sur PC ;
-  `src/pca9685.*` et `src/main.cpp` sont propres à l'ESP32.
+  butées, constantes de la marche, du gyroscope, du capteur et de la
+  navigation, réponse `GEOM`) : après une modification de `hexapod/*.py`,
+  relancer depuis la racine du dépôt `python3 firmware_c/tools/gen_config.py`.
+- Le cœur se compile aussi sur PC, sans matériel : `src/robot.*` (IK,
+  démarches à 6 et 4 pattes, sol deviné), `src/imu.*` (assiette,
+  auto-équilibrage, pilote MPU6050), `src/sensor.*` (balayage, obstacles,
+  pilote VL53L1X), `src/nav.*` (GOTO, FOLLOW), `src/controller.*`
+  (protocole), `src/pyfmt.*` (nombres écrits comme Python). Le matériel est
+  derrière de petites interfaces : `driver.h` (servos), `i2c_bus.h` (bus du
+  gyroscope et du capteur). `src/pca9685.*`, `src/wire_bus.*` et
+  `src/main.cpp` sont propres à l'ESP32.
 - Test de comparaison avec le Python (il faut g++) :
-  `python3 firmware_c/test/compare.py`.
+  `python3 firmware_c/test/compare.py` (ou seulement certains scénarios :
+  `python3 firmware_c/test/compare.py capteurs "4 pattes"`). Scénarios :
+  sans capteurs ; marche à 4 pattes ; gyroscope et capteur avant (faux
+  MPU6050 et VL53L1X sur un faux bus I²C, nourris par un petit monde simulé :
+  pente, chocs, bruit, obstacles, personne à suivre, mesures pas prêtes,
+  lectures en échec) ; gyroscope seul ; gyroscope qui ne répond pas. À
+  chaque tick : angles, servos (celui du capteur compris), toutes les lignes
+  de texte et tous les échanges I²C doivent être identiques.
+- `sh firmware_c/test/check_arduino.sh` compile tout `src/` avec les macros
+  d'Arduino-ESP32 (noms comme `HALF_PI`, `sq`, `B1`, `LINE_MAX`...).
