@@ -29,7 +29,9 @@ PAN_DIRECTION = 1  # +1 : servo qui monte = capteur qui tourne vers la gauche
 # Impulsions bornées à 800-2000 µs (voir PCA9685Driver) : ±60° au plus.
 PAN_LIMIT = 60.0  # deg
 SCAN_STEP = 5.0  # deg entre deux mesures
-SCAN_PERIOD = 0.05  # s entre deux mesures (si le capteur suit)
+# Le VL53L1X, avec sa configuration par défaut (voir _DEFAULT_CONFIG), donne
+# une mesure toutes les 100 ms : la simulation balaye à la même cadence.
+SCAN_PERIOD = 0.1  # s entre deux mesures (si le capteur suit)
 SCAN_TIMEOUT = 0.25  # s : pas de mesure prête -> on passe à l'angle suivant
 WALK_HALF = 40.0  # deg : en marche, balayage resserré autour de la direction suivie
 MIN_RANGE = 120.0  # mm de la puce : plus près, c'est une patte du robot
@@ -248,6 +250,9 @@ _DEFAULT_CONFIG = bytes([
 ])
 
 
+FIRST_TRIES = 250  # essais, à 2 ms d'attente chacun, pour la première mesure
+
+
 class VL53L1X:
     """Pilote minimal du VL53L1X (mesure continue, non bloquante)."""
 
@@ -266,8 +271,9 @@ class VL53L1X:
                 break
             time.sleep_ms(2)
         self._write(0x002D, _DEFAULT_CONFIG)
-        # Première mesure pour finir l'initialisation (séquence ULD).
-        for _ in range(100):
+        # Première mesure pour finir l'initialisation (séquence ULD) : elle
+        # dure plus de 100 ms sur la vraie puce, on lui laisse au moins 0,5 s.
+        for _ in range(FIRST_TRIES):
             if self._ready():
                 break
             time.sleep_ms(2)

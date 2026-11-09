@@ -61,8 +61,8 @@ Différences voulues :
 
 - Au démarrage, les servos sont relâchés (bit « full off » des PCA9685)
   jusqu'à `POWER 1`, même si l'ESP32 a seulement redémarré.
-- Le capteur avant garde au plus 96 mesures (il n'en a jamais plus de 81 :
-  une toutes les 0,05 s pendant 4 s).
+- Le capteur avant garde au plus 56 mesures (il n'en a jamais plus de 41 :
+  une toutes les 0,1 s pendant 4 s).
 
 ## Avant de flasher : sauver la calibration
 

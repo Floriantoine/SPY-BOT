@@ -125,7 +125,7 @@ static const double PAN_AXIS_X = 8.0;
 static const double CHIP_OFFSET = 8.0;
 static const double PAN_LIMIT = 60.0;
 static const double SCAN_STEP = 5.0;
-static const double SCAN_PERIOD = 0.05;
+static const double SCAN_PERIOD = 0.1;
 static const double SCAN_TIMEOUT = 0.25;
 static const double WALK_HALF = 40.0;
 static const double MIN_RANGE = 120.0;
@@ -134,12 +134,13 @@ static const double POINT_LIFE = 4.0;
 static const double FOOT_RADIUS = 160.0;
 static const double SENSOR_DEG = 0.017453292519943295;
 // Mesures gardées au plus (une toutes les SCAN_PERIOD s pendant POINT_LIFE s), avec de la marge.
-#define SCAN_MAX_POINTS 96
+#define SCAN_MAX_POINTS 56
 static const double PATH_MARGIN = 30.0;  // Scanner.path_blocked(margin=...)
 #define PAN_BOARD 1
 #define PAN_CHANNEL 11
 #define PAN_DIRECTION 1
 #define VL53_ADDRESS 0x29
+#define VL53_FIRST_TRIES 250
 #define VL53_MODEL_ID 0xeacc
 #define VL53_CONFIG_LEN 91
 // Registres 0x2D.. du VL53L1X (sensor._DEFAULT_CONFIG).

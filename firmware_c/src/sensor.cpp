@@ -207,8 +207,9 @@ bool Vl53l1x::probe() {
         platform_delay_ms(2);
     }
     if (!write(0x002D, VL53_DEFAULT_CONFIG, VL53_CONFIG_LEN)) return false;
-    // Première mesure pour finir l'initialisation (séquence ULD).
-    for (int i = 0; i < 100; i++) {
+    // Première mesure pour finir l'initialisation (séquence ULD) : elle dure
+    // plus de 100 ms sur la vraie puce, on lui laisse au moins 0,5 s.
+    for (int i = 0; i < VL53_FIRST_TRIES; i++) {
         bool r;
         if (!ready(&r)) return false;
         if (r) break;

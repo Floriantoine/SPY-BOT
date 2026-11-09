@@ -184,6 +184,7 @@ def main():
     w("#define PAN_CHANNEL %d" % sensor_mod.PAN_SERVO[1])
     w("#define PAN_DIRECTION %d" % sensor_mod.PAN_DIRECTION)
     w("#define VL53_ADDRESS 0x%02x" % sensor_mod.VL53L1X.ADDRESS)
+    w("#define VL53_FIRST_TRIES %d" % sensor_mod.FIRST_TRIES)
     w("#define VL53_MODEL_ID 0x%04x" % sensor_mod.VL53L1X.MODEL_ID)
     cfgb = sensor_mod._DEFAULT_CONFIG
     w("#define VL53_CONFIG_LEN %d" % len(cfgb))
