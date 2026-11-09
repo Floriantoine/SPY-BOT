@@ -11,7 +11,8 @@
 //                     (« A ... »), les angles servo envoyés (« S ... ») et
 //                     les échanges sur le bus I²C (« X ... »)
 //
-// Arguments : [--imu ok|absent|badinit] [--rng ok|absent|badid] [calibration]
+// Arguments : [--imu ok|absent|badinit] [--rng ok|absent|badid]
+// [--imucal axes zéro_roulis zéro_tangage] [calibration]
 // (fichier de 18 trims puis 18 inversions). Au démarrage, avec des appareils :
 // « X ... » (recherche des appareils), puis « H <ligne SENSOR> » et « H <ligne IMU> ».
 #include <stdarg.h>
@@ -43,7 +44,22 @@ public:
     bool have;
     double trims[NJOINTS];
     bool inv[NJOINTS], is_int[NJOINTS];
-    MemStore() : have(false) { memset(is_int, 0, sizeof(is_int)); }
+    bool have_imu;
+    int axes[3][2];
+    double zero[2];
+    MemStore() : have(false), have_imu(false) { memset(is_int, 0, sizeof(is_int)); }
+    bool load_imu(int a[3][2], double z[2]) {
+        if (!have_imu) return false;
+        memcpy(a, axes, sizeof(axes));
+        memcpy(z, zero, sizeof(zero));
+        return true;
+    }
+    bool save_imu(const int a[3][2], const double z[2]) {
+        memcpy(axes, a, sizeof(axes));
+        memcpy(zero, z, sizeof(zero));
+        have_imu = true;
+        return true;
+    }
     bool load(double t[NJOINTS], bool i[NJOINTS], bool n[NJOINTS]) {
         if (!have) return false;
         memcpy(t, trims, sizeof(trims));
@@ -200,6 +216,14 @@ int main(int argc, char** argv) {
             imu_mode = argv[++i];
         else if (!strcmp(argv[i], "--rng") && i + 1 < argc)
             rng_mode = argv[++i];
+        else if (!strcmp(argv[i], "--imucal") && i + 3 < argc) {
+            // Réglages du gyroscope déjà en mémoire : axes (comme IMU AXES), zéro (rad).
+            const char* error;
+            store.have_imu = true;
+            if (!imu_parse_axes(argv[++i], store.axes, &error)) store.axes[0][1] = 7;  // invalide : ignoré
+            store.zero[0] = atof(argv[++i]);
+            store.zero[1] = atof(argv[++i]);
+        }
         else
             calib = argv[i];
     }

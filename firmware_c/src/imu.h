@@ -6,7 +6,9 @@
 
 // Roulis et tangage estimés à partir des mesures brutes (g et rad/s).
 struct Attitude {
-    double roll, pitch;
+    double roll, pitch;            // assiette du corps : mesure brute - écart à plat
+    double raw_roll, raw_pitch;    // assiette de la carte (filtre)
+    double zero_roll, zero_pitch;  // ce que lit la carte quand le corps est à plat (IMU ZERO)
     bool ready;      // biais mesuré, angles initialisés
     double rate[2];  // vitesses de roulis et de tangage (rad/s), biais retiré
     Attitude();
@@ -15,8 +17,10 @@ struct Attitude {
     void restart();
     // Le gyroscope ne répond plus : assiette inconnue jusqu'à la prochaine mesure (biais gardé).
     void lose();
+    void set_zero(double zr, double zp);
 
 private:
+    void publish();
     double bias_[3];
     double lo_[3], hi_[3];  // mesures extrêmes du gyroscope pendant la mesure du biais
     long bias_n_;
@@ -35,9 +39,17 @@ struct Leveler {
 };
 
 // Gyroscope vu par le Controller (MPU6050 sur l'ESP32, ou faux en test).
+// « +y-x+z » -> axes[axe du corps] = {axe de la carte, signe} (imu.parse_axes).
+// Faux, avec le message de Python dans *error, si ce n'est pas une rotation.
+bool imu_parse_axes(const char* spec, int axes[3][2], const char** error);
+bool imu_axes_ok(const int axes[3][2]);
+void imu_format_axes(const int axes[3][2], char out[8]);
+
 class Imu {
 public:
     Attitude attitude;
+    int axes[3][2];  // orientation de la carte (IMU AXES)
+    Imu();
     virtual ~Imu() {}
     virtual void update(double dt) = 0;
 };

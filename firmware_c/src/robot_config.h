@@ -159,6 +159,9 @@ static const double BIAS_TIME = 1.0;
 static const double BIAS_SPREAD = 0.05;
 static const double LEVEL_GAIN = 2.0;
 static const double LEVEL_LIMIT = 0.17453292519943295;
+static const double ZERO_MAX = 0.17453292519943295;
+static const char AXES_HELP[] = "axes : trois axes de la carte parmi x y z, avec leur signe (ex. +y-x+z)";
+static const char AXES_MIRROR[] = "axes : ce n'est pas une rotation (inverser ou échanger un autre axe aussi)";
 #define IMU_FAIL_MAX 5
 static const double ACCEL_OK_LO = 0.8;
 static const double ACCEL_OK_HI = 1.2;

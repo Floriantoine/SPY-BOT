@@ -408,6 +408,15 @@ void Controller::calibration_json(char* buf, size_t size) {
 void Controller::load_calibration() {
     double trims[NJOINTS];
     bool inv[NJOINTS], is_int[NJOINTS];
+    if (store_ && imu != NULL) {
+        // Réglages du gyroscope ; absents d'une ancienne calibration : valeurs de départ.
+        int axes[3][2];
+        double zero[2];
+        if (store_->load_imu(axes, zero) && imu_axes_ok(axes)) {
+            memcpy(imu->axes, axes, sizeof(axes));
+            imu->attitude.set_zero(zero[0], zero[1]);
+        }
+    }
     if (!store_ || !store_->load(trims, inv, is_int)) return;
     for (int i = 0; i < NLEGS; i++)
         for (int j = 0; j < 3; j++) {
@@ -511,9 +520,22 @@ const char* Controller::sensor_status() {
 }
 
 const char* Controller::imu_status() {
-    snprintf(status_, sizeof(status_), "IMU present %d level %d feel %d ready %d", (int)(imu != NULL),
-             (int)leveler.enabled, (int)robot.feel_ground, (int)(imu != NULL && imu->attitude.ready));
+    char ax[8];
+    if (imu != NULL) {
+        imu_format_axes(imu->axes, ax);
+    } else {
+        imu_format_axes(IMU_AXES, ax);
+    }
+    double zr = imu != NULL ? imu->attitude.zero_roll : 0.0, zp = imu != NULL ? imu->attitude.zero_pitch : 0.0;
+    snprintf(status_, sizeof(status_), "IMU present %d level %d feel %d ready %d axes %s zero %lld %lld",
+             (int)(imu != NULL), (int)leveler.enabled, (int)robot.feel_ground,
+             (int)(imu != NULL && imu->attitude.ready), ax, pyround(zr * 1800 / PY_PI), pyround(zp * 1800 / PY_PI));
     return status_;
+}
+
+bool Controller::save_imu() {
+    const double zero[2] = {imu->attitude.zero_roll, imu->attitude.zero_pitch};
+    return store_ != NULL && store_->save_imu(imu->axes, zero);
 }
 
 const char* Controller::nav_status_reply(const char* name) {
@@ -880,10 +902,37 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
             if (imu == NULL) return "ERR IMU : pas de gyroscope";
             char a0[16];
             upper_copy(a0, sizeof(a0), a[0]);
-            if (!strcmp(a0, "CAL"))
-                imu->attitude.restart();  // biais du gyroscope mesuré de nouveau
-            else
-                return err(name, "CAL");
+            Attitude& att = imu->attitude;
+            if (!strcmp(a0, "CAL")) {
+                att.restart();  // biais du gyroscope mesuré de nouveau
+            } else if (!strcmp(a0, "AXES")) {
+                char spec[32];
+                size_t k = 0;
+                spec[0] = 0;
+                for (int i = 1; i < n && k < sizeof(spec); i++) k += snprintf(spec + k, sizeof(spec) - k, "%s", a[i]);
+                if (k >= sizeof(spec)) return err(name, "%s", AXES_HELP);
+                int axes[3][2];
+                if (!imu_parse_axes(spec, axes, &e)) return err(name, "%s", e);
+                memcpy(imu->axes, axes, sizeof(axes));
+                att.restart();  // le biais était mesuré avec les anciens axes
+                if (!save_imu()) return "ERR IMU : écriture impossible dans la mémoire du robot";
+            } else if (!strcmp(a0, "ZERO")) {
+                double zr = 0.0, zp = 0.0;
+                if (n > 1) {
+                    if (strcmp(a[1], "0") != 0) return err(name, "ZERO, ou ZERO 0 pour l'effacer");
+                } else {
+                    if (!att.ready) return err(name, "gyroscope pas prêt (robot immobile 1 s)");
+                    // À plat, le corps a l'assiette que lui donnent les pattes : le reste est l'écart de la carte.
+                    zr = att.raw_roll - r.applied.roll;
+                    zp = att.raw_pitch - r.applied.pitch;
+                    if (pymax(fabs(zr), fabs(zp)) > ZERO_MAX)
+                        return err(name, "penché de plus de 10° : poser le robot à plat (ou corriger IMU AXES)");
+                }
+                att.set_zero(zr, zp);
+                if (!save_imu()) return "ERR IMU : écriture impossible dans la mémoire du robot";
+            } else {
+                return err(name, "CAL, ZERO ou AXES");
+            }
         }
         return imu_status();
     }

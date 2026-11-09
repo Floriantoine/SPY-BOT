@@ -10,7 +10,9 @@ biais du gyroscope est mesuré au démarrage, robot immobile.
 
 Convention : mêmes angles que BodyPose (roll autour de x avant, pitch autour
 de y gauche, en radians). Sur sol plat, une POSE de roulis +5° doit se lire
-+5° ici ; sinon, corriger IMU_AXES (orientation de la carte sur le corps).
++5° ici ; sinon, corriger l'orientation de la carte avec la commande
+`IMU AXES` (gardée dans la mémoire du robot ; IMU_AXES est la valeur de départ).
+`IMU ZERO` retire l'écart qui reste à plat (carte pas tout à fait droite).
 
 Le pilote n'a pas encore été essayé sur le robot.
 """
@@ -21,6 +23,9 @@ import math
 # z haut), (indice de l'axe de la carte, signe). Carte posée à plat, composants
 # vers le haut, flèche X vers l'avant : ((0, 1), (1, 1), (2, 1)).
 IMU_AXES = ((0, 1), (1, 1), (2, 1))
+ZERO_MAX = 10.0 * math.pi / 180  # rad : écart à plat accepté par IMU ZERO
+AXES_HELP = "axes : trois axes de la carte parmi x y z, avec leur signe (ex. +y-x+z)"
+AXES_MIRROR = "axes : ce n'est pas une rotation (inverser ou échanger un autre axe aussi)"
 ADDRESS = 0x68
 ACCEL_TRUST = 0.02  # part de l'accéléromètre à chaque mesure (à 50 Hz : ~1 s)
 ACCEL_OK = (0.8, 1.2)  # g : en dehors (choc, pas), on ne croit pas l'accéléromètre
@@ -33,12 +38,45 @@ LEVEL_GAIN = 2.0  # 1/s : vitesse de la correction d'assiette
 LEVEL_LIMIT = 10.0 * math.pi / 180  # rad : correction maximale
 
 
+def parse_axes(spec):
+    """« +y-x+z » -> ((1, 1), (0, -1), (2, 1)) : pour chaque axe du corps (x
+    avant, y gauche, z haut), l'axe de la carte qui pointe par là et son
+    signe. ValueError si ce n'est pas une rotation de la carte (un seul axe
+    inversé : le gyroscope et l'accéléromètre ne seraient plus d'accord)."""
+    s = spec.lower()
+    axes = []
+    i = 0
+    while i < len(s):
+        sign = 1
+        if s[i] == "+" or s[i] == "-":
+            sign = -1 if s[i] == "-" else 1
+            i += 1
+        if i >= len(s) or s[i] not in ("x", "y", "z"):
+            raise ValueError(AXES_HELP)
+        axes.append(("xyz".index(s[i]), sign))
+        i += 1
+    if len(axes) != 3 or sorted(a[0] for a in axes) != [0, 1, 2]:
+        raise ValueError(AXES_HELP)
+    turn = 1 if (axes[1][0] - axes[0][0]) % 3 == 1 else -1  # x y z dans l'ordre (ou tournés) : +1
+    if turn * axes[0][1] * axes[1][1] * axes[2][1] != 1:
+        raise ValueError(AXES_MIRROR)
+    return tuple(axes)
+
+
+def format_axes(axes):
+    return "".join(("-" if s < 0 else "+") + "xyz"[i] for i, s in axes)
+
+
 class Attitude:
     """Roulis et tangage estimés à partir des mesures brutes (g et rad/s)."""
 
     def __init__(self):
-        self.roll = 0.0
+        self.roll = 0.0  # assiette du corps : mesure brute - écart à plat (zero_*)
         self.pitch = 0.0
+        self.raw_roll = 0.0  # assiette de la carte (filtre)
+        self.raw_pitch = 0.0
+        self.zero_roll = 0.0  # ce que lit la carte quand le corps est à plat (IMU ZERO)
+        self.zero_pitch = 0.0
         self.ready = False  # biais mesuré, angles initialisés
         self.rate = (0.0, 0.0)  # vitesse de roulis et de tangage (rad/s), biais retiré
         self._bias = [0.0, 0.0, 0.0]
@@ -47,6 +85,14 @@ class Attitude:
         self._lost = False  # biais mesuré, mais le gyroscope ne répondait plus
         self._lo = [0.0, 0.0, 0.0]  # plus petite et plus grande mesure du
         self._hi = [0.0, 0.0, 0.0]  # gyroscope depuis le début de la mesure du biais
+
+    def set_zero(self, roll, pitch):
+        self.zero_roll, self.zero_pitch = roll, pitch
+        self._publish()
+
+    def _publish(self):
+        self.roll = self.raw_roll - self.zero_roll
+        self.pitch = self.raw_pitch - self.zero_pitch
 
     def lose(self):
         """Le gyroscope ne répond plus : l'assiette n'est plus connue (le
@@ -68,7 +114,8 @@ class Attitude:
         ax, ay, az = accel
         if self._lost:
             # Le gyroscope répond de nouveau : on repart de l'inclinaison de l'accéléromètre.
-            self.roll, self.pitch = _accel_angles(ax, ay, az)
+            self.raw_roll, self.raw_pitch = _accel_angles(ax, ay, az)
+            self._publish()
             self.rate = (0.0, 0.0)
             self._lost = False
             self.ready = True
@@ -92,27 +139,29 @@ class Attitude:
             self._bias_t += dt
             if self._bias_t >= BIAS_TIME:
                 self._bias = [b / self._bias_n for b in self._bias]
-                self.roll, self.pitch = _accel_angles(ax, ay, az)
+                self.raw_roll, self.raw_pitch = _accel_angles(ax, ay, az)
+                self._publish()
                 self.ready = True
             return
         gx, gy, gz = gyro[0] - self._bias[0], gyro[1] - self._bias[1], gyro[2] - self._bias[2]
         # Vitesses du corps -> dérivées du roulis et du tangage (corps penché
         # qui tourne : une part du lacet passe dans le roulis et le tangage).
-        sr, cr = math.sin(self.roll), math.cos(self.roll)
-        cp = math.cos(self.pitch)
-        tp = math.sin(self.pitch) / cp if abs(cp) > 1e-3 else 0.0
+        sr, cr = math.sin(self.raw_roll), math.cos(self.raw_roll)
+        cp = math.cos(self.raw_pitch)
+        tp = math.sin(self.raw_pitch) / cp if abs(cp) > 1e-3 else 0.0
         droll = gx + (gy * sr + gz * cr) * tp
         dpitch = gy * cr - gz * sr
         self.rate = (droll, dpitch)
-        roll = self.roll + droll * dt
-        pitch = self.pitch + dpitch * dt
+        roll = self.raw_roll + droll * dt
+        pitch = self.raw_pitch + dpitch * dt
         g = math.sqrt(ax * ax + ay * ay + az * az)
         if ACCEL_OK[0] < g < ACCEL_OK[1]:
             ar, ap = _accel_angles(ax, ay, az)
             trust = min(1.0, ACCEL_TRUST * dt / 0.02)  # même constante de temps si un tick déborde
             roll += (ar - roll) * trust
             pitch += (ap - pitch) * trust
-        self.roll, self.pitch = roll, pitch
+        self.raw_roll, self.raw_pitch = roll, pitch
+        self._publish()
 
 
 def _accel_angles(ax, ay, az):
@@ -182,6 +231,7 @@ class MPU6050:
         self.i2c.writeto_mem(address, 0x1B, b"\x08")  # gyroscope ±500 °/s
         self.i2c.writeto_mem(address, 0x1C, b"\x08")  # accéléromètre ±4 g
         self.attitude = Attitude()
+        self.axes = IMU_AXES  # orientation de la carte (IMU AXES)
         self.errors = 0
         self._fails = 0  # lectures ratées de suite
 
@@ -202,8 +252,8 @@ class MPU6050:
             self.errors += 1
             return None
         raw = [_s16(b[i], b[i + 1]) for i in (0, 2, 4, 8, 10, 12)]
-        accel = _to_body([v / self.ACCEL_SCALE for v in raw[:3]])
-        gyro = _to_body([v / self.GYRO_SCALE for v in raw[3:]])
+        accel = _to_body([v / self.ACCEL_SCALE for v in raw[:3]], self.axes)
+        gyro = _to_body([v / self.GYRO_SCALE for v in raw[3:]], self.axes)
         return accel, gyro
 
     def update(self, dt, pose=None, odom=None, feet=None, swing=()):
@@ -235,6 +285,7 @@ class SimIMU:
         self.plane = None  # terrain : plan des pieds posés z = a + b·x + c·y (mm, sol)
         self.air = []  # terrain : hauteur de chaque pied posé au-dessus du terrain
         self._rest = None
+        self.axes = IMU_AXES  # comme le vrai : un mauvais réglage donne une assiette fausse
         self.attitude = Attitude()
         self._prev = None
 
@@ -280,7 +331,7 @@ class SimIMU:
         else:
             gyro = (0.0, 0.0, 0.0)
         self._prev = (roll, pitch, yaw)
-        self.attitude.update(dt, gravity_in_body(roll, pitch), gyro)
+        self.attitude.update(dt, _to_body(gravity_in_body(roll, pitch), self.axes), _to_body(gyro, self.axes))
 
 
 def _s16(hi, lo):
@@ -288,5 +339,5 @@ def _s16(hi, lo):
     return v - 65536 if v & 0x8000 else v
 
 
-def _to_body(v):
-    return [v[i] * s for i, s in IMU_AXES]
+def _to_body(v, axes):
+    return [v[i] * s for i, s in axes]

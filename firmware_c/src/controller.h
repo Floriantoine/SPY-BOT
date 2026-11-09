@@ -16,6 +16,10 @@ public:
     // is_int[...] = trim entier (écrit sans « .0 », comme Python).
     virtual bool load(double trims[NJOINTS], bool inv[NJOINTS], bool is_int[NJOINTS]) = 0;
     virtual bool save(const double trims[NJOINTS], const bool inv[NJOINTS], const bool is_int[NJOINTS]) = 0;
+    // Réglages du gyroscope (IMU AXES, IMU ZERO), gardés à part des trims.
+    // load_imu : faux s'il n'y en a pas (ancienne calibration).
+    virtual bool load_imu(int axes[3][2], double zero[2]) = 0;
+    virtual bool save_imu(const int axes[3][2], const double zero[2]) = 0;
 };
 
 enum Mode { MODE_OFF, MODE_WAKE, MODE_SIT, MODE_STANDING, MODE_STAND, MODE_SITTING, MODE_CAL, MODE_TEST };
@@ -111,5 +115,6 @@ private:
     const char* err(const char* name, const char* fmt, ...);
     const char* err_float(const char* name, const char* arg);
     const char* nav_status_reply(const char* name);
+    bool save_imu();
     bool parse_joint(const char* name, const char* leg, const char* joint, JointServo** out, const char** error);
 };

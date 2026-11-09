@@ -54,7 +54,7 @@ class LevelTest(unittest.TestCase):
         self.assertEqual(c.handle("TILT 6 -4"), "OK TILT 6 -4")
         run(c, 2.0)
         self.assertAlmostEqual(imu.attitude.roll / DEG, 6, delta=1)
-        self.assertEqual(c.handle("LEVEL 1"), "IMU present 1 level 1 feel 0 ready 1")
+        self.assertEqual(c.handle("LEVEL 1"), "IMU present 1 level 1 feel 0 ready 1 axes +x+y+z zero 0 0")
         lines = run(c, 4.0)
         self.assertLess(abs(imu.attitude.roll / DEG), 0.7)
         self.assertLess(abs(imu.attitude.pitch / DEG), 0.7)
@@ -83,11 +83,11 @@ class LevelTest(unittest.TestCase):
     def test_imu_cal_measures_the_bias_again(self):
         c, imu = self.make()
         self.assertTrue(imu.attitude.ready)
-        self.assertEqual(c.handle("IMU CAL"), "IMU present 1 level 0 feel 0 ready 0")
+        self.assertEqual(c.handle("IMU CAL"), "IMU present 1 level 0 feel 0 ready 0 axes +x+y+z zero 0 0")
         lines = run(c, 0.9)
         self.assertFalse(any(l.startswith("I ") for line in lines for l in line.split("\n")))
         run(c, 0.3)
-        self.assertEqual(c.handle("IMU"), "IMU present 1 level 0 feel 0 ready 1")
+        self.assertEqual(c.handle("IMU"), "IMU present 1 level 0 feel 0 ready 1 axes +x+y+z zero 0 0")
         self.assertTrue(c.handle("IMU FOO").startswith("ERR IMU"))
 
     def test_lost_gyro_is_not_trusted_until_it_answers_again(self):
@@ -127,6 +127,97 @@ class LevelTest(unittest.TestCase):
         bus.fail = False
         c.tick(0.02)
         self.assertTrue(imu.attitude.ready)  # tout de suite : le biais est gardé
+
+    def make_saved(self):
+        import tempfile
+
+        path = tempfile.mkdtemp() + "/calib.json"
+        imu = SimIMU()
+        c = Controller(default_config(), DryRunDriver(), path, None, imu)
+        run(c, 1.2)
+        return c, imu, path
+
+    def test_axes_must_be_a_rotation(self):
+        from hexapod.imu import format_axes, parse_axes
+
+        self.assertEqual(parse_axes("+x+y+z"), ((0, 1), (1, 1), (2, 1)))
+        self.assertEqual(parse_axes("y-xZ"), ((1, 1), (0, -1), (2, 1)))
+        self.assertEqual(format_axes(parse_axes("-x-y+z")), "-x-y+z")
+        n = 0
+        for a in "xyz":
+            for b in "xyz":
+                for c in "xyz":
+                    for signs in range(8):
+                        spec = "".join("+-"[signs >> k & 1] + l for k, l in enumerate((a, b, c)))
+                        try:
+                            axes = parse_axes(spec)
+                        except ValueError:
+                            continue
+                        n += 1
+                        # Une rotation : le 3e axe est le produit vectoriel des deux premiers.
+                        v = [[s if i == k else 0 for k in range(3)] for i, s in axes]
+                        cross = [v[0][1] * v[1][2] - v[0][2] * v[1][1], v[0][2] * v[1][0] - v[0][0] * v[1][2],
+                                 v[0][0] * v[1][1] - v[0][1] * v[1][0]]
+                        self.assertEqual(cross, v[2], spec)
+        self.assertEqual(n, 24)  # les 24 façons de visser la carte
+        for bad in ("", "+x+y", "+x+y-z", "y x z", "+x+x+z", "abc", "+x+y+z+x", "x y z -"):
+            self.assertRaises(ValueError, parse_axes, bad)
+
+    def test_imu_axes_changes_the_reading_and_is_kept(self):
+        c, imu, path = self.make_saved()
+        c.handle("TILT 6 0")
+        run(c, 3.0)
+        self.assertAlmostEqual(imu.attitude.roll / DEG, 6, delta=0.5)
+        self.assertTrue(c.handle("IMU AXES +x+y-z").startswith("ERR IMU : axes"))
+        self.assertEqual(c.handle("IMU AXES -x -y +z"), "IMU present 1 level 0 feel 0 ready 0 axes -x-y+z zero 0 0")
+        run(c, 3.0)
+        self.assertAlmostEqual(imu.attitude.roll / DEG, -6, delta=0.5)  # carte tournée d'un demi-tour
+        c.handle("TRIM RF femur 3")
+        c.handle("SAVE")  # les trims enregistrés gardent les réglages du gyroscope
+        imu2 = SimIMU()
+        c2 = Controller(default_config(), DryRunDriver(), path, None, imu2)
+        self.assertEqual(c2.handle("IMU"), "IMU present 1 level 0 feel 0 ready 0 axes -x-y+z zero 0 0")
+        self.assertEqual(c2.robot.config.leg("RF").femur.trim_deg, 3)
+        self.assertNotIn("imu", c2.handle("GETCAL"))  # GETCAL : seulement les servos
+
+    def test_imu_zero_removes_the_flat_offset(self):
+        c, imu, path = self.make_saved()
+        c.handle("TILT 3 -2")  # ici : une carte vissée un peu de travers
+        self.assertTrue(c.handle("IMU CAL").endswith("ready 0 axes +x+y+z zero 0 0"))
+        self.assertTrue(c.handle("IMU ZERO").startswith("ERR IMU : gyroscope pas prêt"))
+        run(c, 3.0)
+        self.assertEqual(c.handle("IMU ZERO"), "IMU present 1 level 0 feel 0 ready 1 axes +x+y+z zero 30 -20")
+        self.assertAlmostEqual(imu.attitude.roll, 0.0, delta=0.01 * DEG)
+        self.assertAlmostEqual(imu.attitude.pitch, 0.0, delta=0.01 * DEG)
+        # Debout avec une pose : le zéro ne compte pas la pose comme un écart.
+        c.handle("STAND")
+        c.handle("POSE 0 0 0 5 0 0")
+        run(c, 5.0)
+        self.assertAlmostEqual(imu.attitude.roll / DEG, 5, delta=0.5)
+        self.assertTrue(c.handle("IMU ZERO").endswith("zero 30 -20"))
+        c2 = Controller(default_config(), DryRunDriver(), path, None, SimIMU())
+        self.assertTrue(c2.handle("IMU").endswith("zero 30 -20"))
+        c.handle("TILT 14 0")
+        run(c, 3.0)
+        self.assertTrue(c.handle("IMU ZERO").startswith("ERR IMU : penché"))
+        self.assertTrue(c.handle("IMU ZERO 0").endswith("zero 0 0"))
+        c3 = Controller(default_config(), DryRunDriver(), path, None, SimIMU())
+        self.assertTrue(c3.handle("IMU").endswith("zero 0 0"))
+
+    def test_old_calibration_without_imu_settings_still_loads(self):
+        import json
+        import tempfile
+
+        path = tempfile.mkdtemp() + "/calib.json"
+        with open(path, "w") as f:
+            f.write(json.dumps({"RF": [1, 2, 3], "invert": {"RF": [0, 1, 0]}}))
+        c = Controller(default_config(), DryRunDriver(), path, None, SimIMU())
+        self.assertEqual(c.handle("IMU"), "IMU present 1 level 0 feel 0 ready 0 axes +x+y+z zero 0 0")
+        self.assertEqual(c.robot.config.leg("RF").femur.trim_deg, 2)
+        with open(path, "w") as f:
+            f.write(json.dumps({"RF": [1, 2, 3], "imu": {"axes": "+x+y-z", "zero": [1]}}))  # abîmés : ignorés
+        c = Controller(default_config(), DryRunDriver(), path, None, SimIMU())
+        self.assertTrue(c.handle("IMU").endswith("axes +x+y+z zero 0 0"))
 
     def test_level_off_releases_smoothly(self):
         c, imu = self.make()
@@ -184,7 +275,7 @@ class LevelTest(unittest.TestCase):
             c, imu = self.make()
             c.handle("TERRAIN 1")
             c.handle("LEVEL 1")
-            self.assertEqual(c.handle("FEEL %d" % feel), "IMU present 1 level 1 feel %d ready 1" % feel)
+            self.assertEqual(c.handle("FEEL %d" % feel), "IMU present 1 level 1 feel %d ready 1 axes +x+y+z zero 0 0" % feel)
             tilt, air = [], []
             for i in range(750):
                 if i % 25 == 0:
@@ -250,7 +341,7 @@ class LevelTest(unittest.TestCase):
 
     def test_absent(self):
         c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
-        self.assertEqual(c.handle("IMU"), "IMU present 0 level 0 feel 0 ready 0")
+        self.assertEqual(c.handle("IMU"), "IMU present 0 level 0 feel 0 ready 0 axes +x+y+z zero 0 0")
         self.assertTrue(c.handle("LEVEL 1").startswith("ERR"))
 
 

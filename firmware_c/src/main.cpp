@@ -62,6 +62,43 @@ public:
         p.end();
         return n == sizeof(b);
     }
+    // Réglages du gyroscope : autre clé, les anciennes calibrations restent lisibles.
+    struct ImuBlob {
+        uint32_t version;
+        int8_t axes[3][2];
+        double zero[2];
+    };
+    bool load_imu(int axes[3][2], double zero[2]) {
+        Preferences p;
+        if (!p.begin("spybot", true)) return false;
+        ImuBlob b;
+        size_t n = p.getBytesLength("imu") == sizeof(b) ? p.getBytes("imu", &b, sizeof(b)) : 0;
+        p.end();
+        if (n != sizeof(b) || b.version != 1) return false;
+        for (int k = 0; k < 3; k++) {
+            axes[k][0] = b.axes[k][0];
+            axes[k][1] = b.axes[k][1];
+        }
+        zero[0] = b.zero[0];
+        zero[1] = b.zero[1];
+        return true;
+    }
+    bool save_imu(const int axes[3][2], const double zero[2]) {
+        ImuBlob b;
+        memset(&b, 0, sizeof(b));
+        b.version = 1;
+        for (int k = 0; k < 3; k++) {
+            b.axes[k][0] = (int8_t)axes[k][0];
+            b.axes[k][1] = (int8_t)axes[k][1];
+        }
+        b.zero[0] = zero[0];
+        b.zero[1] = zero[1];
+        Preferences p;
+        if (!p.begin("spybot", false)) return false;
+        size_t n = p.putBytes("imu", &b, sizeof(b));
+        p.end();
+        return n == sizeof(b);
+    }
 };
 
 static PCA9685Driver driver;

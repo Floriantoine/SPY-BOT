@@ -38,8 +38,16 @@ Commandes (une par ligne, PC -> robot) :
     NAV [STOP]                    -> NAV off|follow|goto x y ; STOP reprend la main
                                   (un MOVE aussi)
     PERSON x y                    (simulation) la personne virtuelle marche jusque-là
-    IMU                           -> IMU present 0|1 level 0|1 feel 0|1 ready 0|1 :
-                                  gyroscope MPU6050 (ready : biais mesuré, assiette connue)
+    IMU                           -> IMU present 0|1 level 0|1 feel 0|1 ready 0|1
+                                  axes +x+y+z zero <roulis> <tangage> : gyroscope
+                                  MPU6050 (ready : biais mesuré, assiette connue ;
+                                  zero en 0,1°)
+    IMU AXES +y-x+z               orientation de la carte du gyroscope : pour l'avant,
+                                  la gauche et le haut du robot, l'axe de la carte
+                                  (x, y, z) qui pointe par là et son signe ; refusé
+                                  si ce n'est pas une rotation ; gardé en mémoire
+    IMU ZERO                      robot posé à plat : l'assiette lue devient le zéro
+                                  (gardé en mémoire) ; IMU ZERO 0 l'efface
     IMU CAL                       mesure de nouveau le biais du gyroscope (1 s, robot
                                   immobile ; recommence tant qu'on le bouge)
     LEVEL 1|0                     auto-équilibrage : le corps reste horizontal
@@ -47,7 +55,7 @@ Commandes (une par ligne, PC -> robot) :
     FEEL 1|0                      sol deviné au gyroscope : un pied qui tape un
                                   caillou s'arrête, un pied au-dessus d'un trou
                                   s'allonge, la marche ralentit si ça bascule vite
-                                  -> IMU present 0|1 level 0|1 feel 0|1 ready 0|1
+                                  -> IMU present ... (comme IMU)
                                   -> TILT 1|0 (spontané) : corps penché de plus de
                                   20° (arrêt de sécurité) / de nouveau droit
     TILT roll pitch               (simulation) pente du sol en degrés
@@ -107,7 +115,7 @@ except ImportError:  # PC
 
     def ticks_diff(a, b):
         return a - b
-from .imu import Leveler
+from .imu import IMU_AXES, ZERO_MAX, Leveler, format_axes, parse_axes
 from .nav import Navigator
 from .sensor import STOP_RANGE, Scanner
 
@@ -454,8 +462,12 @@ class Controller:
         return "OK INVERT %s %s %d" % (leg_name.upper(), joint_name.lower(), joint.inverted)
 
     def cmd_save(self):
+        data = self.calibration()
+        imu = self._stored().get("imu")
+        if imu:
+            data["imu"] = imu  # réglages du gyroscope (IMU AXES, IMU ZERO) : gardés
         with open(self.calib_path, "w") as f:
-            f.write(json.dumps(self.calibration()))
+            f.write(json.dumps(data))
         return "OK SAVE"
 
     def cmd_getcal(self):
@@ -515,13 +527,50 @@ class Controller:
             if self.imu is None:
                 return "ERR IMU : pas de gyroscope"
             what = args[0].upper()
+            att = self.imu.attitude
             if what == "CAL":
-                self.imu.attitude.restart()  # biais du gyroscope mesuré de nouveau
+                att.restart()  # biais du gyroscope mesuré de nouveau
+            elif what == "AXES":
+                self.imu.axes = parse_axes("".join(args[1:]))
+                att.restart()  # le biais était mesuré avec les anciens axes
+                if not self._save_imu():
+                    return "ERR IMU : écriture impossible dans la mémoire du robot"
+            elif what == "ZERO":
+                if len(args) > 1:
+                    if args[1] != "0":
+                        raise ValueError("ZERO, ou ZERO 0 pour l'effacer")
+                    zr = zp = 0.0
+                else:
+                    if not att.ready:
+                        raise ValueError("gyroscope pas prêt (robot immobile 1 s)")
+                    # À plat, le corps a l'assiette que lui donnent les pattes : le reste est l'écart de la carte.
+                    b = self.robot.applied
+                    zr, zp = att.raw_roll - b.roll, att.raw_pitch - b.pitch
+                    if max(abs(zr), abs(zp)) > ZERO_MAX:
+                        raise ValueError("penché de plus de 10° : poser le robot à plat (ou corriger IMU AXES)")
+                att.set_zero(zr, zp)
+                if not self._save_imu():
+                    return "ERR IMU : écriture impossible dans la mémoire du robot"
             else:
-                raise ValueError("CAL")
-        return "IMU present %d level %d feel %d ready %d" % (
-            self.imu is not None, self.leveler.enabled, self.robot.feel_ground,
-            self.imu is not None and self.imu.attitude.ready)
+                raise ValueError("CAL, ZERO ou AXES")
+        imu = self.imu
+        zr, zp = (imu.attitude.zero_roll, imu.attitude.zero_pitch) if imu is not None else (0.0, 0.0)
+        return "IMU present %d level %d feel %d ready %d axes %s zero %d %d" % (
+            imu is not None, self.leveler.enabled, self.robot.feel_ground,
+            imu is not None and imu.attitude.ready, format_axes(imu.axes if imu is not None else IMU_AXES),
+            round(zr * 1800 / math.pi), round(zp * 1800 / math.pi))
+
+    def _save_imu(self):
+        """Réglages du gyroscope gardés dans le fichier de calibration, sans toucher aux trims enregistrés."""
+        data = self._stored()
+        att = self.imu.attitude
+        data["imu"] = {"axes": format_axes(self.imu.axes), "zero": [att.zero_roll, att.zero_pitch]}
+        try:
+            with open(self.calib_path, "w") as f:
+                f.write(json.dumps(data))
+        except OSError:
+            return False
+        return True
 
     def cmd_prof(self, on):
         """PROF 1 : temps moyen (ms) de chaque partie du cycle, une ligne PROF
@@ -725,7 +774,8 @@ class Controller:
         }
         return data
 
-    def load_calibration(self):
+    def _stored(self):
+        """Contenu du fichier de calibration ({} s'il n'y en a pas)."""
         try:
             # stat avant open : sur MicroPython (port unix), un open() qui
             # échoue peut fermer le descripteur 0 (stdin) au passage du GC.
@@ -733,7 +783,22 @@ class Controller:
             with open(self.calib_path) as f:
                 data = json.loads(f.read())
         except (OSError, ValueError):
-            return
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def load_calibration(self):
+        data = self._stored()
+        imu = data.get("imu")
+        if imu and self.imu is not None:
+            # Réglages du gyroscope ; absents d'une ancienne calibration : valeurs de départ.
+            try:
+                axes = parse_axes(imu["axes"])
+                zr, zp = float(imu["zero"][0]), float(imu["zero"][1])
+            except (KeyError, IndexError, TypeError, ValueError):
+                pass
+            else:
+                self.imu.axes = axes
+                self.imu.attitude.set_zero(zr, zp)
         for leg in self.robot.config.legs:
             trims = data.get(leg.name)
             if trims and len(trims) == 3:

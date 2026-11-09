@@ -23,7 +23,8 @@ Scénarios :
   - gyroscope seul, puis gyroscope en panne : appareils absents ou qui
     ne répondent pas comme prévu au démarrage ;
   - gyroscope : réglages : robot bougé pendant la mesure du biais, IMU CAL,
-    gyroscope qui ne répond plus puis revient.
+    gyroscope qui ne répond plus puis revient, IMU AXES, IMU ZERO ; puis
+    réglages relus au démarrage (valides ou non).
 """
 
 import json
@@ -507,7 +508,7 @@ def scenario_imu_only():
 def scenario_imu_broken():
     """Gyroscope qui refuse sa configuration : absent pour le robot."""
     sc = Script()
-    for line in ("IMU", "LEVEL 1", "FEEL 1", "SENSOR", "LEVEL 0", "IMU CAL", "IMU FOO"):
+    for line in ("IMU", "LEVEL 1", "FEEL 1", "SENSOR", "LEVEL 0", "IMU CAL", "IMU FOO", "IMU AXES +y-x+z", "IMU ZERO"):
         sc.cmd(line)
     sc.cmd("STAND")
     sc.ticks(250)
@@ -517,7 +518,7 @@ def scenario_imu_broken():
 
 def scenario_imu_setup():
     """Réglages et pannes du gyroscope : robot bougé pendant la mesure du
-    biais, IMU CAL, lectures en échec puis retour."""
+    biais, IMU CAL, lectures en échec puis retour, IMU AXES, IMU ZERO."""
     sc = Script()
     cmd, ticks, walk, world = sc.cmd, sc.ticks, sc.walk, sc.world
 
@@ -527,6 +528,21 @@ def scenario_imu_setup():
                 setattr(w, k, v)
         return fn
 
+    # Orientation de la carte : demandes refusées, puis une vraie (le biais est remesuré).
+    for line in ("IMU AXES", "IMU AXES +x", "IMU AXES +x+y-z", "IMU AXES x y q", "IMU AXES +x +x +z",
+                 "IMU AXES y x z", "IMU AXES +x+y+z+x", "IMU AXES +-x+y+z", "IMU AXES x y z -",
+                 "IMU AXES +yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "IMU ZERO", "IMU ZERO 1", "IMU ZERO 0"):
+        cmd(line)
+    ticks(30)
+    cmd("IMU AXES +y -x +z")
+    ticks(70)
+    cmd("IMU")
+    cmd("imu axes -X-Y+Z")
+    ticks(70)
+    cmd("IMU AXES z x y")
+    ticks(70)
+    cmd("IMU ZERO")  # carte « debout » : bien plus de 10°
+    cmd("IMU AXES +x+y+z")
     # On bouge le robot pendant la première seconde : la mesure du biais recommence.
     ticks(30)
     world(setw(spike=(0.4, -0.2, 0.1), spike_ticks=4))
@@ -567,6 +583,25 @@ def scenario_imu_setup():
     walk("MOVE 60 0 0", 1)
     world(setw(imu_fail_p=0.0, slope=(0.0, 0.0)))
     walk("MOVE 0 0 0", 2)
+    # Zéro : robot posé sur un sol (ici un peu penché), puis debout avec une pose.
+    cmd("SIT")
+    world(setw(slope=(3 * math.pi / 180, -2 * math.pi / 180)))
+    ticks(300)
+    cmd("IMU ZERO")
+    ticks(60)
+    cmd("STAND")
+    cmd("LEVEL 1")
+    cmd("POSE 0 0 0 4 -3 0")
+    walk("MOVE 0 0 0", 5)
+    cmd("IMU ZERO")
+    walk("MOVE 50 0 0", 2)
+    world(setw(slope=(14 * math.pi / 180, 0.0)))
+    walk("MOVE 0 0 0", 3)
+    cmd("IMU ZERO")  # refusé : trop penché
+    world(setw(slope=(0.0, 0.0)))
+    cmd("IMU ZERO 0")
+    cmd("SAVE")  # les trims enregistrés ne touchent pas aux réglages du gyroscope
+    walk("MOVE 0 0 0", 2)
     cmd("IMU CAL")  # perdu pendant la mesure du biais : elle continue au retour
     ticks(10)
     world(setw(imu_fail_p=1.0))
@@ -577,6 +612,22 @@ def scenario_imu_setup():
     return sc.steps
 
 
+def scenario_imu_saved():
+    """Réglages du gyroscope gardés en mémoire, relus au démarrage."""
+    sc = Script()
+    sc.cmd("IMU")
+    sc.ticks(70)
+    sc.cmd("STAND")
+    sc.ticks(250)
+    sc.cmd("LEVEL 1")
+    sc.walk("MOVE 40 0 0", 2)
+    sc.cmd("IMU ZERO 0")
+    sc.cmd("IMU AXES +x+y+z")
+    sc.walk("MOVE 40 0 0", 2)
+    sc.cmd("IMU")
+    return sc.steps
+
+
 SCENARIOS = (
     ("base", scenario_base, {}),
     ("4 pattes", scenario_quad, {}),
@@ -584,6 +635,8 @@ SCENARIOS = (
     ("gyroscope seul", scenario_imu_only, {"imu": "ok", "rng": "badid"}),
     ("gyroscope en panne", scenario_imu_broken, {"imu": "badinit"}),
     ("gyroscope : réglages", scenario_imu_setup, {"imu": "ok", "rng": "ok"}),
+    ("gyroscope : réglages gardés", scenario_imu_saved, {"imu": "ok", "imucal": ("-x-y+z", 0.03, -0.02)}),
+    ("gyroscope : réglages gardés invalides", scenario_imu_saved, {"imu": "ok", "imucal": ("+x+y-z", 0.5, 0.0)}),
 )
 
 
@@ -788,6 +841,10 @@ def run_python(steps, calib, devices):
     """Joue le scénario en Python. Retourne ses lignes et les étapes à donner
     au C++ (commandes calculées, valeurs des fausses puces avant chaque tick)."""
     path = os.path.join(tempfile.mkdtemp(), "calib.json")
+    devices = dict(devices)
+    imucal = devices.pop("imucal", None)
+    if imucal:  # réglages du gyroscope déjà enregistrés
+        calib = dict(calib, imu={"axes": imucal[0], "zero": [imucal[1], imucal[2]]})
     with open(path, "w") as f:
         f.write(json.dumps(calib))
     driver = DryRunDriver()
@@ -852,7 +909,7 @@ def run_cpp(exe, steps, calib, devices):
     script = "".join("K %r\n" % arg if kind == "K" else "%s %s\n" % (kind, arg) for kind, arg in steps)
     args = [exe, path]
     for name, mode in sorted(devices.items()):
-        args += ["--" + name, mode]
+        args += ["--" + name] + ([mode[0], repr(mode[1]), repr(mode[2])] if name == "imucal" else [mode])
     res = subprocess.run(args, input=script.encode(), stdout=subprocess.PIPE, check=True)
     return res.stdout.decode("utf-8").split("\n")[:-1]
 
