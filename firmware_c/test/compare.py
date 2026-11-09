@@ -21,7 +21,8 @@ Scénarios :
     sol, chocs, bruit, obstacles, personne à suivre, mesures pas prêtes,
     lectures en échec. Les mêmes valeurs brutes sont ensuite données au C++ ;
   - gyroscope seul, puis gyroscope en panne : appareils absents ou qui
-    ne répondent pas comme prévu au démarrage.
+    ne répondent pas comme prévu au démarrage ;
+  - gyroscope : réglages : robot bougé pendant la mesure du biais, IMU CAL.
 """
 
 import json
@@ -505,11 +506,48 @@ def scenario_imu_only():
 def scenario_imu_broken():
     """Gyroscope qui refuse sa configuration : absent pour le robot."""
     sc = Script()
-    for line in ("IMU", "LEVEL 1", "FEEL 1", "SENSOR", "LEVEL 0"):
+    for line in ("IMU", "LEVEL 1", "FEEL 1", "SENSOR", "LEVEL 0", "IMU CAL", "IMU FOO"):
         sc.cmd(line)
     sc.cmd("STAND")
     sc.ticks(250)
     sc.walk("MOVE 100 0 0", 1)
+    return sc.steps
+
+
+def scenario_imu_setup():
+    """Réglages et pannes du gyroscope : robot bougé pendant la mesure du
+    biais, IMU CAL."""
+    sc = Script()
+    cmd, ticks, walk, world = sc.cmd, sc.ticks, sc.walk, sc.world
+
+    def setw(**kw):
+        def fn(w, ctrl):
+            for k, v in kw.items():
+                setattr(w, k, v)
+        return fn
+
+    # On bouge le robot pendant la première seconde : la mesure du biais recommence.
+    ticks(30)
+    world(setw(spike=(0.4, -0.2, 0.1), spike_ticks=4))
+    ticks(40)
+    cmd("IMU")  # pas encore prêt
+    ticks(40)
+    cmd("IMU")
+    for line in ("IMU CAL", "IMU", "IMU cal extra", "IMU FOO", "IMU 1"):
+        cmd(line)
+    ticks(20)
+    world(setw(spike=(0.0, 0.06, 0.0), spike_ticks=1))  # juste au-dessus du seuil
+    ticks(60)
+    cmd("IMU")
+    cmd("STAND")
+    ticks(300)
+    world(setw(slope=(5 * math.pi / 180, 2 * math.pi / 180)))
+    cmd("LEVEL 1")
+    walk("MOVE 60 0 0", 2)
+    cmd("IMU CAL")  # debout, en marche : recommence tant que ça bouge
+    walk("MOVE 60 0 0", 2)
+    walk("MOVE 0 0 0", 3)
+    cmd("IMU")
     return sc.steps
 
 
@@ -519,6 +557,7 @@ SCENARIOS = (
     ("capteurs", scenario_devices, {"imu": "ok", "rng": "ok"}),
     ("gyroscope seul", scenario_imu_only, {"imu": "ok", "rng": "badid"}),
     ("gyroscope en panne", scenario_imu_broken, {"imu": "badinit"}),
+    ("gyroscope : réglages", scenario_imu_setup, {"imu": "ok", "rng": "ok"}),
 )
 
 

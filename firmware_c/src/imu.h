@@ -11,9 +11,12 @@ struct Attitude {
     double rate[2];  // vitesses de roulis et de tangage (rad/s), biais retiré
     Attitude();
     void update(double dt, const double accel[3], const double gyro[3]);
+    // Refait la mesure du biais (IMU CAL) : pas prêt pendant BIAS_TIME, robot immobile.
+    void restart();
 
 private:
     double bias_[3];
+    double lo_[3], hi_[3];  // mesures extrêmes du gyroscope pendant la mesure du biais
     long bias_n_;
     double bias_t_;
 };

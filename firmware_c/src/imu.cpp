@@ -15,12 +15,33 @@ static void accel_angles(double ax, double ay, double az, double* roll, double* 
 Attitude::Attitude() : roll(0.0), pitch(0.0), ready(false), bias_n_(0), bias_t_(0.0) {
     rate[0] = rate[1] = 0.0;
     bias_[0] = bias_[1] = bias_[2] = 0.0;
+    lo_[0] = lo_[1] = lo_[2] = 0.0;
+    hi_[0] = hi_[1] = hi_[2] = 0.0;
+}
+
+void Attitude::restart() {
+    ready = false;
+    rate[0] = rate[1] = 0.0;
+    bias_[0] = bias_[1] = bias_[2] = 0.0;
+    bias_n_ = 0;
+    bias_t_ = 0.0;
 }
 
 void Attitude::update(double dt, const double accel[3], const double gyro[3]) {
     double ax = accel[0], ay = accel[1], az = accel[2];
     if (!ready) {
         // Robot immobile : on moyenne le gyroscope, l'accéléromètre donne l'inclinaison.
+        bool moved = false;
+        for (int i = 0; i < 3; i++) {
+            double g = gyro[i];
+            if (bias_n_ == 0 || g < lo_[i]) lo_[i] = g;
+            if (bias_n_ == 0 || g > hi_[i]) hi_[i] = g;
+            if (hi_[i] - lo_[i] > BIAS_SPREAD) moved = true;
+        }
+        if (moved) {
+            restart();  // on a bougé le robot : la mesure recommence
+            return;
+        }
         for (int i = 0; i < 3; i++) bias_[i] = bias_[i] + gyro[i];
         bias_n_ += 1;
         bias_t_ += dt;

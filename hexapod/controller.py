@@ -38,13 +38,16 @@ Commandes (une par ligne, PC -> robot) :
     NAV [STOP]                    -> NAV off|follow|goto x y ; STOP reprend la main
                                   (un MOVE aussi)
     PERSON x y                    (simulation) la personne virtuelle marche jusque-là
-    IMU                           -> IMU present 0|1 level 0|1 feel 0|1 : gyroscope MPU6050
+    IMU                           -> IMU present 0|1 level 0|1 feel 0|1 ready 0|1 :
+                                  gyroscope MPU6050 (ready : biais mesuré, assiette connue)
+    IMU CAL                       mesure de nouveau le biais du gyroscope (1 s, robot
+                                  immobile ; recommence tant qu'on le bouge)
     LEVEL 1|0                     auto-équilibrage : le corps reste horizontal
                                   (à l'assiette de POSE) même sur une pente
     FEEL 1|0                      sol deviné au gyroscope : un pied qui tape un
                                   caillou s'arrête, un pied au-dessus d'un trou
                                   s'allonge, la marche ralentit si ça bascule vite
-                                  -> IMU present 0|1 level 0|1 feel 0|1
+                                  -> IMU present 0|1 level 0|1 feel 0|1 ready 0|1
                                   -> TILT 1|0 (spontané) : corps penché de plus de
                                   20° (arrêt de sécurité) / de nouveau droit
     TILT roll pitch               (simulation) pente du sol en degrés
@@ -503,9 +506,18 @@ class Controller:
             self.scanner.enable(True)
             self._pending.append(self.scanner.status())
 
-    def cmd_imu(self):
-        return "IMU present %d level %d feel %d" % (self.imu is not None, self.leveler.enabled,
-                                                    self.robot.feel_ground)
+    def cmd_imu(self, *args):
+        if args:
+            if self.imu is None:
+                return "ERR IMU : pas de gyroscope"
+            what = args[0].upper()
+            if what == "CAL":
+                self.imu.attitude.restart()  # biais du gyroscope mesuré de nouveau
+            else:
+                raise ValueError("CAL")
+        return "IMU present %d level %d feel %d ready %d" % (
+            self.imu is not None, self.leveler.enabled, self.robot.feel_ground,
+            self.imu is not None and self.imu.attitude.ready)
 
     def cmd_prof(self, on):
         """PROF 1 : temps moyen (ms) de chaque partie du cycle, une ligne PROF

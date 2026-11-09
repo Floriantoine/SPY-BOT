@@ -506,8 +506,8 @@ const char* Controller::sensor_status() {
 }
 
 const char* Controller::imu_status() {
-    snprintf(status_, sizeof(status_), "IMU present %d level %d feel %d", (int)(imu != NULL), (int)leveler.enabled,
-             (int)robot.feel_ground);
+    snprintf(status_, sizeof(status_), "IMU present %d level %d feel %d ready %d", (int)(imu != NULL),
+             (int)leveler.enabled, (int)robot.feel_ground, (int)(imu != NULL && imu->attitude.ready));
     return status_;
 }
 
@@ -554,7 +554,7 @@ static const CmdSpec COMMANDS[] = {
     {"follow", 0, 1, {"speed"}},
     {"nav", 0, -1, {0}},
     {"person", 2, 2, {"x", "y"}},
-    {"imu", 0, 0, {0}},
+    {"imu", 0, -1, {0}},
     {"prof", 1, 1, {"on"}},
     {"feel", 1, 1, {"on"}},
     {"level", 1, 1, {"on"}},
@@ -870,7 +870,18 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         return nav_status_reply(name);
     }
     if (!strcmp(name, "PERSON")) return "ERR PERSON : seulement en simulation";
-    if (!strcmp(name, "IMU")) return imu_status();
+    if (!strcmp(name, "IMU")) {
+        if (n) {
+            if (imu == NULL) return "ERR IMU : pas de gyroscope";
+            char a0[16];
+            upper_copy(a0, sizeof(a0), a[0]);
+            if (!strcmp(a0, "CAL"))
+                imu->attitude.restart();  // biais du gyroscope mesuré de nouveau
+            else
+                return err(name, "CAL");
+        }
+        return imu_status();
+    }
     if (!strcmp(name, "PROF")) {
         if (strcmp(a[0], "1") != 0) {
             g_prof.on = false;

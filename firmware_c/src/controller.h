@@ -82,7 +82,7 @@ private:
     char pending_[1024];  // lignes à envoyer avec la prochaine télémétrie
     size_t pending_len_;
     char reply_[OUT_SIZE];
-    char status_[64];
+    char status_[128];
 
     void out_line(const char* fmt, ...);
     void pend_line(const char* text);

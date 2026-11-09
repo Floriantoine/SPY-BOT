@@ -25,6 +25,9 @@ ADDRESS = 0x68
 ACCEL_TRUST = 0.02  # part de l'accéléromètre à chaque mesure (à 50 Hz : ~1 s)
 ACCEL_OK = (0.8, 1.2)  # g : en dehors (choc, pas), on ne croit pas l'accéléromètre
 BIAS_TIME = 1.0  # s de mesure du biais du gyroscope au démarrage
+# Pendant cette mesure le robot doit être immobile : si le gyroscope varie de
+# plus que ça (~3 °/s), on le bouge, et la mesure recommence.
+BIAS_SPREAD = 0.05  # rad/s
 LEVEL_GAIN = 2.0  # 1/s : vitesse de la correction d'assiette
 LEVEL_LIMIT = 10.0 * math.pi / 180  # rad : correction maximale
 
@@ -40,11 +43,33 @@ class Attitude:
         self._bias = [0.0, 0.0, 0.0]
         self._bias_n = 0
         self._bias_t = 0.0
+        self._lo = [0.0, 0.0, 0.0]  # plus petite et plus grande mesure du
+        self._hi = [0.0, 0.0, 0.0]  # gyroscope depuis le début de la mesure du biais
+
+    def restart(self):
+        """Refait la mesure du biais (IMU CAL) : pas prêt pendant BIAS_TIME, robot immobile."""
+        self.ready = False
+        self.rate = (0.0, 0.0)
+        self._bias = [0.0, 0.0, 0.0]
+        self._bias_n = 0
+        self._bias_t = 0.0
 
     def update(self, dt, accel, gyro):
         ax, ay, az = accel
         if not self.ready:
             # Robot immobile : on moyenne le gyroscope, l'accéléromètre donne l'inclinaison.
+            moved = False
+            for i in range(3):
+                g = gyro[i]
+                if self._bias_n == 0 or g < self._lo[i]:
+                    self._lo[i] = g
+                if self._bias_n == 0 or g > self._hi[i]:
+                    self._hi[i] = g
+                if self._hi[i] - self._lo[i] > BIAS_SPREAD:
+                    moved = True
+            if moved:
+                self.restart()  # on a bougé le robot : la mesure recommence
+                return
             self._bias = [b + g for b, g in zip(self._bias, gyro)]
             self._bias_n += 1
             self._bias_t += dt

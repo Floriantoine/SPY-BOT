@@ -156,6 +156,7 @@ static const unsigned char VL53_DEFAULT_CONFIG[VL53_CONFIG_LEN] = {
 static const int IMU_AXES[3][2] = {{0, 1}, {1, 1}, {2, 1}};
 static const double ACCEL_TRUST = 0.02;
 static const double BIAS_TIME = 1.0;
+static const double BIAS_SPREAD = 0.05;
 static const double LEVEL_GAIN = 2.0;
 static const double LEVEL_LIMIT = 0.17453292519943295;
 static const double ACCEL_OK_LO = 0.8;

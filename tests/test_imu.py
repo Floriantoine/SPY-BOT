@@ -54,7 +54,7 @@ class LevelTest(unittest.TestCase):
         self.assertEqual(c.handle("TILT 6 -4"), "OK TILT 6 -4")
         run(c, 2.0)
         self.assertAlmostEqual(imu.attitude.roll / DEG, 6, delta=1)
-        self.assertEqual(c.handle("LEVEL 1"), "IMU present 1 level 1 feel 0")
+        self.assertEqual(c.handle("LEVEL 1"), "IMU present 1 level 1 feel 0 ready 1")
         lines = run(c, 4.0)
         self.assertLess(abs(imu.attitude.roll / DEG), 0.7)
         self.assertLess(abs(imu.attitude.pitch / DEG), 0.7)
@@ -65,6 +65,30 @@ class LevelTest(unittest.TestCase):
             c.handle("MOVE 60 0 0")
             run(c, 0.1)
         self.assertLess(abs(imu.attitude.roll / DEG), 1)
+
+    def test_bias_waits_until_the_robot_is_still(self):
+        a = Attitude()
+        flat = gravity_in_body(0.0, 0.0)
+        for i in range(40):
+            a.update(0.02, flat, (0.01, 0.0, 0.0))
+        a.update(0.02, flat, (0.2, 0.0, 0.0))  # on bouge le robot
+        for i in range(40):
+            a.update(0.02, flat, (0.01, 0.0, 0.0))
+        self.assertFalse(a.ready)  # la seconde de mesure a recommencé
+        for i in range(15):
+            a.update(0.02, flat, (0.01, 0.0, 0.0))
+        self.assertTrue(a.ready)
+        self.assertAlmostEqual(a._bias[0], 0.01)
+
+    def test_imu_cal_measures_the_bias_again(self):
+        c, imu = self.make()
+        self.assertTrue(imu.attitude.ready)
+        self.assertEqual(c.handle("IMU CAL"), "IMU present 1 level 0 feel 0 ready 0")
+        lines = run(c, 0.9)
+        self.assertFalse(any(l.startswith("I ") for line in lines for l in line.split("\n")))
+        run(c, 0.3)
+        self.assertEqual(c.handle("IMU"), "IMU present 1 level 0 feel 0 ready 1")
+        self.assertTrue(c.handle("IMU FOO").startswith("ERR IMU"))
 
     def test_level_off_releases_smoothly(self):
         c, imu = self.make()
@@ -122,7 +146,7 @@ class LevelTest(unittest.TestCase):
             c, imu = self.make()
             c.handle("TERRAIN 1")
             c.handle("LEVEL 1")
-            self.assertEqual(c.handle("FEEL %d" % feel), "IMU present 1 level 1 feel %d" % feel)
+            self.assertEqual(c.handle("FEEL %d" % feel), "IMU present 1 level 1 feel %d ready 1" % feel)
             tilt, air = [], []
             for i in range(750):
                 if i % 25 == 0:
@@ -188,7 +212,7 @@ class LevelTest(unittest.TestCase):
 
     def test_absent(self):
         c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json")
-        self.assertEqual(c.handle("IMU"), "IMU present 0 level 0 feel 0")
+        self.assertEqual(c.handle("IMU"), "IMU present 0 level 0 feel 0 ready 0")
         self.assertTrue(c.handle("LEVEL 1").startswith("ERR"))
 
 

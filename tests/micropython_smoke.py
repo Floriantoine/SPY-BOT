@@ -79,14 +79,14 @@ ctrl = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-smoke-calib.js
 ctrl.handle("STAND")
 run(4)
 assert ctrl.handle("TILT 5 0") == "OK TILT 5 0"
-assert ctrl.handle("LEVEL 1") == "IMU present 1 level 1 feel 0"
+assert ctrl.handle("LEVEL 1") == "IMU present 1 level 1 feel 0 ready 1"
 run(4)
 assert abs(imu.attitude.roll) < 0.02, imu.attitude.roll
 print("MicroPython IMU OK")
 
 # Terrain accidenté simulé : le robot repose sur ses pieds posés.
 assert ctrl.handle("TERRAIN 1") == "TERRAIN 1"
-assert ctrl.handle("FEEL 1") == "IMU present 1 level 1 feel 1"
+assert ctrl.handle("FEEL 1") == "IMU present 1 level 1 feel 1 ready 1"
 for _ in range(10):
     ctrl.handle("MOVE 100 0 0")
     run(0.5)
