@@ -12,15 +12,23 @@ static void accel_angles(double ax, double ay, double az, double* roll, double* 
     *pitch = atan2(-ax, sqrt(ay * ay + az * az));
 }
 
-Attitude::Attitude() : roll(0.0), pitch(0.0), ready(false), bias_n_(0), bias_t_(0.0) {
+Attitude::Attitude() : roll(0.0), pitch(0.0), ready(false), bias_n_(0), bias_t_(0.0), lost_(false) {
     rate[0] = rate[1] = 0.0;
     bias_[0] = bias_[1] = bias_[2] = 0.0;
     lo_[0] = lo_[1] = lo_[2] = 0.0;
     hi_[0] = hi_[1] = hi_[2] = 0.0;
 }
 
+void Attitude::lose() {
+    if (ready) {
+        ready = false;
+        lost_ = true;
+    }
+}
+
 void Attitude::restart() {
     ready = false;
+    lost_ = false;
     rate[0] = rate[1] = 0.0;
     bias_[0] = bias_[1] = bias_[2] = 0.0;
     bias_n_ = 0;
@@ -29,6 +37,14 @@ void Attitude::restart() {
 
 void Attitude::update(double dt, const double accel[3], const double gyro[3]) {
     double ax = accel[0], ay = accel[1], az = accel[2];
+    if (lost_) {
+        // Le gyroscope répond de nouveau : on repart de l'inclinaison de l'accéléromètre.
+        accel_angles(ax, ay, az, &roll, &pitch);
+        rate[0] = rate[1] = 0.0;
+        lost_ = false;
+        ready = true;
+        return;
+    }
     if (!ready) {
         // Robot immobile : on moyenne le gyroscope, l'accéléromètre donne l'inclinaison.
         bool moved = false;
@@ -133,5 +149,11 @@ bool Mpu6050::read(double accel[3], double gyro[3]) {
 
 void Mpu6050::update(double dt) {
     double a[3], g[3];
-    if (read(a, g)) attitude.update(dt, a, g);
+    if (read(a, g)) {
+        fails_ = 0;
+        attitude.update(dt, a, g);
+    } else {
+        fails_ += 1;
+        if (fails_ == IMU_FAIL_MAX) attitude.lose();
+    }
 }

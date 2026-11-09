@@ -159,6 +159,7 @@ static const double BIAS_TIME = 1.0;
 static const double BIAS_SPREAD = 0.05;
 static const double LEVEL_GAIN = 2.0;
 static const double LEVEL_LIMIT = 0.17453292519943295;
+#define IMU_FAIL_MAX 5
 static const double ACCEL_OK_LO = 0.8;
 static const double ACCEL_OK_HI = 1.2;
 static const double IMU_ACCEL_SCALE = 8192.0;

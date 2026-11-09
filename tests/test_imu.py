@@ -90,6 +90,44 @@ class LevelTest(unittest.TestCase):
         self.assertEqual(c.handle("IMU"), "IMU present 1 level 0 feel 0 ready 1")
         self.assertTrue(c.handle("IMU FOO").startswith("ERR IMU"))
 
+    def test_lost_gyro_is_not_trusted_until_it_answers_again(self):
+        from hexapod.imu import FAIL_MAX, MPU6050
+
+        class Bus:
+            fail = False
+
+            def writeto_mem(self, addr, reg, data):
+                pass
+
+            def readfrom_mem(self, addr, reg, n):
+                if self.fail:
+                    raise OSError("pas de réponse")
+                return bytes([0, 0, 0, 0, 0x20, 0x00] + [0] * 8)  # à plat : 1 g vers le haut
+
+        bus = Bus()
+        imu = MPU6050(bus)
+        c = Controller(default_config(), DryRunDriver(), "/tmp/spy-bot-test-calib.json", None, imu)
+        c.handle("STAND")
+        run(c, 4.0)
+        c.handle("LEVEL 1")
+        self.assertTrue(imu.attitude.ready)
+        c.leveler.roll = 5 * DEG
+        c.tilted = True
+        bus.fail = True
+        for _ in range(FAIL_MAX - 1):
+            c.tick(0.02)
+        self.assertTrue(imu.attitude.ready)  # quelques lectures perdues : rien ne change
+        lines = run(c, 1.0)
+        self.assertFalse(imu.attitude.ready)
+        self.assertEqual(c.leveler.roll, 0.0)  # la correction est partie doucement
+        self.assertFalse(c.tilted)
+        self.assertTrue(any("TILT 0" in l for l in lines))
+        self.assertFalse(any(l.startswith("I ") for line in lines[5:] for l in line.split("\n")))
+        self.assertEqual(imu.errors, FAIL_MAX - 1 + 50)
+        bus.fail = False
+        c.tick(0.02)
+        self.assertTrue(imu.attitude.ready)  # tout de suite : le biais est gardé
+
     def test_level_off_releases_smoothly(self):
         c, imu = self.make()
         c.handle("TILT 6 0")

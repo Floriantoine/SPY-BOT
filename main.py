@@ -85,6 +85,8 @@ def main():
     last = time.ticks_ms()
     reported_errors = 0
     reported_at = last
+    imu_errors = 0
+    imu_at = last
     try:
         while True:
             start = time.ticks_ms()
@@ -104,6 +106,10 @@ def main():
                 reported_errors = driver.errors
                 reported_at = start
                 print("ERR I2C : %d écritures perdues (câbles SDA/SCL, parasites ?)" % reported_errors)
+            if imu and imu.errors != imu_errors and time.ticks_diff(start, imu_at) > 1000:
+                imu_errors = imu.errors
+                imu_at = start
+                print("ERR I2C gyroscope : %d lectures perdues (câbles SDA/SCL, parasites ?)" % imu_errors)
             time.sleep_ms(max(0, LOOP_MS - time.ticks_diff(time.ticks_ms(), start)))
     finally:
         # Quoi qu'il arrive (Ctrl-C, erreur), on relâche les servos.

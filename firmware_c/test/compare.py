@@ -22,7 +22,8 @@ Scénarios :
     lectures en échec. Les mêmes valeurs brutes sont ensuite données au C++ ;
   - gyroscope seul, puis gyroscope en panne : appareils absents ou qui
     ne répondent pas comme prévu au démarrage ;
-  - gyroscope : réglages : robot bougé pendant la mesure du biais, IMU CAL.
+  - gyroscope : réglages : robot bougé pendant la mesure du biais, IMU CAL,
+    gyroscope qui ne répond plus puis revient.
 """
 
 import json
@@ -516,7 +517,7 @@ def scenario_imu_broken():
 
 def scenario_imu_setup():
     """Réglages et pannes du gyroscope : robot bougé pendant la mesure du
-    biais, IMU CAL."""
+    biais, IMU CAL, lectures en échec puis retour."""
     sc = Script()
     cmd, ticks, walk, world = sc.cmd, sc.ticks, sc.walk, sc.world
 
@@ -547,6 +548,31 @@ def scenario_imu_setup():
     cmd("IMU CAL")  # debout, en marche : recommence tant que ça bouge
     walk("MOVE 60 0 0", 2)
     walk("MOVE 0 0 0", 3)
+    cmd("IMU")
+    # Le gyroscope ne répond plus (fil débranché) : assiette inconnue, la
+    # correction s'en va doucement ; puis il revient.
+    world(setw(imu_fail_p=0.6))  # lectures ratées, rarement 5 de suite
+    walk("MOVE 60 0 0", 2)
+    world(setw(imu_fail_p=1.0))
+    walk("MOVE 60 0 0", 1.5)
+    cmd("IMU")
+    world(setw(imu_fail_p=0.01))
+    walk("MOVE 60 0 0", 2)
+    cmd("IMU")
+    # Perdu pendant un arrêt de sécurité : l'arrêt est levé (TILT 0).
+    cmd("LEVEL 0")
+    world(setw(slope=(0.0, 30 * math.pi / 180)))
+    walk("MOVE 60 0 0", 2)
+    world(setw(imu_fail_p=1.0))
+    walk("MOVE 60 0 0", 1)
+    world(setw(imu_fail_p=0.0, slope=(0.0, 0.0)))
+    walk("MOVE 0 0 0", 2)
+    cmd("IMU CAL")  # perdu pendant la mesure du biais : elle continue au retour
+    ticks(10)
+    world(setw(imu_fail_p=1.0))
+    ticks(20)
+    world(setw(imu_fail_p=0.0))
+    ticks(70)
     cmd("IMU")
     return sc.steps
 

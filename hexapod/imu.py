@@ -28,6 +28,7 @@ BIAS_TIME = 1.0  # s de mesure du biais du gyroscope au démarrage
 # Pendant cette mesure le robot doit être immobile : si le gyroscope varie de
 # plus que ça (~3 °/s), on le bouge, et la mesure recommence.
 BIAS_SPREAD = 0.05  # rad/s
+FAIL_MAX = 5  # lectures ratées de suite (0,1 s) : l'assiette n'est plus connue
 LEVEL_GAIN = 2.0  # 1/s : vitesse de la correction d'assiette
 LEVEL_LIMIT = 10.0 * math.pi / 180  # rad : correction maximale
 
@@ -43,12 +44,21 @@ class Attitude:
         self._bias = [0.0, 0.0, 0.0]
         self._bias_n = 0
         self._bias_t = 0.0
+        self._lost = False  # biais mesuré, mais le gyroscope ne répondait plus
         self._lo = [0.0, 0.0, 0.0]  # plus petite et plus grande mesure du
         self._hi = [0.0, 0.0, 0.0]  # gyroscope depuis le début de la mesure du biais
+
+    def lose(self):
+        """Le gyroscope ne répond plus : l'assiette n'est plus connue (le
+        biais reste bon). Elle revient à la prochaine mesure."""
+        if self.ready:
+            self.ready = False
+            self._lost = True
 
     def restart(self):
         """Refait la mesure du biais (IMU CAL) : pas prêt pendant BIAS_TIME, robot immobile."""
         self.ready = False
+        self._lost = False
         self.rate = (0.0, 0.0)
         self._bias = [0.0, 0.0, 0.0]
         self._bias_n = 0
@@ -56,6 +66,13 @@ class Attitude:
 
     def update(self, dt, accel, gyro):
         ax, ay, az = accel
+        if self._lost:
+            # Le gyroscope répond de nouveau : on repart de l'inclinaison de l'accéléromètre.
+            self.roll, self.pitch = _accel_angles(ax, ay, az)
+            self.rate = (0.0, 0.0)
+            self._lost = False
+            self.ready = True
+            return
         if not self.ready:
             # Robot immobile : on moyenne le gyroscope, l'accéléromètre donne l'inclinaison.
             moved = False
@@ -166,6 +183,7 @@ class MPU6050:
         self.i2c.writeto_mem(address, 0x1C, b"\x08")  # accéléromètre ±4 g
         self.attitude = Attitude()
         self.errors = 0
+        self._fails = 0  # lectures ratées de suite
 
     @classmethod
     def probe(cls, i2c):
@@ -192,7 +210,12 @@ class MPU6050:
         """Mêmes arguments que SimIMU.update (ceux de la simulation sont ignorés)."""
         m = self.read()
         if m:
+            self._fails = 0
             self.attitude.update(dt, m[0], m[1])
+        else:
+            self._fails += 1
+            if self._fails == FAIL_MAX:
+                self.attitude.lose()
 
 
 ROCK_TIME = 0.15  # s : le robot bascule sur ses nouveaux pieds posés en ~0,15 s

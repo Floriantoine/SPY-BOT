@@ -13,12 +13,15 @@ struct Attitude {
     void update(double dt, const double accel[3], const double gyro[3]);
     // Refait la mesure du biais (IMU CAL) : pas prêt pendant BIAS_TIME, robot immobile.
     void restart();
+    // Le gyroscope ne répond plus : assiette inconnue jusqu'à la prochaine mesure (biais gardé).
+    void lose();
 
 private:
     double bias_[3];
     double lo_[3], hi_[3];  // mesures extrêmes du gyroscope pendant la mesure du biais
     long bias_n_;
     double bias_t_;
+    bool lost_;  // biais mesuré, mais le gyroscope ne répondait plus
 };
 
 // Auto-équilibrage : correction (rad) ajoutée à la pose du corps.
@@ -41,7 +44,7 @@ public:
 
 class Mpu6050 : public Imu {
 public:
-    explicit Mpu6050(I2CBus* bus) : errors(0), bus_(bus) {}
+    explicit Mpu6050(I2CBus* bus) : errors(0), bus_(bus), fails_(0) {}
     // MPU6050.probe : vrai s'il répond à 0x68 et accepte sa configuration.
     bool probe();
     // Accélérations (g) et vitesses (rad/s) dans le repère corps ; faux si la lecture échoue.
@@ -51,4 +54,5 @@ public:
 
 private:
     I2CBus* bus_;
+    int fails_;  // lectures ratées de suite
 };

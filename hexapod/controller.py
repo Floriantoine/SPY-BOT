@@ -261,6 +261,10 @@ class Controller:
             else:
                 self.leveler.relax(dt)
                 r.time_scale = 1.0
+                if self.tilted and not att.ready:
+                    # Assiette inconnue (gyroscope perdu, biais remesuré) : plus d'arrêt de sécurité.
+                    self.tilted = False
+                    lines.append("TILT 0")
         if hasattr(self.scanner.ranger, "tick"):
             self.scanner.ranger.tick(dt)  # simulation : la personne marche
         if self.mode != OFF:  # servos relâchés : le balayage attend

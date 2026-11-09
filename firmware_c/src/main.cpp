@@ -75,6 +75,9 @@ static size_t line_len = 0;
 static unsigned long last_ms = 0;
 static unsigned long reported_errors = 0;
 static unsigned long reported_at = 0;
+static bool imu_present = false;
+static unsigned long imu_errors = 0;
+static unsigned long imu_at = 0;
 
 // Pourquoi l'ESP32 a (re)démarré (noms de machine.reset_cause() en MicroPython).
 static const char* reset_cause() {
@@ -125,7 +128,8 @@ void setup() {
     Ranger* ranger = ranger_dev.probe() ? &ranger_dev : NULL;
     // Gyroscope MPU6050 (0x68), même bus. Robot immobile au démarrage : biais
     // mesuré pendant la première seconde.
-    Imu* imu = imu_dev.probe() ? &imu_dev : NULL;
+    imu_present = imu_dev.probe();
+    Imu* imu = imu_present ? &imu_dev : NULL;
     static Controller controller(&driver, &store, ranger, imu);
     ctrl = &controller;
     Serial.println("HELLO SPY-BOT");
@@ -140,7 +144,7 @@ void setup() {
             Serial.println(msg);
         }
     }
-    last_ms = reported_at = millis();
+    last_ms = reported_at = imu_at = millis();
 }
 
 void loop() {
@@ -155,6 +159,13 @@ void loop() {
         reported_at = start;
         char msg[96];
         snprintf(msg, sizeof(msg), "ERR I2C : %lu écritures perdues (câbles SDA/SCL, parasites ?)", reported_errors);
+        Serial.println(msg);
+    }
+    if (imu_present && imu_dev.errors != imu_errors && start - imu_at > 1000) {
+        imu_errors = imu_dev.errors;
+        imu_at = start;
+        char msg[96];
+        snprintf(msg, sizeof(msg), "ERR I2C gyroscope : %lu lectures perdues (câbles SDA/SCL, parasites ?)", imu_errors);
         Serial.println(msg);
     }
     unsigned long spent = millis() - start;

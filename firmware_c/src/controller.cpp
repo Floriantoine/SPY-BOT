@@ -265,6 +265,11 @@ const char* Controller::tick(double dt) {
         } else {
             leveler.relax(dt);
             r.time_scale = 1.0;
+            if (tilted && !att.ready) {
+                // Assiette inconnue (gyroscope perdu, biais remesuré) : plus d'arrêt de sécurité.
+                tilted = false;
+                out_line("TILT 0");
+            }
         }
     }
     if (mode != MODE_OFF) {  // servos relâchés : le balayage attend

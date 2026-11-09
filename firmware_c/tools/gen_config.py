@@ -198,6 +198,7 @@ def main():
     w("static const int IMU_AXES[3][2] = {%s};" % ", ".join("{%d, %d}" % a for a in imu_mod.IMU_AXES))
     for name in ("ACCEL_TRUST", "BIAS_TIME", "BIAS_SPREAD", "LEVEL_GAIN", "LEVEL_LIMIT"):
         w("static const double %s = %s;" % (name, f(getattr(imu_mod, name))))
+    w("#define IMU_FAIL_MAX %d" % imu_mod.FAIL_MAX)
     w("static const double ACCEL_OK_LO = %s;" % f(imu_mod.ACCEL_OK[0]))
     w("static const double ACCEL_OK_HI = %s;" % f(imu_mod.ACCEL_OK[1]))
     w("static const double IMU_ACCEL_SCALE = %s;" % f(imu_mod.MPU6050.ACCEL_SCALE))
