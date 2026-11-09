@@ -141,6 +141,10 @@ Carte « Seul » de l'onglet Pilotage :
 - Toucher les joysticks ou **Stop** reprend la main.
 - Le suivi (commande `FOLLOW`) existe côté robot mais n'est pas encore dans
   l'interface.
+- `GOTO` et `FOLLOW` s'arrêtent seuls si plus rien n'arrive du PC pendant 5 s
+  (câble débranché, appli fermée) : l'appli envoie un `PING` toutes les 2 s.
+  Onglet du navigateur caché pendant plus de 5 minutes : le navigateur
+  espace ses envois, et le robot s'arrête aussi.
 
 ## Gyroscope (MPU6050)
 
@@ -154,9 +158,28 @@ le sol virtuel, et **Terrain accidenté** pose le robot sur un sol d'ondulations
 de cailloux (jusqu'à 3 cm) et de trous (`hexapod/terrain.py`). Sans capteur
 sous les pieds, le robot pose ses pieds sur le plan qu'il croit être le sol :
 il repose en vrai sur ses pieds posés, penche selon le terrain sous eux, et
-un pied au-dessus d'un trou reste en l'air. La 3D dessine le terrain. Premier essai sur le robot : sur sol plat, une pose de roulis
-+5° doit se lire +5° ; sinon, corriger `IMU_AXES` dans `hexapod/imu.py`
-(orientation de la carte). Pilote pas encore essayé sur le robot.
+un pied au-dessus d'un trou reste en l'air. La 3D dessine le terrain. Pilote pas encore essayé sur le robot.
+
+Premier essai sur le robot, servos relâchés, en regardant la carte
+« Gyroscope » : lever le côté **gauche** doit donner un roulis **positif**,
+baisser le **nez** un tangage **positif** (sur sol plat, une pose de roulis
++5° se lit +5°). Sinon, sans reflasher :
+
+- **Carte : ¼ de tour** (le roulis et le tangage sont échangés ou à l'envers ;
+  4 positions) et **Carte : retournée** (carte vissée composants vers le bas :
+  roulis lu près de 180°) envoient `IMU AXES`, par exemple `IMU AXES +y-x+z` :
+  pour l'avant, la gauche et le haut du robot, l'axe de la carte qui pointe par
+  là et son signe. Le robot refuse ce qui n'est pas une rotation de la carte.
+- **Mettre à zéro** (`IMU ZERO`), robot posé à plat : l'assiette lue devient le
+  zéro (carte pas tout à fait droite ; refusé au-delà de 10°). `IMU ZERO 0`
+  dans la commande manuelle l'efface.
+- **Recalibrer** (`IMU CAL`) mesure de nouveau le biais du gyroscope (robot
+  immobile 1 s). Au démarrage aussi, la mesure recommence tant qu'on bouge le robot.
+
+Ces réglages sont gardés dans le robot (à part des trims des servos) et
+affichés sous les boutons. Si le gyroscope ne répond plus (fil débranché), le
+robot le dit (`ERR I2C gyroscope…`), n'utilise plus son assiette (la correction
+s'en va doucement, plus d'arrêt de sécurité) et la reprend dès qu'il répond.
 
 - **Sentir le sol avec le gyroscope** (même carte) : sans capteur au pied, le
   robot devine le sol par la façon dont le corps bascule. Un pied qui descend

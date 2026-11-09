@@ -23,8 +23,13 @@ Tout ce que fait `main.py` sur le vrai robot :
   du milieu repliées et dépliées en 1 s, une patte en l'air à la fois, corps
   qui se balance dans le triangle des 3 pieds au sol.
 - Gyroscope MPU6050 (0x68, même bus I²C que les PCA9685), cherché au
-  démarrage : biais mesuré pendant la première seconde (robot immobile),
-  filtre d'assiette, `IMU`, `LEVEL 1|0` (corps gardé horizontal sur une
+  démarrage : biais mesuré pendant la première seconde (robot immobile ; la
+  mesure recommence tant qu'on le bouge, `IMU CAL` la refait), filtre
+  d'assiette, `IMU`, `IMU AXES +y-x+z` (orientation de la carte) et
+  `IMU ZERO` (zéro à plat), gardés dans la mémoire NVS à part des trims,
+  lectures perdues signalées (`ERR I2C gyroscope : n lectures perdues`) et
+  assiette ignorée après 5 lectures ratées de suite, jusqu'à ce qu'il
+  réponde ; `LEVEL 1|0` (corps gardé horizontal sur une
   pente), `FEEL 1|0` (sol deviné : un pied qui tape s'arrête, un pied
   au-dessus d'un trou s'allonge, la marche ralentit si le corps bascule
   vite), arrêt de sécurité au-delà de 20° (lignes `TILT 1` / `TILT 0`),
@@ -35,7 +40,8 @@ Tout ce que fait `main.py` sur le vrai robot :
   coupé, tourner et reculer restent possibles).
 - Navigation : `GOTO x y [vitesse]` (en contournant les obstacles vus),
   `FOLLOW [vitesse]`, `NAV [STOP]`, lignes `NAV arrived|stuck|off|...`,
-  position `P` (odométrie).
+  position `P` (odométrie). Arrêt (`NAV off`) si plus aucune ligne n'arrive
+  du PC pendant 5 s.
 - Au démarrage, mêmes lignes que `main.py` : `HELLO SPY-BOT`, `OK BOOT ...`,
   `SENSOR present ...`, `IMU present ...`, cartes PCA9685 absentes.
 - Télémétrie `T`, `M`, `P`, `B` (et `I`) 20 fois par seconde (10 en MicroPython).
@@ -53,9 +59,24 @@ Pas encore essayé sur le robot : les pilotes du MPU6050 et du VL53L1X (ceux
 du Python non plus). Ils envoient exactement la même suite de registres que
 les pilotes Python (vérifié par `test/compare.py` sur un faux bus I²C), mais
 le vrai comportement des puces (temps de démarrage, mesures invalides,
-orientation de la carte du gyroscope : `IMU_AXES` dans `hexapod/imu.py`, puis
-`gen_config.py`) reste à vérifier sur le robot. À essayer d'abord :
-`IMU` puis `LEVEL 1` robot posé à plat, `SENSOR 1` en regardant les lignes `S`.
+orientation de la carte du gyroscope) reste à vérifier sur le robot.
+
+Premier essai du gyroscope, dans l'ordre (appli, onglet **Corps**, ou lignes
+`I roulis tangage ...` en 0,1°) :
+
+1. Robot posé à plat, immobile 2 s après le démarrage : `IMU` doit répondre
+   `IMU present 1 ... ready 1 axes +x+y+z zero 0 0` et les lignes `I` arrivent.
+   Pas de ligne `I`, ou `ERR I2C gyroscope` : câblage.
+2. Servos relâchés, pencher le robot à la main : côté **gauche levé** =
+   roulis **positif**, **nez baissé** = tangage **positif**. Sinon :
+   `IMU AXES` (boutons **Carte : ¼ de tour** et **Carte : retournée**), sans
+   reflasher. Roulis près de ±180° : carte à l'envers.
+3. Pencher vite de 10° et tenir : la valeur doit y aller tout droit et y
+   rester. Si elle part d'abord à l'envers, recommencer l'étape 2.
+4. À plat : `IMU ZERO` (**Mettre à zéro**) si les angles ne sont pas à 0.
+5. Seulement alors `STAND` puis `LEVEL 1`. Le corps qui penche tout seul
+   jusqu'à 10° : un axe est encore faux, `LEVEL 0`.
+6. `FEEL 1` en dernier. `SENSOR 1` : environ 10 lignes `S` par seconde.
 
 Différences voulues :
 
@@ -133,7 +154,11 @@ mpremote connect COM6 fs cp -r hexapod : + fs cp main.py : + fs cp calib.json : 
   sans capteurs ; marche à 4 pattes ; gyroscope et capteur avant (faux
   MPU6050 et VL53L1X sur un faux bus I²C, nourris par un petit monde simulé :
   pente, chocs, bruit, obstacles, personne à suivre, mesures pas prêtes,
-  lectures en échec) ; gyroscope seul ; gyroscope qui ne répond pas. À
+  lectures en échec) ; gyroscope seul ; gyroscope qui ne répond pas ;
+  réglages et pannes du gyroscope (robot bougé pendant la mesure du biais,
+  `IMU CAL`, `IMU AXES`, `IMU ZERO`, lectures perdues puis retrouvées,
+  liaison avec le PC perdue pendant `FOLLOW` et `GOTO`) ; réglages du
+  gyroscope relus au démarrage. À
   chaque tick : angles, servos (celui du capteur compris), toutes les lignes
   de texte et tous les échanges I²C doivent être identiques.
 - `sh firmware_c/test/check_arduino.sh` compile tout `src/` avec les macros
