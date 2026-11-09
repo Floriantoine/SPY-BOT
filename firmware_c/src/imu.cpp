@@ -63,7 +63,7 @@ void Leveler::relax(double dt) {
 
 void Leveler::update(double dt, double mr, double mp, double wr, double wp) {
     if (!enabled) {
-        reset();
+        relax(dt);  // LEVEL 0 : la correction s'en va doucement, sans à-coup
         return;
     }
     double k = pymin(1.0, LEVEL_GAIN * dt);

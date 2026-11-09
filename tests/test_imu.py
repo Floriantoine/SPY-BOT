@@ -66,6 +66,19 @@ class LevelTest(unittest.TestCase):
             run(c, 0.1)
         self.assertLess(abs(imu.attitude.roll / DEG), 1)
 
+    def test_level_off_releases_smoothly(self):
+        c, imu = self.make()
+        c.handle("TILT 6 0")
+        c.handle("LEVEL 1")
+        run(c, 4.0)
+        self.assertAlmostEqual(c.leveler.roll / DEG, -6, delta=0.8)
+        c.handle("LEVEL 0")
+        before = c.leveler.roll
+        c.tick(0.02)
+        self.assertLess(abs(c.leveler.roll - before) / DEG, 0.3)  # pas d'à-coup
+        run(c, 1.0)
+        self.assertEqual(c.leveler.roll, 0.0)
+
     def test_bumpy_ground_is_levelled_while_walking(self):
         c, imu = self.make()
         self.assertEqual(c.handle("TERRAIN 1"), "TERRAIN 1")

@@ -115,7 +115,7 @@ class Leveler:
     def update(self, dt, measured, wanted):
         """`measured` = (roulis, tangage) lus, `wanted` = assiette voulue."""
         if not self.enabled:
-            self.reset()
+            self.relax(dt)  # LEVEL 0 : la correction s'en va doucement, sans à-coup
             return
         k = min(1.0, LEVEL_GAIN * dt)
         self.roll = _clamp(self.roll - (measured[0] - wanted[0]) * k, LEVEL_LIMIT)
