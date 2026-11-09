@@ -707,6 +707,9 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         }
         for (int i = 0; i < 3; i++)
             if (!pyfloat(a[i], &v[i])) return err_float(name, a[i]);
+        // nan ou inf : la démarche et l'odométrie ne s'en remettraient pas.
+        for (int i = 0; i < 3; i++)
+            if (isnan(v[i]) || isinf(v[i])) return err(name, "vitesse invalide");
         wanted_ = gait_command(v[0], v[1], v[2] * DEG);
         r.command = filter(wanted_, true);
         since_move_ = 0.0;

@@ -91,6 +91,9 @@ def scenario_base():
     cmd("GAIT 1.4 18.9")
     cmd("STAND")
     ticks(120)
+    for line in ("MOVE nan 0 0", "MOVE 0 inf 0", "MOVE 0 0 -Infinity", "MOVE x nan 0"):  # refusées
+        cmd(line)
+    ticks(5)
     # Marche dans toutes les directions, à plusieurs vitesses.
     for line, sec in (("MOVE 60 0 0", 3), ("MOVE 150 0 0", 2.5), ("MOVE 250 0 0", 2), ("MOVE 0 100 0", 2.5),
                       ("MOVE 0 -180 0", 2), ("MOVE 0 0 40", 2.5), ("MOVE 0 0 -90", 2), ("MOVE 100 80 20", 3),

@@ -126,6 +126,17 @@ class ControllerTest(unittest.TestCase):
     def test_move_refused_when_not_standing(self):
         self.assertTrue(self.ctrl.handle("MOVE 10 0 0").startswith("ERR"))
 
+    def test_move_refuses_nan_and_inf(self):
+        c = self.ctrl
+        c.handle("STAND")
+        run(c, 4.0)
+        for line in ("MOVE nan 0 0", "MOVE 0 inf 0", "MOVE 0 0 -inf", "MOVE NaN nan nan"):
+            self.assertEqual(c.handle(line), "ERR MOVE : vitesse invalide")
+        run(c, 0.5)  # aucun tick ne lève d'erreur
+        c.handle("MOVE 60 0 0")
+        run(c, 0.5)
+        self.assertFalse(c.robot.command.is_zero)  # le robot marche encore
+
     def test_telemetry_format(self):
         line = run(self.ctrl, 0.1)[0].split("\n")[0].split()
         self.assertEqual(line[0], "T")

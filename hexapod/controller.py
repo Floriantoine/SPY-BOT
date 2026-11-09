@@ -371,7 +371,11 @@ class Controller:
         if self.nav.active:
             self.nav.stop()  # on reprend la main
             self._pending.append(self.nav.status())
-        self.wanted = GaitCommand(float(vx), float(vy), float(yaw) * DEG)
+        vx, vy, yaw = float(vx), float(vy), float(yaw)
+        if not (math.isfinite(vx) and math.isfinite(vy) and math.isfinite(yaw)):
+            # nan ou inf : la démarche et l'odométrie ne s'en remettraient pas.
+            raise ValueError("vitesse invalide")
+        self.wanted = GaitCommand(vx, vy, yaw * DEG)
         self.robot.command = self._filter(self.wanted, self._pending)
         self.since_move = 0.0
         return None  # envoyé en continu : pas d'accusé de réception
