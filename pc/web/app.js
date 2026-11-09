@@ -28,7 +28,7 @@ const state = {
   selectedLeg: "RF",
   sensor: { present: false, on: false, stop: 80, blocked: false },
   sim: false,
-  imu: { present: false, level: false, roll: 0, pitch: 0, corrRoll: 0, corrPitch: 0, at: 0 },
+  imu: { present: false, level: false, roll: 0, pitch: 0, corrRoll: 0, corrPitch: 0, at: 0, axes: "+x+y+z", zero: [0, 0] },
   nav: "off",
   clickMode: null, // clic sur le sol : "obst", "goal" ou "person"
 };
@@ -186,6 +186,10 @@ events.onmessage = (e) => {
     const f = rest.split(" ");
     const value = (key) => Number(f[f.indexOf(key) + 1]);
     Object.assign(state.imu, { present: value("present") === 1, level: value("level") === 1, feel: value("feel") === 1 });
+    // Réglages de la carte (absents d'un ancien firmware) : orientation, zéro en 0,1°.
+    const at = f.indexOf("zero");
+    if (f.includes("axes")) state.imu.axes = f[f.indexOf("axes") + 1];
+    if (at >= 0) state.imu.zero = [Number(f[at + 1]) / 10, Number(f[at + 2]) / 10];
     renderImu();
   } else if (kind === "NAV") {
     if (rest === "arrived") toast("Arrivé au point", "ok");
@@ -800,7 +804,37 @@ function renderImu() {
   const feel = $("#imu-feel");
   feel.disabled = !connected || !present;
   feel.checked = connected && state.imu.feel;
+  for (const id of ["#imu-zero", "#imu-cal", "#imu-turn", "#imu-flip"]) $(id).disabled = !connected || !present;
+  const deg = (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)}°`;
+  const [zr, zp] = state.imu.zero;
+  $("#imu-setup-state").textContent = !connected || !present ? "Carte du gyroscope : –"
+    : `Carte du gyroscope : axes ${state.imu.axes}, zéro ${deg(zr)} / ${deg(zp)}`;
 }
+
+// Orientation de la carte (commande IMU AXES) : pour l'avant, la gauche et le
+// haut du robot, l'axe de la carte et son signe, ex. « +y-x+z ». Les deux
+// boutons passent d'une façon de la visser à plat à une autre (8 en tout),
+// toujours par une rotation : le robot refuserait autre chose.
+function imuAxes() {
+  const a = [...state.imu.axes.matchAll(/([+-])([xyz])/g)].map((m) => [m[2], m[1] === "-" ? -1 : 1]);
+  return a.length === 3 ? a : [["x", 1], ["y", 1], ["z", 1]];
+}
+const sendAxes = (a) => send("IMU AXES " + a.map(([axis, sign]) => (sign < 0 ? "-" : "+") + axis).join(""));
+$("#imu-turn").onclick = () => {
+  const [x, y, z] = imuAxes();
+  sendAxes([y, [x[0], -x[1]], z]); // un quart de tour autour de la verticale
+  toast("Carte tournée d'un quart de tour : ne pas bouger le robot 1 s", "");
+};
+$("#imu-flip").onclick = () => {
+  const [x, y, z] = imuAxes();
+  sendAxes([x, [y[0], -y[1]], [z[0], -z[1]]]); // un demi-tour autour de l'axe avant
+  toast("Carte retournée : ne pas bouger le robot 1 s", "");
+};
+$("#imu-zero").onclick = () => send("IMU ZERO");
+$("#imu-cal").onclick = () => {
+  send("IMU CAL");
+  toast("Gyroscope : mesure du biais, ne pas bouger le robot 1 s", "");
+};
 
 function drawImu() {
   const imu = state.imu;

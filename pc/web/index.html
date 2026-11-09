@@ -169,6 +169,17 @@
           <label class="toggle"><input type="checkbox" id="imu-level" disabled> Garder le corps horizontal</label>
           <label class="toggle" title="Un pied qui tape un caillou soulève son coin : il arrête de descendre. Au-dessus d'un trou, le coin s'enfonce : le pied s'allonge. Si ça bascule vite, la marche ralentit."><input type="checkbox" id="imu-feel" disabled> Sentir le sol avec le gyroscope (cailloux, trous)</label>
           <p class="hint">Arrêt de sécurité : penché de plus de 20°, le robot s'arrête, puis repart revenu sous 12°.</p>
+          <div class="imu-setup">
+            <div class="row">
+              <button class="btn ghost" id="imu-zero" disabled title="Robot posé à plat, immobile : l'assiette lue devient le zéro (gardé dans le robot)">Mettre à zéro</button>
+              <button class="btn ghost" id="imu-cal" disabled title="Mesure de nouveau le biais du gyroscope : ne pas bouger le robot pendant 1 s">Recalibrer</button>
+            </div>
+            <div class="row">
+              <button class="btn ghost" id="imu-turn" disabled title="Le roulis et le tangage sont échangés ou à l'envers : essayer la carte tournée d'un quart de tour de plus (4 positions)">Carte : ¼ de tour</button>
+              <button class="btn ghost" id="imu-flip" disabled title="La carte est vissée composants vers le bas (roulis lu près de 180°)">Carte : retournée</button>
+            </div>
+            <p class="hint" id="imu-setup-state">Carte du gyroscope : –</p>
+          </div>
           <div class="sim-only" id="imu-sim" hidden>
             <div class="field"><span>Pente du sol (gauche/droite)</span><output></output>
               <input id="tilt-roll" type="range" min="-12" max="12" step="1" value="0"></div>
