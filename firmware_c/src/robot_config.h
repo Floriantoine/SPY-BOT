@@ -104,6 +104,7 @@ static const double RISE_TIME = 2.0;
 static const double WAKE_STAGGER = 0.25;
 static const double WAKE_BLEND = 1.0;
 static const double WATCHDOG = 1.0;
+static const double LINK_TIMEOUT = 5.0;
 static const double TELEMETRY_PERIOD = 0.05;
 static const double TEST_DURATION = 3.0;
 static const double TEST_AMPLITUDE = 0.3490658503988659;

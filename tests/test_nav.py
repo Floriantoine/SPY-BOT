@@ -7,9 +7,11 @@ from hexapod.sensor import SimRanger
 from hexapod.servo import DryRunDriver
 
 
-def run(ctrl, seconds, dt=0.02):
+def run(ctrl, seconds, dt=0.02, ping=True):
     lines = []
-    for _ in range(int(round(seconds / dt))):
+    for i in range(int(round(seconds / dt))):
+        if ping and i % 100 == 0:
+            ctrl.handle("PING")  # comme l'appli, toutes les 2 s : la liaison est vivante
         out = ctrl.tick(dt)
         if out:
             lines += out.split("\n")
@@ -24,6 +26,23 @@ def make(ranger):
 
 
 class GotoTest(unittest.TestCase):
+    def test_stops_when_the_pc_link_is_lost(self):
+        for start in ("GOTO 2000 0", "FOLLOW"):
+            c = make(SimRanger([(400, 0, 60)]) if start == "FOLLOW" else None)
+            c.handle(start)
+            lines = run(c, 4.5, ping=False)
+            self.assertTrue(c.nav.active)
+            self.assertNotIn("NAV off", lines)
+            lines = run(c, 1.0, ping=False)  # 5 s sans rien recevoir du PC
+            self.assertFalse(c.nav.active)
+            self.assertIn("NAV off", lines)
+            run(c, 3.0, ping=False)
+            self.assertTrue(c.robot.command.is_zero)
+            self.assertTrue(c.robot.at_rest)
+            c.handle(start)  # la liaison revient : on peut repartir
+            run(c, 1.0)
+            self.assertTrue(c.nav.active)
+
     def test_reaches_goal_without_obstacles(self):
         c = make(None)
         self.assertEqual(c.handle("GOTO 400 200"), "NAV goto 400 200")

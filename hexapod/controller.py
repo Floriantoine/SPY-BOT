@@ -35,6 +35,9 @@ Commandes (une par ligne, PC -> robot) :
     GOTO x y [vitesse]            aller seul au point (x, y) du sol (repère de P),
                                   en contournant les obstacles vus par le capteur
     FOLLOW [vitesse]              suivre ce qui est devant le capteur (à ~40 cm)
+                                  GOTO et FOLLOW s'arrêtent (NAV off) si aucune
+                                  ligne n'arrive du PC pendant 5 s : envoyer au
+                                  moins un PING de temps en temps
     NAV [STOP]                    -> NAV off|follow|goto x y ; STOP reprend la main
                                   (un MOVE aussi)
     PERSON x y                    (simulation) la personne virtuelle marche jusque-là
@@ -139,6 +142,9 @@ RISE_TIME = 2.0  # s pour se lever ou s'asseoir
 WAKE_STAGGER = 0.25  # s entre deux pattes dont la position est inconnue
 WAKE_BLEND = 1.0  # s pour rejoindre la posture assise depuis une position connue
 WATCHDOG = 1.0  # s sans MOVE -> arrêt (assez long pour ne pas couper la marche si une commande arrive en retard)
+# GOTO et FOLLOW marchent sans MOVE : ils s'arrêtent si plus aucune ligne
+# n'arrive du PC pendant ce temps (l'appli envoie un PING toutes les 2 s).
+LINK_TIMEOUT = 5.0  # s
 TELEMETRY_PERIOD = 0.05  # s
 _T_FORMAT = "T %s %.3f" + " %d" * 18
 TILT_STOP = 20 * math.pi / 180  # rad : au-delà, arrêt de sécurité
@@ -180,6 +186,7 @@ class Controller:
         self._tick_us = 0  # plus long tick depuis la dernière ligne M
         self._margin_of, self._margin = None, 0.0
         self.since_move = 0.0
+        self.since_line = 0.0  # s depuis la dernière ligne reçue du PC
         # Télémétrie : 20 fois par seconde ; l'ESP32 (main.py) en envoie moins,
         # chaque envoi lui coûte ~10 ms de calcul.
         self.telemetry_period = TELEMETRY_PERIOD
@@ -194,6 +201,7 @@ class Controller:
         t0 = ticks_us()
         r = self.robot
         lines, self._pending = self._pending, []
+        self.since_line += dt
         if self.mode != STAND:
             self.wanted = GaitCommand()
             if self.nav.active:
@@ -201,7 +209,12 @@ class Controller:
                 lines.append(self.nav.status())
         if self.mode == STAND:
             self.since_move += dt
-            if self.nav.active:
+            if self.nav.active and self.since_line > LINK_TIMEOUT:
+                # Plus rien du PC (câble, appli fermée) : le robot ne continue pas seul.
+                self.nav.stop()
+                self.wanted = GaitCommand()
+                lines.append(self.nav.status())
+            elif self.nav.active:
                 # Le robot se pilote seul : pas besoin de MOVE.
                 self.since_move = 0.0
                 self.wanted, event = self.nav.command(self.odom, self.scanner, dt)
@@ -338,6 +351,7 @@ class Controller:
         parts = line.strip().split()
         if not parts:
             return None
+        self.since_line = 0.0
         name, args = parts[0].upper(), parts[1:]
         handler = getattr(self, "cmd_" + name.lower(), None)
         if handler is None:

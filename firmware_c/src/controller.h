@@ -69,7 +69,7 @@ private:
     unsigned long tick_us_;
     AngleSet* margin_of_;
     double margin_;
-    double since_move_, since_telemetry_;
+    double since_move_, since_line_, since_telemetry_;
     bool wake_known_;
     AngleSet wake_from_;
     AngleSet* wake_to_;

@@ -162,7 +162,7 @@ def main():
     w("static const double TRIPOD_MAX_STRIDE = %s;" % f(trig.tripod.max_stride))
     w("")
     w("// --- controller.py ---")
-    for name in ("RISE_TIME", "WAKE_STAGGER", "WAKE_BLEND", "WATCHDOG", "TELEMETRY_PERIOD", "TEST_DURATION",
+    for name in ("RISE_TIME", "WAKE_STAGGER", "WAKE_BLEND", "WATCHDOG", "LINK_TIMEOUT", "TELEMETRY_PERIOD", "TEST_DURATION",
                  "TEST_AMPLITUDE", "DEG", "TILT_STOP", "TILT_OK", "SLOW_RATE", "SLOW_SPAN", "SLOW_MIN",
                  "SLOW_RECOVER"):
         w("static const double %s = %s;" % (name, f(getattr(ctl, name))))

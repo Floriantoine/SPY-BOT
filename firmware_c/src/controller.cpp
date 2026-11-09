@@ -41,6 +41,7 @@ Controller::Controller(ServoDriver* driver, CalibStore* store, Ranger* ranger, I
     tick_us_ = 0;
     margin_ = 0.0;
     since_move_ = 0.0;
+    since_line_ = 0.0;
     since_telemetry_ = TELEMETRY_PERIOD;
     wake_known_ = false;
     wake_time_ = 0.0;
@@ -176,6 +177,7 @@ const char* Controller::tick(double dt) {
     }
     Hexapod& r = robot;
     char st[96];
+    since_line_ += dt;
     if (mode != MODE_STAND) {
         wanted_ = gait_command();
         if (nav.active()) {
@@ -186,7 +188,13 @@ const char* Controller::tick(double dt) {
     }
     if (mode == MODE_STAND) {
         since_move_ += dt;
-        if (nav.active()) {
+        if (nav.active() && since_line_ > LINK_TIMEOUT) {
+            // Plus rien du PC (câble, appli fermée) : le robot ne continue pas seul.
+            nav.stop();
+            wanted_ = gait_command();
+            nav.status(st, sizeof(st));
+            out_line("%s", st);
+        } else if (nav.active()) {
             // Le robot se pilote seul : pas besoin de MOVE.
             since_move_ = 0.0;
             NavEvent event;
@@ -609,6 +617,7 @@ const char* Controller::handle(const char* line) {
         total++;
     }
     if (!total) return NULL;
+    since_line_ = 0.0;  // s depuis la dernière ligne reçue du PC
     char name[64], lower[64];
     snprintf(name, sizeof(name), "%s", tokens[0]);
     for (char* c = name; *c; c++)

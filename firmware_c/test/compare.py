@@ -23,7 +23,8 @@ Scénarios :
   - gyroscope seul, puis gyroscope en panne : appareils absents ou qui
     ne répondent pas comme prévu au démarrage ;
   - gyroscope : réglages : robot bougé pendant la mesure du biais, IMU CAL,
-    gyroscope qui ne répond plus puis revient, IMU AXES, IMU ZERO ; puis
+    gyroscope qui ne répond plus puis revient, IMU AXES, IMU ZERO, liaison
+    avec le PC perdue pendant FOLLOW et GOTO ; puis
     réglages relus au démarrage (valides ou non).
 """
 
@@ -69,7 +70,9 @@ def scenario_base():
         s.append(("C", line))
 
     def ticks(n):
-        for _ in range(n):
+        for i in range(n):
+            if i % 100 == 99:
+                cmd("PING")  # comme l'appli, toutes les 2 s : la liaison est vivante
             s.append(("K", DT))
 
     def walk(line, seconds, every=10):
@@ -228,8 +231,11 @@ class Script:
     def cmd(self, line):
         self.steps.append(("C", line))
 
-    def ticks(self, n):
-        self.steps.extend([("K", DT)] * n)
+    def ticks(self, n, ping=True):
+        for i in range(n):
+            if ping and i % 100 == 99:
+                self.cmd("PING")  # comme l'appli, toutes les 2 s : la liaison est vivante
+            self.steps.append(("K", DT))
 
     def world(self, fn):
         self.steps.append(("W", fn))
@@ -602,6 +608,28 @@ def scenario_imu_setup():
     cmd("IMU ZERO 0")
     cmd("SAVE")  # les trims enregistrés ne touchent pas aux réglages du gyroscope
     walk("MOVE 0 0 0", 2)
+    # Liaison avec le PC perdue pendant FOLLOW puis GOTO : le robot s'arrête seul.
+    world(lambda w, c: setattr(w, "person", ahead(c, 600, 0)))
+    cmd("FOLLOW")
+    ticks(400)  # avec les PING de l'appli : il suit
+    cmd("NAV")
+    ticks(249, ping=False)
+    cmd("NAV")  # encore en route (ligne reçue : le délai repart)
+    ticks(400, ping=False)  # plus rien : NAV off après 5 s
+    cmd("NAV")
+    world(lambda w, c: setattr(w, "person", None))
+    cmd(lambda c: "GOTO %.1f %.1f" % ahead(c, 3000, 0))
+    ticks(200, ping=False)
+    cmd("")  # une ligne vide ne compte pas
+    ticks(100, ping=False)
+    cmd("NAV")  # arrêté
+    cmd(lambda c: "GOTO %.1f %.1f" % ahead(c, 3000, 0))
+    ticks(200, ping=False)
+    cmd("FOO")  # une ligne inconnue compte : quelqu'un est là
+    ticks(200, ping=False)
+    cmd("NAV")  # encore en route
+    cmd("NAV STOP")
+    ticks(100)
     cmd("IMU CAL")  # perdu pendant la mesure du biais : elle continue au retour
     ticks(10)
     world(setw(imu_fail_p=1.0))
