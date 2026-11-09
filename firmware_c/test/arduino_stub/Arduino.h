@@ -30,9 +30,20 @@
 #define INPUT 0x01
 #define OUTPUT 0x03
 #define PULLUP 0x04
+#define INPUT_PULLUP 0x05
+#define PULLDOWN 0x08
+#define INPUT_PULLDOWN 0x09
+#define OPEN_DRAIN 0x10
+#define OUTPUT_OPEN_DRAIN 0x13
+#define ANALOG 0xC0
+#define DISABLED 0x00
 #define RISING 0x01
 #define FALLING 0x02
 #define CHANGE 0x03
+#define ONLOW 0x04
+#define ONHIGH 0x05
+#define ONLOW_WE 0x0C
+#define ONHIGH_WE 0x0D
 #define DEFAULT 1
 #define EXTERNAL 0
 #define _min(a, b) ((a) < (b) ? (a) : (b))
@@ -52,6 +63,8 @@
 #define bitRead(value, bit) (((value) >> (bit)) & 0x01)
 #define bitSet(value, bit) ((value) |= (1UL << (bit)))
 #define bitClear(value, bit) ((value) &= ~(1UL << (bit)))
+#define bitToggle(value, bit) ((value) ^= (1UL << (bit)))
+#define bitWrite(value, bit, bitvalue) ((bitvalue) ? bitSet(value, bit) : bitClear(value, bit))
 #define bit(b) (1UL << (b))
 #define _BV(b) (1UL << (b))
 #define F(s) (s)
@@ -63,6 +76,36 @@
 #define B101 5
 #define B110 6
 #define B111 7
+#define NOT_A_PIN -1
+#define NOT_A_PORT -1
+#define NOT_AN_INTERRUPT -1
+#define NOT_ON_TIMER 0
+#define word(...) makeWord(__VA_ARGS__)
+#define NOP() asm volatile("nop")
+/* newlib : ctype.h, sys/param.h ; gcc xtensa en mode gnu++ ; ESP-IDF */
+#define _U 01
+#define _L 02
+#define _N 04
+#define _S 010
+#define _P 020
+#define _C 040
+#define _X 0100
+#define _B 0200
+#ifndef MIN
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#endif
+#define HZ (60)
+#define NBBY 8
+#define howmany(x, y) (((x) + ((y) - 1)) / (y))
+#define xtensa 1
+#define BIT(nr) (1UL << (nr))
+/* variants/esp32/pins_arduino.h : constantes globales (pas des macros) */
+static const uint8_t TX = 1, RX = 3, SDA = 21, SCL = 22, SS = 5, MOSI = 23, MISO = 19, SCK = 18;
+static const uint8_t A0 = 36, A3 = 39, A4 = 32, A5 = 33, A6 = 34, A7 = 35, A10 = 4, A11 = 0, A12 = 2, A13 = 15;
+static const uint8_t A14 = 13, A15 = 12, A16 = 14, A17 = 27, A18 = 25, A19 = 26;
+static const uint8_t T0 = 4, T1 = 0, T2 = 2, T3 = 15, T4 = 13, T5 = 12, T6 = 14, T7 = 27, T8 = 33, T9 = 32;
+static const uint8_t DAC1 = 25, DAC2 = 26;
 typedef bool boolean;
 typedef uint8_t byte;
 typedef unsigned int word;
