@@ -155,6 +155,34 @@ struct QuadGait : public Gait {
     double time_to_lift(int leg) const;
 };
 
+// --- sauts de consigne adoucis (servo.py : soft_step, SmoothDriver) ------------
+
+// Un tick du retour vers 0 d'un écart e0 (non nul), à l'accélération accel au plus.
+void soft_step(double e0, double w, double accel, double dt, double* e1, double* w1);
+
+// Entre le robot et le pilote des servos : les consignes de la marche passent
+// telles quelles, les autres sauts sont rejoints en douceur. Envoi par flush().
+class SmoothDriver : public ServoDriver {
+public:
+    explicit SmoothDriver(ServoDriver* inner);
+    double accel;  // °/s², 0 = pas d'adoucissement
+    bool busy;     // un servo n'est pas encore sur sa consigne
+    void set_angle(int board, int channel, double deg);
+    void relax();
+    void flush(double dt, bool walking);
+    // Vrai si le servo n'est pas encore sur sa consigne ; *p = angle envoyé.
+    bool lag(int board, int channel, double* p) const;
+
+private:
+    struct Chan {
+        double x, p, w, xp;  // consigne, envoyé, vitesse, consigne d'avant
+        bool fresh, valid;
+    };
+    ServoDriver* inner_;
+    Chan ch_[CFG_NBOARDS][16];
+    bool walking_, fresh_;
+};
+
 // Pour PROF : temps passé dans chaque partie.
 enum ProfPart { PROF_CAPTEUR, PROF_GYRO, PROF_I2C, PROF_IK, PROF_PIEDS, PROF_PLACE, PROF_SERVOS, PROF_TELEM, PROF_TICK, PROF_UPDATE, PROF_PARTS };
 extern const char* const PROF_NAMES[PROF_PARTS];
@@ -205,6 +233,7 @@ public:
     bool solve_key_valid;   // _solve_key (None si faux)
 
     bool at_rest() const;
+    bool still() const;  // plus rien de la marche ne bouge
     bool tuck_settled() const { return tuck == (legs == 4 ? 1.0 : 0.0); }
     bool walking(int leg) const { return !(legs == 4 && CFG_LEGS[leg].tucked); }
     // set_legs : 0 si fait, 1 si n n'est pas 4 ou 6, 2 si le robot n'est pas arrêté pieds posés.

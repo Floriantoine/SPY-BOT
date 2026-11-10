@@ -30,7 +30,7 @@ const state = {
   sim: false,
   imu: { present: false, level: false, roll: 0, pitch: 0, corrRoll: 0, corrPitch: 0, at: 0, axes: "+x+y+z", zero: [0, 0] },
   nav: "off",
-  walk: { wave: "0", waveSpeed: 20, gait: "tripod", shift: 6, sag: 1.5 }, // réglages de la marche (ligne WALK)
+  walk: { wave: "0", waveSpeed: 20, gait: "tripod", shift: 6, sag: 1.5, slew: 1500 }, // réglages de la marche (ligne WALK)
   clickMode: null, // clic sur le sol : "obst", "goal" ou "person"
 };
 
@@ -200,6 +200,7 @@ events.onmessage = (e) => {
     if (at("gait")) state.walk.gait = f[at("gait")];
     if (at("shift")) state.walk.shift = Number(f[at("shift")]);
     if (at("sag")) state.walk.sag = Number(f[at("sag")]);
+    if (at("slew")) state.walk.slew = Number(f[at("slew")]);
     renderWalk();
   } else if (kind === "NAV") {
     if (rest === "arrived") toast("Arrivé au point", "ok");
@@ -544,6 +545,10 @@ function renderWalk() {
     sliders.waveShift();
   }
   $("#wave-shift").closest(".field").hidden = w.wave === "0";
+  if (document.activeElement !== $("#slew")) {
+    $("#slew").value = w.slew;
+    sliders.slew();
+  }
   if (document.activeElement !== $("#sag")) {
     $("#sag").value = w.sag;
     sliders.sag();
@@ -551,6 +556,8 @@ function renderWalk() {
   $("#walk-state").textContent = "Démarche à 6 pattes : " + (w.gait === "wave" ? "vague (5 pieds au sol)" : "tripode");
 }
 sliders.waveSpeed = bindSlider($("#wave-speed"), (v) => `${v} mm/s`);
+sliders.slew = bindSlider($("#slew"), (v) => (Number(v) ? `${v} °/s²` : "aucune"));
+$("#slew").addEventListener("input", throttle(() => send(`SLEW ${$("#slew").value}`, true), 150));
 sliders.sag = bindSlider($("#sag"), (v) => (Number(v) ? `${v}°` : "aucun"));
 $("#sag").addEventListener("input", throttle(() => send(`SAG ${$("#sag").value}`, true), 150));
 sliders.waveShift = bindSlider($("#wave-shift"), (v) => (Number(v) ? `${v} mm` : "aucun"));

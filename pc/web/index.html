@@ -131,6 +131,8 @@
             <input id="step" type="range" min="5" max="19" step="1" value="19"></div>
           <div class="field" title="Une patte qui porte fléchit un peu (jeu du servo) : le corps descend. Les pattes au sol poussent donc un peu plus (fémur baissé de tant de degrés), fondu au lever et au poser du pied. 0 = rien. À régler pour que le corps ne tombe plus à chaque pas."><span>Appoint des pattes qui portent</span><output></output>
             <input id="sag" type="range" min="0" max="5" step="0.5" value="1.5"></div>
+          <div class="field" title="Un servo qui doit rejoindre une cible éloignée (pose de calibration, test, pattes repliées...) part et arrive en douceur, sans accélérer plus que ça ; un changement de pose du corps est adouci de la même façon. Les consignes de la marche passent telles quelles. 0 = aucun adoucissement (comme avant)."><span>Douceur des sauts des servos</span><output></output>
+            <input id="slew" type="range" min="0" max="5000" step="100" value="1500"></div>
           <p class="hint" id="walk-state">Démarche à 6 pattes : tripode</p>
         </div>
         <div class="card sensor-card" id="sensor-card">

@@ -33,8 +33,16 @@ Commandes (une par ligne, PC -> robot) :
                                   baissé de tant de degrés (1.5 au départ, 0 à 5,
                                   0 = rien), fondu au lever et au poser du pied
                                   -> WALK ...
+    SLEW a                        sauts de consigne adoucis : un servo qui doit
+                                  rejoindre une cible éloignée (pose de
+                                  calibration, test, pattes repliées, réglage...)
+                                  n'accélère pas plus que a °/s² (1500 au départ,
+                                  0 à 20000, 0 = aucun adoucissement) ; POSE est
+                                  rejointe en douceur de la même façon. Les
+                                  consignes de la marche passent telles quelles
+                                  -> WALK ...
     WALK                          -> WALK wave 0|1|auto <seuil> gait tripod|wave
-                                  shift <mm> sag <deg> : réglages de la marche et démarche à
+                                  shift <mm> sag <deg> slew <a> : réglages de la marche et démarche à
                                   6 pattes en cours (ligne envoyée aussi quand
                                   elle change)
     CAL                           pose de calibration : fémur à plat, tibia vertical (+ trim)
@@ -125,7 +133,7 @@ import os
 from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
-from .robot import SAG_MAX, WAVE_AUTO, WAVE_SHIFT_MAX, WAVE_SPEED_RANGE, Hexapod, leg_margin
+from .robot import SAG_MAX, WAVE_AUTO, WAVE_SHIFT_MAX, WAVE_SPEED_RANGE, Hexapod, _joint, leg_margin
 
 try:  # MicroPython
     from time import ticks_diff, ticks_us
@@ -140,6 +148,7 @@ except ImportError:  # PC
 from .imu import IMU_AXES, ZERO_MAX, Leveler, format_axes, parse_axes
 from .nav import Navigator
 from .sensor import STOP_RANGE, Scanner
+from .servo import SLEW_DEG, SLEW_MAX, SmoothDriver, soft_step
 
 DEG = math.pi / 180.0
 
@@ -176,11 +185,18 @@ SLOW_RECOVER = 1.5  # 1/s : retour à la vitesse normale
 TEST_DURATION = 3.0  # s
 TEST_AMPLITUDE = 20.0 * math.pi / 180.0
 JOINTS = ("coxa", "femur", "tibia")
+# POSE : la pose demandée est rejointe en douceur (départ et arrivée sans
+# à-coup), les pieds posés ne bougent pas. Accélérations pour le réglage
+# SLEW de départ ; elles suivent ce réglage (SLEW 0 : pose appliquée d'un coup).
+POSE_SLEW_MM = 400.0  # mm/s² ; 15 mm en 0,4 s
+POSE_SLEW_RAD = 4.0  # rad/s² ; 8° en 0,4 s
+POSE_AXES = ("x", "y", "z", "roll", "pitch", "yaw")
 
 
 class Controller:
     def __init__(self, config, driver, calib_path="calib.json", ranger=None, imu=None):
-        self.robot = Hexapod(config, driver)
+        self.smooth = SmoothDriver(driver)  # sauts de consigne adoucis (SLEW)
+        self.robot = Hexapod(config, self.smooth)
         self._walk_gait = self.robot.six  # démarche à 6 pattes de la dernière ligne WALK
         # Capteur avant : `ranger` = VL53L1X, SimRanger (simulation) ou None (absent).
         self.scanner = Scanner(ranger, driver)
@@ -196,7 +212,9 @@ class Controller:
         self.mode = OFF
         self.sit_drop = config.sit_drop
         self.height = -self.sit_drop  # hauteur de base du corps (0 = debout)
-        self.user_pose = BodyPose()
+        self.user_pose = BodyPose()  # pose suivie : rejoint pose_goal en douceur
+        self.pose_goal = self.user_pose  # pose demandée (POSE)
+        self._pose_vel = [0.0] * 6
         self.pose_limited = False  # pose réduite pour rester dans la course des servos
         self._stance_names, self._stance_z = [], []
         self.tilted = False  # corps trop penché : arrêt de sécurité
@@ -222,6 +240,8 @@ class Controller:
         r = self.robot
         lines, self._pending = self._pending, []
         self.since_line += dt
+        if self.user_pose is not self.pose_goal:
+            self._slew_pose(dt)
         if self.mode != STAND:
             self.wanted = GaitCommand()
             if self.nav.active:
@@ -292,6 +312,9 @@ class Controller:
                 self.pose_limited = False
                 lines.append("LIMIT pose 0")
 
+        # Consignes du tick envoyées aux servos, sauts adoucis (pas en marche).
+        self.smooth.flush(dt, self.mode == STAND and not r.still)
+
         if self.imu is not None:
             self.imu.update(dt, self.robot.applied, self.body_odom(), *self._sim_feet())
             att = self.imu.attitude
@@ -361,10 +384,43 @@ class Controller:
 
     def telemetry(self):
         values = [self.mode, self.robot.gait.phase]
+        lag = self.smooth.lag if self.smooth.busy else None
         for leg in self.robot.config.legs:
             a = self.angles[leg.name]
-            values += [round(a.coxa * 1000), round(a.femur * 1000), round(a.tibia * 1000)]
+            for joint, v in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
+                if lag is not None:
+                    # Servo pas encore sur sa consigne : l'angle vraiment envoyé.
+                    p = lag(joint.board, joint.channel)
+                    if p is not None:
+                        k = _joint(joint)
+                        v = (p - k[7]) / k[8]
+                values.append(round(v * 1000))
         return _T_FORMAT % tuple(values)
+
+    def _slew_pose(self, dt):
+        """La pose suivie rejoint la pose demandée, sans à-coup."""
+        g, u = self.pose_goal, self.user_pose
+        accel = self.smooth.accel
+        if accel <= 0.0 or dt <= 0.0:
+            if accel <= 0.0:
+                self.user_pose = g
+                self._pose_vel = [0.0] * 6
+            return
+        k = accel / SLEW_DEG
+        vel = self._pose_vel
+        vals = []
+        done = True
+        for i in range(6):
+            x = getattr(g, POSE_AXES[i])
+            e = getattr(u, POSE_AXES[i]) - x
+            if e == 0.0:
+                vel[i] = 0.0
+            else:
+                e, vel[i] = soft_step(e, vel[i], (POSE_SLEW_MM if i < 3 else POSE_SLEW_RAD) * k, dt)
+                if e != 0.0:
+                    done = False
+            vals.append(x + e)
+        self.user_pose = g if done and vel == [0.0] * 6 else BodyPose(*vals)
 
     # --- commandes --------------------------------------------------------
 
@@ -393,8 +449,7 @@ class Controller:
             return "OK POWER 1"
         self.mode = OFF
         self.robot.command = GaitCommand()
-        if hasattr(self.driver, "relax"):
-            self.driver.relax()
+        self.smooth.relax()
         return "OK POWER 0"
 
     def cmd_stand(self):
@@ -432,7 +487,7 @@ class Controller:
         return None  # envoyé en continu : pas d'accusé de réception
 
     def cmd_pose(self, x, y, z, roll, pitch, yaw):
-        self.user_pose = BodyPose(
+        self.pose_goal = BodyPose(
             _clamp(float(x), 20), _clamp(float(y), 20), _clamp(float(z), 15),
             _clamp(float(roll), 8) * DEG, _clamp(float(pitch), 8) * DEG,
             _clamp(float(yaw), 20) * DEG,
@@ -485,6 +540,10 @@ class Controller:
         self.robot.sag = max(0.0, min(SAG_MAX, float(deg)))
         return self.walk_status()
 
+    def cmd_slew(self, accel):
+        self.smooth.accel = max(0.0, min(SLEW_MAX, float(accel)))
+        return self.walk_status()
+
     def cmd_walk(self):
         return self.walk_status()
 
@@ -492,9 +551,9 @@ class Controller:
         """Ligne WALK : réglages de la marche et démarche à 6 pattes en cours."""
         r = self.robot
         self._walk_gait = r.six
-        return "WALK wave %s %.0f gait %s shift %.1f sag %.1f" % (
+        return "WALK wave %s %.0f gait %s shift %.1f sag %.1f slew %.0f" % (
             ("0", "1", "auto")[r.wave_mode], r.wave_speed, "wave" if r.six is r.wave else "tripod", r.wave_shift,
-            r.sag)
+            r.sag, self.smooth.accel)
 
     def cmd_cal(self):
         """Pose de calibration, choisie pour être facile à vérifier à l'œil :
@@ -906,7 +965,7 @@ class Controller:
         from .servo import ik_to_servo_deg
 
         for joint, value in ((leg.coxa, a.coxa), (leg.femur, a.femur), (leg.tibia, a.tibia)):
-            self.driver.set_angle(joint.board, joint.channel, ik_to_servo_deg(value, joint))
+            self.smooth.set_angle(joint.board, joint.channel, ik_to_servo_deg(value, joint))
 
     def _zero_angles(self):
         # Angles IK qui placent chaque servo au milieu de sa course.

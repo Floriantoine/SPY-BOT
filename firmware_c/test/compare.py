@@ -666,7 +666,8 @@ def scenario_wave():
     for line in ("WALK", "WALK 1", "WAVE", "WAVE 2", "WAVE x", "WAVE AUTO x", "WAVE auto", "WAVE AUTO 1", "WAVE AUTO 1e9",
                  "WAVE AUTO nan", "WAVE AUTO 25 extra", "WAVE 1", "WAVE 0 1", "wave 0", "WAVE AUTO 20", "WAVE 1",
                  "SHIFT", "SHIFT x", "SHIFT 1 2", "SHIFT -3", "SHIFT 99", "SHIFT nan", "shift 6",
-                 "SAG", "SAG x", "SAG 1 2", "SAG -3", "SAG 99", "SAG nan", "sag 1.5"):
+                 "SAG", "SAG x", "SAG 1 2", "SAG -3", "SAG 99", "SAG nan", "sag 1.5",
+                 "SLEW", "SLEW x", "SLEW 1 2", "SLEW -3", "SLEW 1e9", "SLEW nan", "slew 1500"):
         cmd(line)
     cmd("STAND")
     ticks(300)
@@ -687,6 +688,15 @@ def scenario_wave():
     for deg in ("5", "0", "3.3", "1.5"):
         cmd("SAG " + deg)
         walk("MOVE 20 5 3", 2)
+    # Sauts de consigne adoucis : poses à l'arrêt et en marche, réglage changé, coupé, remis.
+    for accel in ("300", "0", "20000", "1500"):
+        cmd("SLEW " + accel)
+        cmd("POSE 10 -8 12 6 -5 15")
+        walk("MOVE 0 0 0", 0.3)
+        cmd("POSE -5 5 -10 -8 8 -20")  # avant la fin de la première
+        walk("MOVE 20 5 3", 1)
+        cmd("POSE 0 0 0 0 0 0")
+        walk("MOVE 20 5 3", 1)
     # Changement en pleine marche : vague -> tripode -> vague.
     walk("MOVE 25 0 0", 3)
     cmd("WAVE 0")
@@ -765,7 +775,9 @@ def scenario_wave():
                  rnd.choice((0.3, 0.6, 1.0, 2.0, 3.0)))
         elif r < 0.65:
             cmd(rnd.choice(("WAVE 0", "WAVE 1", "WAVE AUTO", "WAVE AUTO %d" % rnd.randint(1, 70),
-                            "SHIFT %d" % rnd.randint(-2, 17), "SHIFT 6", "SAG %d" % rnd.randint(-1, 6), "SAG 1.5")))
+                            "SHIFT %d" % rnd.randint(-2, 17), "SHIFT 6", "SAG %d" % rnd.randint(-1, 6), "SAG 1.5",
+                            "SLEW %d" % rnd.choice((0, 200, 1500, 9000)), "SLEW 1500",
+                            "POSE %d %d %d %d %d %d" % tuple(rnd.randint(-9, 9) for _ in range(6)))))
             ticks(rnd.randint(1, 30))
         elif r < 0.75:
             cmd("POSE %.1f %.1f %.1f %.1f %.1f %.1f" % tuple(rnd.uniform(-22, 22) for _ in range(6)))

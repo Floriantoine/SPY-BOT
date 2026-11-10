@@ -13,6 +13,127 @@ def ik_to_servo_deg(angle_rad, joint):
     return max(joint.min_deg, min(joint.max_deg, deg))
 
 
+# Sauts de consigne adoucis (SLEW) : un servo qui doit rejoindre une cible
+# éloignée part et arrive en douceur, sans jamais accélérer plus que ça.
+SLEW_DEG = 1500.0  # °/s² ; 30° en 0,3 s
+SLEW_MAX = 20000.0
+
+
+def soft_step(e0, w, accel, dt):
+    """Un tick du retour vers 0 d'un écart `e0` (non nul), à l'accélération
+    `accel` au plus : `w` = vitesse du tick d'avant. Retourne (écart, vitesse).
+    Jamais de dépassement, jamais d'éloignement ; arrivée freinée."""
+    d = e0 if e0 > 0.0 else -e0
+    s = -1.0 if e0 > 0.0 else 1.0
+    wd = w * s  # vitesse d'approche en cours
+    if wd < 0.0:
+        wd = 0.0
+    cap = wd + accel * dt
+    h = accel * dt / 2
+    vc = math.sqrt(h * h + 2 * accel * d) - h  # au-delà, plus moyen de freiner à temps
+    lin = d / dt
+    if lin <= vc and lin <= cap:
+        return 0.0, s * lin  # arrivé à ce tick
+    w1 = s * (vc if vc < cap else cap)
+    return e0 + w1 * dt, w1
+
+
+class SmoothDriver:
+    """Entre le robot et le pilote des servos : adoucit les sauts de consigne.
+
+    Les consignes de la marche passent telles quelles (aucun retard : les
+    pas gardent leur rythme). Tout le reste (changement de pose de
+    calibration, test, se lever, pattes repliées...) est suivi exactement tant que
+    l'accélération demandée reste sous `accel` ; un saut est rejoint en
+    douceur. Un écart encore à rattraper quand la marche commence se résorbe
+    par-dessus la marche. Les consignes sont envoyées par flush(), une fois
+    par tick. Un servo dont la position est inconnue (relâché) reçoit sa
+    première consigne telle quelle.
+    """
+
+    def __init__(self, driver):
+        self.driver = driver
+        self.accel = SLEW_DEG  # °/s², 0 = pas d'adoucissement
+        self.busy = False  # un servo n'est pas encore sur sa consigne
+        self._boards = {}  # carte -> {voie: [consigne, envoyé, vitesse, consigne d'avant, nouvelle]}
+        self._walking = False
+        self._fresh = False
+
+    def set_angle(self, board, channel, deg):
+        chans = self._boards.get(board)
+        if chans is None:
+            chans = self._boards[board] = {}
+        st = chans.get(channel)
+        if st is None:
+            chans[channel] = [deg, deg, 0.0, deg, False]
+            self.driver.set_angle(board, channel, deg)
+            return
+        st[0] = deg
+        st[4] = True
+        self._fresh = True
+
+    def lag(self, board, channel):
+        """Angle envoyé au servo s'il n'est pas encore sur sa consigne, sinon None."""
+        st = self._boards.get(board, {}).get(channel)
+        return st[1] if st is not None and st[1] != st[0] else None
+
+    def relax(self):
+        self._boards = {}
+        self.busy = self._fresh = False
+        if hasattr(self.driver, "relax"):
+            self.driver.relax()
+
+    def flush(self, dt, walking):
+        """Envoie les consignes du tick. `walking` : le robot marche (ses
+        consignes passent telles quelles)."""
+        turn = walking != self._walking
+        self._walking = walking
+        if dt <= 0.0 or not (self._fresh or self.busy):
+            return
+        self._fresh = False
+        accel = self.accel
+        driver = self.driver
+        batch = getattr(driver, "set_angles", None)
+        busy = False
+        for board, chans in self._boards.items():
+            dirty = False
+            for channel, st in chans.items():
+                x, p, w, xp = st[0], st[1], st[2], st[3]
+                if not st[4] and p == x and w == 0.0:
+                    continue  # sur sa consigne, qui n'a pas changé
+                st[4] = False
+                if turn and w != 0.0:
+                    # La vitesse suivie est celle du servo à l'arrêt, et
+                    # l'écart de vitesse avec la consigne en marche.
+                    vt = (x - xp) / dt
+                    w = w - vt if walking else w + vt
+                e0 = p - xp if walking else p - x
+                if accel <= 0.0 or e0 == 0.0:
+                    p = x
+                    w = 0.0
+                else:
+                    e0, w = soft_step(e0, w, accel, dt)
+                    p = x + e0
+                if p != x or w != 0.0:
+                    busy = True
+                st[1], st[2], st[3] = p, w, x
+                dirty = True
+                if batch is None:
+                    driver.set_angle(board, channel, p)
+            if dirty and batch is not None:
+                # Voies qui se suivent : une seule écriture I²C (comme write_servos).
+                order = sorted(chans)
+                start = order[0]
+                run = []
+                for ch in order:
+                    if run and ch != start + len(run):
+                        batch(board, start, run)
+                        start, run = ch, []
+                    run.append(chans[ch][1])
+                batch(board, start, run)
+        self.busy = busy
+
+
 class DryRunDriver:
     """Pilote factice : mémorise les angles, utile pour les tests et la simulation."""
 

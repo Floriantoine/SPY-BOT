@@ -54,6 +54,115 @@ double ik_to_servo_deg(double angle_rad, const JointServo& j) {
 }
 
 // =============================================================================
+// Sauts de consigne adoucis (servo.py)
+// =============================================================================
+
+void soft_step(double e0, double w, double accel, double dt, double* e1, double* w1) {
+    double d = e0 > 0.0 ? e0 : -e0;
+    double s = e0 > 0.0 ? -1.0 : 1.0;
+    double wd = w * s;  // vitesse d'approche en cours
+    if (wd < 0.0) wd = 0.0;
+    double cap = wd + accel * dt;
+    double h = accel * dt / 2;
+    double vc = sqrt(h * h + 2 * accel * d) - h;  // au-delà, plus moyen de freiner à temps
+    double lin = d / dt;
+    if (lin <= vc && lin <= cap) {
+        *e1 = 0.0;  // arrivé à ce tick
+        *w1 = s * lin;
+        return;
+    }
+    *w1 = s * (vc < cap ? vc : cap);
+    *e1 = e0 + *w1 * dt;
+}
+
+SmoothDriver::SmoothDriver(ServoDriver* inner)
+    : accel(SLEW_DEG), busy(false), inner_(inner), walking_(false), fresh_(false) {
+    memset(ch_, 0, sizeof(ch_));
+}
+
+void SmoothDriver::set_angle(int board, int channel, double deg) {
+    Chan& c = ch_[board][channel];
+    if (!c.valid) {
+        // Position de départ inconnue (servo relâché) : rien à adoucir.
+        c.x = c.p = c.xp = deg;
+        c.w = 0.0;
+        c.fresh = false;
+        c.valid = true;
+        inner_->set_angle(board, channel, deg);
+        return;
+    }
+    c.x = deg;
+    c.fresh = true;
+    fresh_ = true;
+}
+
+bool SmoothDriver::lag(int board, int channel, double* p) const {
+    const Chan& c = ch_[board][channel];
+    if (!c.valid || c.p == c.x) return false;
+    *p = c.p;
+    return true;
+}
+
+void SmoothDriver::relax() {
+    memset(ch_, 0, sizeof(ch_));
+    busy = fresh_ = false;
+    inner_->relax();
+}
+
+void SmoothDriver::flush(double dt, bool walking) {
+    bool turn = walking != walking_;
+    walking_ = walking;
+    if (dt <= 0.0 || !(fresh_ || busy)) return;
+    fresh_ = false;
+    bool batch = inner_->has_batch();
+    bool any = false;
+    for (int b = 0; b < CFG_NBOARDS; b++) {
+        bool dirty = false;
+        for (int n = 0; n < 16; n++) {
+            Chan& c = ch_[b][n];
+            if (!c.valid) continue;
+            double x = c.x, p = c.p, w = c.w, xp = c.xp;
+            if (!c.fresh && p == x && w == 0.0) continue;  // sur sa consigne, qui n'a pas changé
+            c.fresh = false;
+            if (turn && w != 0.0) {
+                double vt = (x - xp) / dt;
+                w = walking ? w - vt : w + vt;
+            }
+            double e0 = walking ? p - xp : p - x;
+            if (accel <= 0.0 || e0 == 0.0) {
+                p = x;
+                w = 0.0;
+            } else {
+                soft_step(e0, w, accel, dt, &e0, &w);
+                p = x + e0;
+            }
+            if (p != x || w != 0.0) any = true;
+            c.p = p;
+            c.w = w;
+            c.xp = x;
+            dirty = true;
+            if (!batch) inner_->set_angle(b, n, p);
+        }
+        if (dirty && batch) {
+            // Voies qui se suivent : une seule écriture I²C.
+            int start = -1, len = 0;
+            double run[16];
+            for (int n = 0; n < 16; n++) {
+                if (!ch_[b][n].valid) continue;
+                if (len && n != start + len) {
+                    inner_->set_angles(b, start, run, len);
+                    len = 0;
+                }
+                if (!len) start = n;
+                run[len++] = ch_[b][n].p;
+            }
+            if (len) inner_->set_angles(b, start, run, len);
+        }
+    }
+    busy = any;
+}
+
+// =============================================================================
 // Cinématique inverse (leg_ik.py)
 // =============================================================================
 
@@ -527,6 +636,11 @@ void Hexapod::feel(double dt, double roll_rate, double pitch_rate) {
 bool Hexapod::at_rest() const {
     double sx = gait->shift_x, sy = gait->shift_y;  // 4 pattes : corps revenu au centre
     return current.is_zero() && gait->at_rest() && sx * sx + sy * sy < 0.25 && feet_settled();
+}
+
+bool Hexapod::still() const {
+    double sx = gait->shift_x, sy = gait->shift_y;
+    return current.is_zero() && gait->at_rest() && load_settled_ && sx * sx + sy * sy < 0.25;
 }
 
 BodyPose Hexapod::effective_pose(double scale) const {

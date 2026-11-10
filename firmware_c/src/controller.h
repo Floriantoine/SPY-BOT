@@ -47,6 +47,7 @@ public:
     double telemetry_period;
     Mode mode;
     AngleSet* angles;
+    SmoothDriver smooth;  // sauts de consigne adoucis (SLEW), avant le robot
     Hexapod robot;
     Scanner scanner;
     Navigator nav;
@@ -64,7 +65,11 @@ private:
     GaitCommand wanted_;
     double odom_[3];
     double sit_drop_, height_;
-    BodyPose user_pose_;
+    BodyPose user_pose_;  // pose suivie : rejoint pose_goal_ en douceur
+    BodyPose pose_goal_;  // pose demandée (POSE)
+    bool pose_moving_;
+    double pose_vel_[6];
+    void slew_pose(double dt);
     bool pose_limited_;
     double free_time_, went_;
     unsigned long tick_us_;

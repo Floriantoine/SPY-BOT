@@ -178,6 +178,10 @@ def main():
                  "TEST_AMPLITUDE", "DEG", "TILT_STOP", "TILT_OK", "SLOW_RATE", "SLOW_SPAN", "SLOW_MIN",
                  "SLOW_RECOVER"):
         w("static const double %s = %s;" % (name, f(getattr(ctl, name))))
+    for name in ("POSE_SLEW_MM", "POSE_SLEW_RAD"):
+        w("static const double %s = %s;" % (name, f(getattr(ctl, name))))
+    for name in ("SLEW_DEG", "SLEW_MAX"):
+        w("static const double %s = %s;" % (name, f(getattr(servo_mod, name))))
     w("static const double CALIBRATION_POSE[3] = {%s, %s, %s};" % tuple(f(v) for v in ctl.CALIBRATION_POSE))
     w("")
     w("// --- sensor.py ---")

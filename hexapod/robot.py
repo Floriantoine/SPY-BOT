@@ -275,6 +275,13 @@ class Hexapod:
                 and self._feet_settled())
 
     @property
+    def still(self):
+        """Plus rien de la marche ne bouge : arrêté, pieds posés et en charge,
+        corps revenu au centre."""
+        sx, sy = self.gait.shift
+        return self.current.is_zero and self.gait.at_rest and self._load_settled and sx * sx + sy * sy < 0.25
+
+    @property
     def tuck_settled(self):
         return self.tuck == (1.0 if self.legs == 4 else 0.0)
 

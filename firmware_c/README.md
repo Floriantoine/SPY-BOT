@@ -28,7 +28,9 @@ Tout ce que fait `main.py` sur le vrai robot :
   au-dessus du seuil ; changement en marche à l'instant où les 6 pieds sont
   posés), `SHIFT mm` (en vague, le corps se décale à l'opposé de la patte en
   l'air ; 6 mm au départ, 0 = aucun), `SAG deg` (les pattes qui portent
-  poussent un peu plus : fémur baissé de 1,5° au départ, 0 = rien), `WALK` (réglages de la marche, ligne `WALK ...` envoyée aussi quand
+  poussent un peu plus : fémur baissé de 1,5° au départ, 0 = rien), `SLEW a`
+  (sauts de consigne des servos adoucis, a °/s² au plus, 1500 au départ,
+  0 = aucun ; les consignes de la marche passent telles quelles), `WALK` (réglages de la marche, ligne `WALK ...` envoyée aussi quand
   la démarche change).
 - Gyroscope MPU6050 (0x68, même bus I²C que les PCA9685), cherché au
   démarrage : biais mesuré pendant la première seconde (robot immobile ; la

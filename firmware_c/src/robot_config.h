@@ -136,6 +136,10 @@ static const double SLOW_RATE = 0.3;
 static const double SLOW_SPAN = 0.6;
 static const double SLOW_MIN = 0.3;
 static const double SLOW_RECOVER = 1.5;
+static const double POSE_SLEW_MM = 400.0;
+static const double POSE_SLEW_RAD = 4.0;
+static const double SLEW_DEG = 1500.0;
+static const double SLEW_MAX = 20000.0;
 static const double CALIBRATION_POSE[3] = {0.0, 0.0, -1.5707963267948966};
 
 // --- sensor.py ---

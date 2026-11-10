@@ -8,7 +8,7 @@ from hexapod.config import MIDDLE_LEGS, tibia_fold_limit
 from hexapod.controller import Controller
 from hexapod.gait import QUAD_TUCKED
 from hexapod.robot import SAG_DEG, SAG_RATE, WAVE_AUTO, WAVE_OFF, WAVE_ON, Hexapod, angles_ok
-from hexapod.servo import DryRunDriver
+from hexapod.servo import SLEW_DEG, DryRunDriver, soft_step
 from hexapod.servo import ik_to_servo_deg
 
 DT = 0.02
@@ -361,10 +361,10 @@ class SagTest(unittest.TestCase):
     def test_command_and_not_while_sitting(self):
         ctrl = Controller(default_config(), DryRunDriver(), "/nonexistent/calib.json")
         r = ctrl.robot
-        self.assertTrue(ctrl.handle("WALK").endswith(" sag 1.5"))
-        self.assertTrue(ctrl.handle("SAG 2").endswith(" sag 2.0"))
-        self.assertTrue(ctrl.handle("SAG 99").endswith(" sag 5.0"))
-        self.assertTrue(ctrl.handle("SAG -1").endswith(" sag 0.0"))
+        self.assertIn(" sag 1.5", ctrl.handle("WALK"))
+        self.assertIn(" sag 2.0", ctrl.handle("SAG 2"))
+        self.assertIn(" sag 5.0", ctrl.handle("SAG 99"))
+        self.assertIn(" sag 0.0", ctrl.handle("SAG -1"))
         self.assertTrue(ctrl.handle("SAG x").startswith("ERR"))
         ctrl.handle("SAG 2")
         ctrl.handle("POWER 1")
@@ -380,6 +380,194 @@ class SagTest(unittest.TestCase):
         self.assertEqual(ctrl.mode, "stand")
         self.assertEqual(r.sag_k, 1.0)
         self.assertAlmostEqual(math.degrees(plain(r)["LF"].femur - r._written["LF"].femur), 2.0, places=9)
+
+
+def controller(slew=None):
+    driver = DryRunDriver()
+    ctrl = Controller(default_config(), driver, "/nonexistent/calib.json")
+    if slew is not None:
+        ctrl.handle("SLEW %s" % slew)
+    return ctrl, driver
+
+
+def ticks(ctrl, seconds, each=None):
+    for _ in range(int(round(seconds / DT))):
+        ctrl.tick(DT)
+        if each:
+            each()
+
+
+class SlewTest(unittest.TestCase):
+    """Sauts de consigne des servos adoucis (SLEW), marche inchangée."""
+
+    def test_soft_step_profile(self):
+        for jump in (0.3, 5.0, -30.0, 90.0):
+            for accel in (300.0, SLEW_DEG, 20000.0):
+                e, w, n = jump, 0.0, 0
+                speeds = [0.0]
+                while e != 0.0:
+                    before = e
+                    e, w = soft_step(e, w, accel, DT)
+                    self.assertLessEqual(abs(e), abs(before))  # jamais d'éloignement
+                    self.assertGreaterEqual(e * jump, 0.0)  # jamais de dépassement
+                    speeds.append(abs(w))
+                    n += 1
+                    self.assertLess(n, 1000)
+                speeds.append(0.0)
+                for a, b in zip(speeds, speeds[1:]):
+                    # Départ à `accel` au plus ; le freinage, calé sur les ticks, peut le dépasser un peu.
+                    self.assertLessEqual(b - a, accel * DT * 1.0001 + 1e-9, (jump, accel))
+                    self.assertLessEqual(a - b, accel * DT * 1.5, (jump, accel))
+                ideal = 2 * math.sqrt(abs(jump) / accel)  # départ et arrivée à l'accélération maximale
+                self.assertLessEqual(n * DT, ideal + 3 * DT, (jump, accel))
+
+    def test_walking_is_sent_unchanged(self):
+        """Mêmes angles envoyés avec et sans SLEW pendant toute une marche."""
+        for setup in ((), ("WAVE 1",), ("LEGS 4",)):
+            soft, d1 = controller()
+            raw, d2 = controller(0)
+            for c in (soft, raw):
+                c.handle("STAND")
+            ticks(soft, 6)
+            ticks(raw, 6)
+            for cmd in setup:
+                self.assertFalse((soft.handle(cmd) or "").startswith("ERR"), cmd)
+                raw.handle(cmd)
+            ticks(soft, 2)
+            ticks(raw, 2)
+            self.assertEqual(d1.angles, d2.angles)
+            for move in ("MOVE 60 0 0", "MOVE 0 30 0.3", "MOVE -40 10 -0.2", "MOVE 0 0 0", "MOVE 30 0 0"):
+                for _ in range(15):
+                    soft.handle(move)
+                    raw.handle(move)
+                    for _ in range(10):
+                        soft.tick(DT)
+                        raw.tick(DT)
+                        self.assertEqual(d1.angles, d2.angles, (setup, move))
+                        self.assertEqual(soft.telemetry(), raw.telemetry())
+
+    def check_servos(self, ctrl, driver, seconds, accel=SLEW_DEG, speed=None):
+        """Avance en vérifiant que chaque servo part en douceur (`speed` :
+        vitesses à l'entrée, mises à jour). Retourne la plus grande vitesse."""
+        prev = dict(driver.angles)
+        speed = {k: 0.0 for k in prev} if speed is None else speed
+        worst = [0.0]
+
+        def each():
+            for k, v in driver.angles.items():
+                s = (v - prev[k]) / DT
+                if abs(s) > abs(speed[k]):
+                    self.assertLessEqual(abs(s) - abs(speed[k]), accel * DT * 1.0001 + 1e-6, k)  # accélération bornée
+                worst[0] = max(worst[0], abs(s))
+                speed[k], prev[k] = s, v
+
+        ticks(ctrl, seconds, each)
+        return worst[0]
+
+    def test_jump_to_calibration_pose_is_soft(self):
+        ctrl, driver = controller()
+        ctrl.handle("POWER 1")
+        ticks(ctrl, 2)
+        self.assertEqual(ctrl.mode, "sit")
+        before = dict(driver.angles)
+        ctrl.handle("CAL")
+        self.assertEqual(driver.angles, before)  # rien ne saute
+        speed = {k: 0.0 for k in before}
+        top = self.check_servos(ctrl, driver, 0.1, speed=speed)
+        step = max(abs(driver.angles[k] - before[k]) for k in before)
+        self.assertLess(step, 10.0)  # 0,1 s après : encore loin (sans SLEW : déjà arrivé, 60° d'un coup)
+        self.assertIn("T cal", ctrl.telemetry())
+        shown = [int(v) / 1000.0 for v in ctrl.telemetry().split()[3:]]
+        self.assertGreater(max(abs(v - a) for v, leg in zip(shown[1::3], ctrl.robot.config.legs)
+                               for a in [ctrl.angles[leg.name].femur]), 0.1)  # la télémétrie montre l'angle envoyé
+        top = max(top, self.check_servos(ctrl, driver, 2, speed=speed))
+        self.assertGreater(top, 50.0)
+        raw, d2 = controller(0)
+        raw.handle("POWER 1")
+        ticks(raw, 2)
+        raw.handle("CAL")
+        ticks(raw, 1)
+        self.assertEqual(driver.angles, d2.angles)  # arrivé exactement
+        self.assertFalse(ctrl.smooth.busy)
+        self.assertEqual(ctrl.telemetry(), raw.telemetry())
+
+    def test_first_command_after_power_on_is_direct(self):
+        ctrl, driver = controller()
+        ctrl.handle("CAL")
+        self.assertEqual(len(driver.angles), 18)  # position inconnue : envoyée telle quelle
+        self.assertTrue(all(abs(v - 90.0) < 1e-9 for v in driver.angles.values()))
+        ctrl.handle("POWER 0")
+        driver.angles.clear()
+        ctrl.handle("CAL")
+        self.assertEqual(len(driver.angles), 18)
+
+    def test_pose_is_reached_smoothly(self):
+        ctrl, driver = controller()
+        r = ctrl.robot
+        ctrl.handle("STAND")
+        ticks(ctrl, 6)
+        ctrl.handle("POSE 10 -8 12 6 -5 15")
+        seen = {"n": 0, "last": r.pose.z, "step": 0.0, "speed": 0.0}
+
+        def each():
+            z = r.pose.z
+            if z != 12.0:
+                seen["n"] += 1
+            self.assertGreaterEqual(z, seen["last"])  # sans dépassement
+            self.assertLessEqual(z, 12.0)
+            seen["step"] = max(seen["step"], abs((z - seen["last"]) / DT - seen["speed"]))
+            seen["speed"], seen["last"] = (z - seen["last"]) / DT, z
+
+        ticks(ctrl, 0.1, each)
+        self.assertLess(r.pose.z, 3.0)  # départ en douceur
+        ticks(ctrl, 1.5, each)
+        self.assertGreater(seen["n"], 10)  # ~0,35 s
+        self.assertLess(seen["n"], 30)
+        self.assertLess(seen["step"], 400.0 * DT * 1.5)  # mm/s par tick
+        p = r.pose
+        self.assertEqual((p.x, p.y, p.z), (10.0, -8.0, 12.0))
+        self.assertAlmostEqual(math.degrees(p.roll), 6.0, places=9)
+        self.assertAlmostEqual(math.degrees(p.yaw), 15.0, places=9)
+        self.assertIs(ctrl.user_pose, ctrl.pose_goal)
+
+    def test_zero_turns_everything_off(self):
+        ctrl, driver = controller(0)
+        ctrl.handle("STAND")
+        ticks(ctrl, 6)
+        ctrl.handle("POSE 0 0 12 0 0 0")
+        ctrl.tick(DT)
+        self.assertEqual(ctrl.robot.pose.z, 12.0)  # comme avant : d'un coup
+        ctrl.handle("SIT")
+        ticks(ctrl, 4)
+        before = dict(driver.angles)
+        ctrl.handle("CAL")
+        ctrl.tick(DT)
+        self.assertGreater(max(abs(driver.angles[k] - before[k]) for k in before), 20.0)
+        self.assertFalse(ctrl.smooth.busy)
+
+    def test_command(self):
+        ctrl, _ = controller()
+        self.assertTrue(ctrl.handle("WALK").endswith(" slew 1500"))
+        self.assertTrue(ctrl.handle("SLEW 800").endswith(" slew 800"))
+        self.assertTrue(ctrl.handle("SLEW -5").endswith(" slew 0"))
+        self.assertTrue(ctrl.handle("SLEW 1e9").endswith(" slew 20000"))
+        self.assertTrue(ctrl.handle("SLEW x").startswith("ERR"))
+
+    def test_stand_up_and_fold_stay_inside_limits(self):
+        """Se lever, replier les pattes du milieu, s'asseoir : servos toujours dans leur course."""
+        ctrl, driver = controller(300)  # très doux : le plus de retard possible
+        joints = {(j.board, j.channel): j for leg in ctrl.robot.config.legs for j in (leg.coxa, leg.femur, leg.tibia)}
+
+        def each():
+            for k, v in driver.angles.items():
+                self.assertGreaterEqual(v, joints[k].min_deg)
+                self.assertLessEqual(v, joints[k].max_deg)
+
+        for cmd, seconds in (("STAND", 6), ("LEGS 4", 3), ("POSE 5 5 -10 8 8 20", 2), ("LEGS 6", 3), ("SIT", 5),
+                             ("CAL", 2), ("TEST LF femur", 4), ("POWER 1", 3)):
+            ctrl.handle(cmd)
+            ticks(ctrl, seconds, each)
+        self.assertFalse(ctrl.smooth.busy)
 
 
 class SoftTouchdownTest(unittest.TestCase):

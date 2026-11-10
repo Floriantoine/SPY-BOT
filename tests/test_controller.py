@@ -160,6 +160,8 @@ class ControllerTest(unittest.TestCase):
         before = self.driver.angles[(leg.femur.board, leg.femur.channel)]
         self.assertAlmostEqual(before, 90.0)
         self.assertEqual(c.handle("TRIM lm femur -4.5"), "OK TRIM LM femur -4.5")
+        for _ in range(20):  # le servo rejoint sa consigne en douceur (SLEW)
+            c.tick(0.02)
         self.assertAlmostEqual(self.driver.angles[(leg.femur.board, leg.femur.channel)], 85.5)
         c.handle("SAVE")
         with open(self.calib) as f:
@@ -222,6 +224,8 @@ class InvertTest(unittest.TestCase):
         ctrl = Controller(default_config(), driver, path)
         ctrl.handle("CAL")
         ctrl.handle("TRIM RF femur 15")
+        for _ in range(20):  # le servo rejoint sa consigne en douceur (SLEW)
+            ctrl.tick(0.02)
         leg = ctrl.robot.config.leg("RF")
         key = (leg.femur.board, leg.femur.channel)
         self.assertAlmostEqual(driver.angles[key], 105.0, places=3)

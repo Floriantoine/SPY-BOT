@@ -20,11 +20,12 @@ Controller::Controller(ServoDriver* driver, CalibStore* store, Ranger* ranger, I
     : telemetry_period(TELEMETRY_PERIOD),
       mode(MODE_OFF),
       angles(NULL),
-      robot(driver, &pool_),
+      smooth(driver),
+      robot(&smooth, &pool_),
       scanner(ranger, driver),
       imu(imu_),
       tilted(false),
-      driver_(driver),
+      driver_(&smooth),
       store_(store) {
     pool_.hold(&angles);
     pool_.hold(&margin_of_);
@@ -35,7 +36,9 @@ Controller::Controller(ServoDriver* driver, CalibStore* store, Ranger* ranger, I
     odom_[0] = odom_[1] = odom_[2] = 0.0;
     sit_drop_ = CFG_SIT_DROP;
     height_ = -sit_drop_;
-    user_pose_ = body_pose();
+    user_pose_ = pose_goal_ = body_pose();
+    pose_moving_ = false;
+    for (int i = 0; i < 6; i++) pose_vel_[i] = 0.0;
     pose_limited_ = false;
     free_time_ = went_ = 0.0;
     tick_us_ = 0;
@@ -179,6 +182,7 @@ const char* Controller::tick(double dt) {
     Hexapod& r = robot;
     char st[96];
     since_line_ += dt;
+    if (pose_moving_) slew_pose(dt);
     if (mode != MODE_STAND) {
         wanted_ = gait_command();
         if (nav.active()) {
@@ -260,6 +264,8 @@ const char* Controller::tick(double dt) {
             out_line("LIMIT pose 0");
         }
     }
+    // Consignes du tick envoyées aux servos, sauts adoucis (pas en marche).
+    smooth.flush(dt, mode == MODE_STAND && !r.still());
 
     if (imu != NULL) {
         unsigned long tg = g_prof.on ? platform_micros() : 0;
@@ -343,9 +349,56 @@ void Controller::telemetry() {
     out_len_ += n;
     for (int i = 0; i < NLEGS; i++) {
         const LegAngles& a = angles->leg[i];
-        n = snprintf(out_ + out_len_, OUT_SIZE - out_len_, " %lld %lld %lld", pyround(a.coxa * 1000),
-                     pyround(a.femur * 1000), pyround(a.tibia * 1000));
+        double v[3] = {a.coxa, a.femur, a.tibia};
+        if (smooth.busy) {
+            // Servo pas encore sur sa consigne : l'angle vraiment envoyé.
+            for (int j = 0; j < 3; j++) {
+                const JointServo& js = g_legs[i].joint[j];
+                double p;
+                if (smooth.lag(js.board, js.channel, &p)) v[j] = (p - js.k7) / js.k8;
+            }
+        }
+        n = snprintf(out_ + out_len_, OUT_SIZE - out_len_, " %lld %lld %lld", pyround(v[0] * 1000),
+                     pyround(v[1] * 1000), pyround(v[2] * 1000));
         out_len_ += n;
+    }
+}
+
+void Controller::slew_pose(double dt) {
+    // La pose suivie rejoint la pose demandée, sans à-coup.
+    double a = smooth.accel;
+    if (a <= 0.0 || dt <= 0.0) {
+        if (a <= 0.0) {
+            user_pose_ = pose_goal_;
+            pose_moving_ = false;
+            for (int i = 0; i < 6; i++) pose_vel_[i] = 0.0;
+        }
+        return;
+    }
+    double k = a / SLEW_DEG;
+    const BodyPose& g = pose_goal_;
+    const BodyPose& u = user_pose_;
+    const double goal[6] = {g.x, g.y, g.z, g.roll, g.pitch, g.yaw};
+    const double now[6] = {u.x, u.y, u.z, u.roll, u.pitch, u.yaw};
+    double vals[6];
+    bool done = true;
+    for (int i = 0; i < 6; i++) {
+        double x = goal[i];
+        double e = now[i] - x;
+        if (e == 0.0) {
+            pose_vel_[i] = 0.0;
+        } else {
+            soft_step(e, pose_vel_[i], (i < 3 ? POSE_SLEW_MM : POSE_SLEW_RAD) * k, dt, &e, &pose_vel_[i]);
+            if (e != 0.0) done = false;
+        }
+        if (pose_vel_[i] != 0.0) done = false;
+        vals[i] = x + e;
+    }
+    if (done) {
+        user_pose_ = pose_goal_;
+        pose_moving_ = false;
+    } else {
+        user_pose_ = body_pose(vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]);
     }
 }
 
@@ -550,8 +603,9 @@ const char* Controller::walk_status() {
     static const char* const WAVE_NAMES[3] = {"0", "1", "auto"};
     const Hexapod& r = robot;
     walk_gait_ = r.six;
-    snprintf(status_, sizeof(status_), "WALK wave %s %.0f gait %s shift %.1f sag %.1f", WAVE_NAMES[r.wave_mode],
-             r.wave_speed, r.six == &r.wave ? "wave" : "tripod", r.wave_shift, r.sag);
+    snprintf(status_, sizeof(status_), "WALK wave %s %.0f gait %s shift %.1f sag %.1f slew %.0f",
+             WAVE_NAMES[r.wave_mode], r.wave_speed, r.six == &r.wave ? "wave" : "tripod", r.wave_shift, r.sag,
+             smooth.accel);
     return status_;
 }
 
@@ -594,6 +648,7 @@ static const CmdSpec COMMANDS[] = {
     {"wave", 0, -1, {0}},
     {"sag", 1, 1, {"deg"}},
     {"shift", 1, 1, {"mm"}},
+    {"slew", 1, 1, {"accel"}},
     {"walk", 0, 0, {0}},
     {"cal", 0, 0, {0}},
     {"test", 2, 2, {"leg_name", "joint_name"}},
@@ -772,8 +827,9 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
     if (!strcmp(name, "POSE")) {
         for (int i = 0; i < 6; i++)
             if (!pyfloat(a[i], &v[i])) return err_float(name, a[i]);
-        user_pose_ = body_pose(clampv(v[0], 20), clampv(v[1], 20), clampv(v[2], 15), clampv(v[3], 8) * DEG,
+        pose_goal_ = body_pose(clampv(v[0], 20), clampv(v[1], 20), clampv(v[2], 15), clampv(v[3], 8) * DEG,
                                clampv(v[4], 8) * DEG, clampv(v[5], 20) * DEG);
+        pose_moving_ = true;
         return NULL;
     }
     if (!strcmp(name, "GAIT")) {
@@ -829,6 +885,11 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
     if (!strcmp(name, "SAG")) {
         if (!pyfloat(a[0], &v[0])) return err_float(name, a[0]);
         r.sag = pymax(0.0, pymin(SAG_MAX, v[0]));
+        return walk_status();
+    }
+    if (!strcmp(name, "SLEW")) {
+        if (!pyfloat(a[0], &v[0])) return err_float(name, a[0]);
+        smooth.accel = pymax(0.0, pymin(SLEW_MAX, v[0]));
         return walk_status();
     }
     if (!strcmp(name, "WALK")) return walk_status();
