@@ -116,10 +116,18 @@
             <button data-legs="6" class="active">6 pattes</button>
             <button data-legs="4">4 pattes</button>
           </div>
+          <div class="presets" id="wave-mode" role="group" aria-label="Démarche à 6 pattes">
+            <button data-wave="0" class="active" title="Deux trépieds alternent : 3 pieds au sol, la plus rapide">Tripode</button>
+            <button data-wave="1" title="Une patte en l'air à la fois, 5 pieds au sol : lente (20 à 30 mm/s), moins d'effort pour chaque servo">Vague</button>
+            <button data-wave="AUTO" title="Vague à petite vitesse, tripode au-dessus du seuil ; le changement attend que les 6 pieds soient posés">Auto</button>
+          </div>
+          <div class="field"><span>Auto : vague en dessous de</span><output></output>
+            <input id="wave-speed" type="range" min="5" max="60" step="5" value="20"></div>
           <div class="field"><span>Durée d'un pas</span><output></output>
             <input id="period" type="range" min="0.4" max="3" step="0.1" value="1.4"></div>
           <div class="field"><span>Levée du pied</span><output></output>
             <input id="step" type="range" min="5" max="19" step="1" value="19"></div>
+          <p class="hint" id="walk-state">Démarche à 6 pattes : tripode</p>
         </div>
         <div class="card sensor-card" id="sensor-card">
           <h3>Capteur avant <span class="sensor-state" id="sensor-state">–</span></h3>

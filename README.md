@@ -117,6 +117,7 @@ Les onglets règlent la vitesse maximale (avec les préréglages **Lent**, **Nor
 - **Traces des pieds** (bouton en haut à droite de la vue) : le sol défile sous le robot et chaque pied y laisse sa trace, verte au sol, bleue en l'air. Un pied qui glisse laisse un trait au lieu d'un point. Le défilement est calculé d'après les pieds posés (il suit exactement la démarche), sans capteur.
 - **Animations** : révérence, danse, pompes... et un éditeur pour créer les tiennes à partir des poses de l'onglet **Corps**. Elles sont enregistrées dans le navigateur.
 - **Marche à 4 pattes** (onglet **Pilotage**, **Démarche**) : les pattes du milieu se replient et les 4 pattes des coins avancent une à une, le corps se décalant avant chaque pas pour rester en équilibre. Plus lent qu'à 6 pattes ; à changer robot arrêté.
+- **Marche « vague »** (onglet **Pilotage**, **Démarche** : **Tripode**, **Vague** ou **Auto** ; commande `WAVE 0|1|AUTO [mm/s]`) : une seule patte en l'air à la fois, 5 pieds au sol, dans l'ordre arrière gauche, milieu gauche, avant gauche, avant droite, milieu droite, arrière droite. Chaque servo porte moins (5 pattes se partagent le poids au lieu de 3), mais la marche est lente : 20 à 30 mm/s au plus avec les réglages de départ (la consigne est réduite toute seule). **Auto** marche en vague tant que le pied le plus rapide reste sous le seuil (20 mm/s au départ) et passe en tripode au-dessus ; il revient à la vague sous 80 % du seuil. En marche, le changement attend l'instant où les 6 pieds sont posés (au plus un pas), le corps garde sa vitesse et aucun pied ne saute ni ne glisse ; pour passer en vague, le robot ralentit d'abord. Au démarrage : tripode, comme avant.
 - **Servo à l'envers** : si une patte réelle part dans le sens opposé à la 3D pendant **Tester ce servo**, **Inverser le sens** corrige ce servo (enregistré avec les trims).
 - **Calibration** : **Exporter** télécharge les trims dans un fichier, **Importer** les recharge (par exemple après avoir reflashé l'ESP32), puis **Enregistrer** les garde dans le robot.
 
@@ -205,7 +206,7 @@ s'en va doucement, plus d'arrêt de sécurité) et la reprend dès qu'il répond
 | --- | --- |
 | `hexapod/leg_ik.py` | IK et FK d'une patte 3 DDL (solution « genou en haut »). |
 | `hexapod/body_ik.py` | IK du corps : translation et roulis/tangage/lacet, pieds fixes au sol. |
-| `hexapod/gait.py` | Démarches tripode (6 pattes) et pas à pas (4 pattes) pilotées par `vx`, `vy`, `yaw_rate`, arrêt toujours pieds posés. |
+| `hexapod/gait.py` | Démarches tripode et vague (6 pattes) et pas à pas (4 pattes) pilotées par `vx`, `vy`, `yaw_rate`, arrêt toujours pieds posés. |
 | `hexapod/servo.py` | Angle IK → angle servo (milieu, sens, trim, butées) et pilote PCA9685 pour MicroPython. |
 | `hexapod/controller.py` | États du robot (relâché, assis, debout, calibration) et protocole texte avec le PC. |
 | `hexapod/config.py` | Dimensions, posture debout, câblage. |
@@ -226,4 +227,4 @@ micropython tests/micropython_smoke.py    # même code sous MicroPython
 
 ## Protocole série
 
-Une commande par ligne à 115200 bauds, documentée en tête de `hexapod/controller.py` : `POWER 1|0`, `STAND`, `SIT`, `MOVE vx vy yaw`, `POSE x y z roll pitch yaw`, `GAIT période hauteur`, `LEGS 6|4`, `CAL`, `TEST patte articulation`, `TRIM patte articulation degrés`, `INVERT patte articulation 1|0`, `SAVE`, `GETCAL`, `GEOM`. Le robot renvoie `OK …`, `ERR …` et une ligne de télémétrie `T …` 20 fois par seconde.
+Une commande par ligne à 115200 bauds, documentée en tête de `hexapod/controller.py` : `POWER 1|0`, `STAND`, `SIT`, `MOVE vx vy yaw`, `POSE x y z roll pitch yaw`, `GAIT période hauteur`, `LEGS 6|4`, `WAVE 0|1|AUTO [mm/s]`, `WALK`, `CAL`, `TEST patte articulation`, `TRIM patte articulation degrés`, `INVERT patte articulation 1|0`, `SAVE`, `GETCAL`, `GEOM`. Le robot renvoie `OK …`, `ERR …` et une ligne de télémétrie `T …` 20 fois par seconde.

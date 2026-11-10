@@ -1,6 +1,6 @@
 import unittest
 
-from hexapod.gait import QUAD_ORDER, TRIPOD_A, TRIPOD_B, QuadGait, TripodGait
+from hexapod.gait import QUAD_ORDER, TRIPOD_A, TRIPOD_B, WAVE_ORDER, QuadGait, TripodGait, WaveGait
 from hexapod.config import default_config
 
 
@@ -52,3 +52,37 @@ class QuadGaitTest(unittest.TestCase):
             self.gait.advance(0.01, True)
             self.assertIsNone(self.gait.swing("LM"))
             self.assertIsNone(self.gait.swing("RM"))
+
+
+class WaveGaitTest(unittest.TestCase):
+    def test_one_leg_at_a_time_in_order(self):
+        gait = WaveGait(period=2.0)
+        order = []
+        for _ in range(400):
+            gait.advance(0.01, True)
+            up = [n for n in WAVE_ORDER if gait.swing(n) not in (None, 0.0)]
+            self.assertLessEqual(len(up), 1)
+            self.assertGreaterEqual(len(gait.feet_on_ground()), 5)
+            if up and (not order or order[-1] != up[0]):
+                order.append(up[0])
+        self.assertEqual(tuple(order[:6]), WAVE_ORDER)
+        self.assertEqual(sorted(WAVE_ORDER), sorted(TRIPOD_A + TRIPOD_B))
+
+    def test_stops_with_all_feet_down(self):
+        for start in (0.0, 0.07, 0.31, 0.95):
+            gait = WaveGait(period=2.0)
+            gait.advance(start * 2.0, True)
+            for _ in range(60):
+                gait.advance(0.013, False)
+            self.assertTrue(gait.at_rest)
+            self.assertEqual(len(gait.feet_on_ground()), 6)
+            phase = gait.phase
+            gait.advance(0.1, False)
+            self.assertEqual(gait.phase, phase)
+
+    def test_each_foot_pushes_five_sixths_of_the_cycle(self):
+        gait = WaveGait(period=3.0)
+        self.assertAlmostEqual(gait.stance_time, 2.5)
+        gait.phase = 0.5  # RF (4e) commence son pas
+        self.assertAlmostEqual(gait.swing("RF"), 0.0)
+        self.assertAlmostEqual(gait.time_to_lift("RM"), 0.5)

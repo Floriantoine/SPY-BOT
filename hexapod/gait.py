@@ -4,6 +4,9 @@ Tripode (6 pattes) : deux trépieds alternent ; pendant que l'un pousse au sol
 (appui), l'autre se lève et revient vers l'avant (transfert). Trois pieds
 touchent donc toujours le sol, ce qui rend la marche statiquement stable.
 
+Vague (6 pattes) : une seule patte en l'air à la fois, 5 pieds au sol (voir
+WaveGait) ; plus lente, moins d'effort pour chaque servo.
+
 4 pattes : les pattes des coins se lèvent une à une, les pattes du milieu
 restent repliées (voir QuadGait).
 
@@ -21,6 +24,10 @@ TRIPOD_B = ("LF", "RM", "LR")
 # droite, avant droite) et pattes repliées.
 QUAD_ORDER = ("LR", "LF", "RR", "RF")
 QUAD_TUCKED = ("LM", "RM")
+# Marche « vague » à 6 pattes : ordre des pas, en faisant le tour du corps
+# (côté gauche de l'arrière vers l'avant, puis côté droit de l'avant vers
+# l'arrière) : la patte en l'air change toujours pour sa voisine.
+WAVE_ORDER = ("LR", "LM", "LF", "RF", "RM", "RR")
 
 
 class GaitCommand:
@@ -89,6 +96,60 @@ class TripodGait:
 
     def feet_on_ground(self):
         return [n for n in TRIPOD_A + TRIPOD_B if self.swing(n) is None or self.swing(n) == 0.0]
+
+
+class WaveGait:
+    """Marche à 6 pattes, une patte en l'air à la fois (« wave gait ») :
+    5 pieds touchent toujours le sol. Le cycle est découpé en 6 parts, une
+    par patte (WAVE_ORDER) ; au début de chaque part, les 6 pieds sont au sol.
+    Chaque pied pousse pendant 5/6 du cycle : à longueur de pas égale, la
+    marche est bien plus lente qu'en tripode."""
+
+    def __init__(self, period=2.8, step_height=30.0, max_stride=60.0):
+        self.period = period  # durée d'un cycle complet : chaque patte fait un pas
+        self.step_height = step_height
+        self.max_stride = max_stride
+        self.phase = 0.0
+        self.shift = (0.0, 0.0)
+
+    @property
+    def swing_part(self):
+        return 1.0 / 6
+
+    @property
+    def stance_time(self):
+        return (1.0 - self.swing_part) * self.period
+
+    @property
+    def at_rest(self):
+        q = self.phase * 6
+        return abs(q - round(q)) < 1e-9
+
+    def reset(self):
+        self.phase = 0.0
+
+    def advance(self, dt, moving):
+        if not moving and self.at_rest:
+            return
+        new_phase = self.phase + dt / self.period
+        if not moving:
+            # Arrêt au prochain sixième : tous les pieds au sol.
+            new_phase = min(new_phase, (int(self.phase * 6 + 1e-9) + 1) / 6.0)
+        self.phase = new_phase % 1.0
+        if abs(self.phase - 1.0) < 1e-9:
+            self.phase = 0.0
+
+    def swing(self, leg_name):
+        w = self.swing_part
+        u = (self.phase - WAVE_ORDER.index(leg_name) / 6) % 1.0
+        return u / w if u < w - 1e-9 else None
+
+    def time_to_lift(self, leg_name):
+        u = (self.phase - WAVE_ORDER.index(leg_name) / 6) % 1.0
+        return (1.0 - u) * self.period
+
+    def feet_on_ground(self):
+        return [n for n in WAVE_ORDER if self.swing(n) is None or self.swing(n) == 0.0]
 
 
 QUAD_SHIFT = 0.35  # part de chaque quart de cycle où le corps se décale, 4 pieds au sol

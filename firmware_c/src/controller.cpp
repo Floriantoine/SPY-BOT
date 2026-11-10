@@ -49,6 +49,7 @@ Controller::Controller(ServoDriver* driver, CalibStore* store, Ranger* ranger, I
     test_time_ = 0.0;
     test_leg_ = test_joint_ = 0;
     upright_time_ = 0.0;
+    walk_gait_ = robot.six;
     pending_len_ = 0;
     pending_[0] = 0;
     out_len_ = 0;
@@ -246,6 +247,7 @@ const char* Controller::tick(double dt) {
             angles = a;
         else
             r.command = gait_command();  // on garde la dernière position atteignable
+        if (r.six != walk_gait_) out_line("%s", walk_status());  // tripode <-> vague (WAVE AUTO)
         integrate(r.travel);
         went_ += py_sqrt_sum_sq(r.travel[0], r.travel[1]);
         // Pose réduite par le robot (servos en butée sinon) : prévenir l'appli.
@@ -541,6 +543,16 @@ const char* Controller::imu_status() {
     return status_;
 }
 
+const char* Controller::walk_status() {
+    // Ligne WALK : réglages de la marche et démarche à 6 pattes en cours.
+    static const char* const WAVE_NAMES[3] = {"0", "1", "auto"};
+    const Hexapod& r = robot;
+    walk_gait_ = r.six;
+    snprintf(status_, sizeof(status_), "WALK wave %s %.0f gait %s", WAVE_NAMES[r.wave_mode], r.wave_speed,
+             r.six == &r.wave ? "wave" : "tripod");
+    return status_;
+}
+
 bool Controller::save_imu() {
     const double zero[2] = {imu->attitude.zero_roll, imu->attitude.zero_pitch};
     return store_ != NULL && store_->save_imu(imu->axes, zero);
@@ -577,6 +589,8 @@ static const CmdSpec COMMANDS[] = {
     {"pose", 6, 6, {"x", "y", "z", "roll", "pitch", "yaw"}},
     {"gait", 2, 2, {"period", "step_height"}},
     {"legs", 1, 1, {"n"}},
+    {"wave", 0, -1, {0}},
+    {"walk", 0, 0, {0}},
     {"cal", 0, 0, {0}},
     {"test", 2, 2, {"leg_name", "joint_name"}},
     {"trim", 3, 3, {"leg_name", "joint_name", "deg"}},
@@ -766,7 +780,8 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         if (!pyfloat(a[1], &v[1])) return err_float(name, a[1]);
         r.tripod.step_height = r.gait4.step_height = pymax(5.0, pymin(top, v[1]));
         // À 4 pattes, chaque patte fait son pas à tour de rôle : cycle deux fois plus long.
-        r.gait4.period = 2 * r.tripod.period;
+        r.gait4.period = r.wave.period = 2 * r.tripod.period;
+        r.wave.step_height = r.tripod.step_height;
         snprintf(reply_, OUT_SIZE, "OK GAIT %.2f %.0f", r.tripod.period, r.tripod.step_height);
         return reply_;
     }
@@ -784,6 +799,25 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         snprintf(reply_, OUT_SIZE, "OK LEGS %d", r.legs);
         return reply_;
     }
+    if (!strcmp(name, "WAVE")) {
+        if (n) {
+            char a0[16];
+            upper_copy(a0, sizeof(a0), a[0]);
+            if (!strcmp(a0, "AUTO")) {
+                if (n > 1) {
+                    if (!pyfloat(a[1], &v[0])) return err_float(name, a[1]);
+                    r.wave_speed = pymax(WAVE_SPEED_LO, pymin(WAVE_SPEED_HI, v[0]));
+                }
+                r.wave_mode = WAVE_AUTO;
+            } else if (!strcmp(a0, "0") || !strcmp(a0, "1")) {
+                r.wave_mode = a0[0] == '1' ? WAVE_ON : WAVE_OFF;
+            } else {
+                return err(name, "0, 1 ou AUTO [mm/s]");
+            }
+        }
+        return walk_status();
+    }
+    if (!strcmp(name, "WALK")) return walk_status();
     if (!strcmp(name, "CAL")) {
         mode = MODE_CAL;
         r.command = gait_command();

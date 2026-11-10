@@ -105,7 +105,7 @@ private:
 
 class Hexapod;
 
-// TripodGait ou QuadGait (Hexapod.gait pointe sur l'une des deux).
+// TripodGait, WaveGait ou QuadGait (Hexapod.gait pointe sur l'une des trois).
 struct Gait {
     double period, step_height, max_stride, phase;
     double shift_x, shift_y;  // décalage du corps (balancement à 4 pattes)
@@ -122,6 +122,17 @@ struct Gait {
 struct TripodGait : public Gait {
     double stance_time() const { return period / 2; }
     bool at_rest() const { return phase == 0.0 || phase == 0.5; }
+    void reset() { phase = 0.0; }
+    void advance(double dt, bool moving);
+    double swing(int leg) const;
+    double time_to_lift(int leg) const;
+};
+
+// Marche « vague » : une patte en l'air à la fois, 5 pieds au sol.
+struct WaveGait : public Gait {
+    double swing_part() const { return 1.0 / 6; }
+    double stance_time() const { return (1.0 - swing_part()) * period; }
+    bool at_rest() const;
     void reset() { phase = 0.0; }
     void advance(double dt, bool moving);
     double swing(int leg) const;
@@ -165,6 +176,10 @@ public:
     AnglePool* pool;
     TripodGait tripod;
     QuadGait gait4;
+    WaveGait wave;
+    int wave_mode;      // WAVE_OFF, WAVE_ON ou WAVE_AUTO
+    double wave_speed;  // seuil de WAVE AUTO (mm/s)
+    Gait* six;          // démarche à 6 pattes en cours (tripode ou vague)
     Gait* gait;
     int legs;     // pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
     double tuck;  // 0 = pattes du milieu au sol, 1 = repliées
@@ -225,7 +240,12 @@ private:
     double reach_cache_key_[12];
     GaitCommand reach_cache_out_;
     double halves_[NLEGS];
+    bool wave_key_valid_;
+    double wave_key_[4];  // dernière consigne vue par wanted_gait() et sa vitesse
 
+    Gait* wanted_gait();
+    double foot_speed(const GaitCommand& c) const;
+    void switch_gait(Gait* next);
     void forget_ground();
     bool solve_checked(const BodyPose& pose, double lift, AngleSet* out);
     bool try_(double scale, double lift, AngleSet* out);

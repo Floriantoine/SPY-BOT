@@ -158,6 +158,7 @@ main { flex: 1; display: flex; min-height: 0; }
 .field span { color: var(--muted); font-size: 13px; }
 .field output { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
 .field input { grid-column: 1 / -1; }
+.field[hidden] { display: none; }
 
 input[type=range] {
   -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; margin: 0;

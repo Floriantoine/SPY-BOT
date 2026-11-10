@@ -23,6 +23,11 @@ Tout ce que fait `main.py` sur le vrai robot :
 - Marche à 4 pattes : `LEGS 4` / `LEGS 6` (à l'arrêt, pieds posés), pattes
   du milieu repliées et dépliées en 1 s, une patte en l'air à la fois, corps
   qui se balance dans le triangle des 3 pieds au sol.
+- Marche « vague » à 6 pattes : `WAVE 0|1|AUTO [mm/s]` (une patte en l'air à
+  la fois, 5 pieds au sol ; automatique : vague à petite vitesse, tripode
+  au-dessus du seuil ; changement en marche à l'instant où les 6 pieds sont
+  posés), `WALK` (réglages de la marche, ligne `WALK ...` envoyée aussi quand
+  la démarche change).
 - Gyroscope MPU6050 (0x68, même bus I²C que les PCA9685), cherché au
   démarrage : biais mesuré pendant la première seconde (robot immobile ; la
   mesure recommence tant qu'on le bouge, `IMU CAL` la refait), filtre
@@ -152,7 +157,9 @@ mpremote connect COM6 fs cp -r hexapod : + fs cp main.py : + fs cp calib.json : 
 - Test de comparaison avec le Python (il faut g++) :
   `python3 firmware_c/test/compare.py` (ou seulement certains scénarios :
   `python3 firmware_c/test/compare.py capteurs "4 pattes"`). Scénarios :
-  sans capteurs ; marche à 4 pattes ; gyroscope et capteur avant (faux
+  sans capteurs ; marche à 4 pattes ; marche en vague (changements de
+  démarche en marchant, avec `LEGS 4`, des poses fortes, puis avec `LEVEL`,
+  `FEEL` et le capteur) ; gyroscope et capteur avant (faux
   MPU6050 et VL53L1X sur un faux bus I²C, nourris par un petit monde simulé :
   pente, chocs, bruit, obstacles, personne à suivre, mesures pas prêtes,
   lectures en échec) ; gyroscope seul ; gyroscope qui ne répond pas ;

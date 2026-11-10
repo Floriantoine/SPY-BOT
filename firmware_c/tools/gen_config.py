@@ -100,6 +100,7 @@ def main():
     w("    int middle;    // patte du milieu (sangle de la batterie)")
     w("    int tripod_a;  // trépied A (RF, LM, RR)")
     w("    int quad_rank; // rang dans gait.QUAD_ORDER, -1 si repliée à 4 pattes")
+    w("    int wave_rank; // rang dans gait.WAVE_ORDER (marche « vague »)")
     w("    int tucked;    // repliée à 4 pattes (gait.QUAD_TUCKED)")
     w("    int diagonal;  // patte opposée en diagonale (gait._diagonal), -1 sinon")
     w("    double tuck_x, tuck_y, tuck_z;  // pied replié, repère corps (Hexapod.tucked_foot)")
@@ -114,10 +115,10 @@ def main():
         quad = gait_mod.QUAD_ORDER.index(leg.name) if leg.name in gait_mod.QUAD_ORDER else -1
         diag = names.index(gait_mod._diagonal(leg.name)) if quad >= 0 else -1
         t = trig.tucked_foot(leg)
-        w('    {"%s", %s, %s, %s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %d, %s, %s, %s, {%s}},' % (
+        w('    {"%s", %s, %s, %s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %d, %d, %s, %s, %s, {%s}},' % (
             leg.name, f(leg.mount_x), f(leg.mount_y), f(leg.mount_angle), f(ca), f(sa),
             f(p[0]), f(p[1]), f(p[2]), leg.name in cfg.MIDDLE_LEGS, leg.name in gait_mod.TRIPOD_A,
-            quad, leg.name in gait_mod.QUAD_TUCKED, diag, f(t[0]), f(t[1]), f(t[2]), js))
+            quad, gait_mod.WAVE_ORDER.index(leg.name), leg.name in gait_mod.QUAD_TUCKED, diag, f(t[0]), f(t[1]), f(t[2]), js))
     w("};")
     w("// Voisines dans le sens trigo (robot.AROUND), en indices de CFG_LEGS.")
     w("static const int CFG_AROUND[NLEGS] = {%s};" % ", ".join(str(names.index(n)) for n in rob.AROUND))
@@ -141,6 +142,11 @@ def main():
                  "HOME_POSE_MM", "REACH_MARGIN", "REACH_COXA", "REACH_MAX", "REACH_POSE", "LIFT_MIN", "LIFT_STEP",
                  "TOUCH_FROM", "TOUCH_RATE", "FEEL_SMOOTH", "SINK_WINDOW", "EXTEND_SPEED", "GROUND_MAX"):
         w("static const double %s = %s;" % (name, f(getattr(rob, name))))
+    for name in ("WAVE_SPEED", "WAVE_BACK", "WAVE_ACCEL", "WAVE_ENTER"):
+        w("static const double %s = %s;" % (name, f(getattr(rob, name))))
+    w("static const double WAVE_SPEED_LO = %s;" % f(rob.WAVE_SPEED_RANGE[0]))
+    w("static const double WAVE_SPEED_HI = %s;" % f(rob.WAVE_SPEED_RANGE[1]))
+    w("enum { WAVE_OFF = %d, WAVE_ON = %d, WAVE_AUTO = %d };" % (rob.WAVE_OFF, rob.WAVE_ON, rob.WAVE_AUTO))
     w("static const double HOME_RANGE_LO = %s;" % f(rob.HOME_RANGE[0]))
     w("static const double HOME_RANGE_HI = %s;" % f(rob.HOME_RANGE[1]))
     w("#define REACH_DIRS %d" % rob.REACH_DIRS)
@@ -158,6 +164,9 @@ def main():
     w("static const double QUAD_STEP_HEIGHT = %s;" % f(q.step_height))
     w("static const double QUAD_MAX_STRIDE = %s;" % f(q.max_stride))
     w("static const double QUAD_SWAY = %s;" % f(q.sway))
+    w("// Rang dans WAVE_ORDER -> indice de CFG_LEGS.")
+    w("static const int CFG_WAVE_ORDER[NLEGS] = {%s};" % ", ".join(str(names.index(n)) for n in gait_mod.WAVE_ORDER))
+    w("static const double WAVE_PERIOD = %s;  // WaveGait de Hexapod" % f(trig.wave.period))
     w("static const double TRIPOD_STEP_HEIGHT = %s;" % f(trig.tripod.step_height))
     w("static const double TRIPOD_MAX_STRIDE = %s;" % f(trig.tripod.max_stride))
     w("")

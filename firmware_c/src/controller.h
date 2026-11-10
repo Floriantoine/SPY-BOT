@@ -56,6 +56,7 @@ public:
 
     const char* sensor_status();  // ligne SENSOR (Scanner.status)
     const char* imu_status();     // ligne IMU (cmd_imu)
+    const char* walk_status();    // ligne WALK (réglages de la marche)
 
 private:
     ServoDriver* driver_;
@@ -78,6 +79,7 @@ private:
     double test_time_;
     int test_leg_, test_joint_;
     double upright_time_;
+    const Gait* walk_gait_;  // démarche à 6 pattes de la dernière ligne WALK
     double prof_time_;
     long prof_cycles_;
 

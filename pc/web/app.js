@@ -30,6 +30,7 @@ const state = {
   sim: false,
   imu: { present: false, level: false, roll: 0, pitch: 0, corrRoll: 0, corrPitch: 0, at: 0, axes: "+x+y+z", zero: [0, 0] },
   nav: "off",
+  walk: { wave: "0", waveSpeed: 20, gait: "tripod" }, // réglages de la marche (ligne WALK)
   clickMode: null, // clic sur le sol : "obst", "goal" ou "person"
 };
 
@@ -191,6 +192,13 @@ events.onmessage = (e) => {
     if (f.includes("axes")) state.imu.axes = f[f.indexOf("axes") + 1];
     if (at >= 0) state.imu.zero = [Number(f[at + 1]) / 10, Number(f[at + 2]) / 10];
     renderImu();
+  } else if (kind === "WALK") {
+    // Réglages de la marche : « wave 0|1|auto <seuil> gait tripod|wave ... ».
+    const f = rest.split(" ");
+    const at = (key) => f.indexOf(key) + 1;
+    if (at("wave")) Object.assign(state.walk, { wave: f[at("wave")], waveSpeed: Number(f[at("wave") + 1]) });
+    if (at("gait")) state.walk.gait = f[at("gait")];
+    renderWalk();
   } else if (kind === "NAV") {
     if (rest === "arrived") toast("Arrivé au point", "ok");
     else if (rest === "stuck") toast("Point impossible à atteindre : le robot s'arrête", "err");
@@ -519,6 +527,22 @@ for (const b of $$("#legs-mode button")) {
     send(`LEGS ${n}`, true);
   };
 }
+
+// Démarche à 6 pattes : tripode, vague (5 pieds au sol) ou automatique selon la vitesse.
+function renderWalk() {
+  const w = state.walk;
+  for (const b of $$("#wave-mode button")) b.classList.toggle("active", b.dataset.wave.toLowerCase() === w.wave);
+  if (document.activeElement !== $("#wave-speed")) {
+    $("#wave-speed").value = w.waveSpeed;
+    sliders.waveSpeed();
+  }
+  $("#wave-speed").closest(".field").hidden = w.wave !== "auto";
+  $("#walk-state").textContent = "Démarche à 6 pattes : " + (w.gait === "wave" ? "vague (5 pieds au sol)" : "tripode");
+}
+sliders.waveSpeed = bindSlider($("#wave-speed"), (v) => `${v} mm/s`);
+for (const b of $$("#wave-mode button")) b.onclick = () => send(`WAVE ${b.dataset.wave}`, true);
+$("#wave-speed").addEventListener("input", throttle(() => send(`WAVE AUTO ${$("#wave-speed").value}`, true), 150));
+renderWalk();
 
 // Préréglages de vitesse : règlent d'un coup vitesse, rotation et démarche.
 const PRESET_VALUES = {

@@ -4,7 +4,8 @@ import math
 
 from .body_ik import BodyPose, _trig, body_to_leg_frame, foot_in_body, leg_to_body_frame, rotation_matrix
 from .config import BATTERY_FOLD, MIDDLE_LEGS, STRAP_FOLD, TIBIA_FOLD_LIMITS
-from .gait import QUAD_ORDER, QUAD_TUCKED, GaitCommand, QuadGait, TripodGait, _diagonal, ground_velocity
+from .gait import (QUAD_ORDER, QUAD_TUCKED, TRIPOD_A, WAVE_ORDER, GaitCommand, QuadGait, TripodGait, WaveGait,
+                   _diagonal, ground_velocity)
 from .leg_ik import LegAngles, UnreachableError, leg_fk, leg_ik
 from .servo import DryRunDriver
 
@@ -24,6 +25,16 @@ GROUND_MAX = 25.0  # mm : écart de sol maximal deviné
 DECEL = 600.0  # mm/s²
 YAW_DECEL = 4.0  # rad/s²
 STOP_TOL = 20.0  # mm
+# Marche « vague » (5 pieds au sol) : toujours (WAVE 1), jamais (WAVE 0), ou
+# seulement à petite vitesse (WAVE AUTO) : la tripode prend le relais quand le
+# pied le plus rapide doit dépasser WAVE_SPEED ; la vague revient en dessous
+# de WAVE_BACK × ce seuil (pas d'aller-retour autour du seuil).
+WAVE_OFF, WAVE_ON, WAVE_AUTO = 0, 1, 2
+WAVE_SPEED = 20.0  # mm/s
+WAVE_SPEED_RANGE = (5.0, 60.0)
+WAVE_BACK = 0.8
+WAVE_ACCEL = 0.3  # part de ACCEL, DECEL... gardée en vague
+WAVE_ENTER = 0.9  # tripode -> vague : à 90 % au plus du pas de la config
 TUCK_TIME = 1.0  # s pour replier ou déplier les pattes du milieu
 # Patte repliée : fémur relevé de 55°, tibia replié de 15° vers le corps (pied
 # ~4 cm au-dessus du sol debout, ~2 cm assis), dans la course des servos et
@@ -86,6 +97,13 @@ class Hexapod:
                              max_stride=min(config.max_stride, 0.36 * config.tibia_length),
                              sway=0.3 * config.tibia_length)
         self.quad.plan = self._plan_sway
+        # Vague : chaque patte fait son pas à tour de rôle, cycle deux fois plus long.
+        self.wave = WaveGait(period=2 * self.tripod.period, step_height=config.step_height,
+                             max_stride=self.tripod.max_stride)
+        self.wave_mode = WAVE_OFF
+        self.wave_speed = WAVE_SPEED
+        self._wave_key = None  # _wanted_gait : dernière consigne et sa vitesse
+        self.six = self.tripod  # démarche à 6 pattes en cours (tripode ou vague)
         self.gait = self.tripod
         self.legs = 6  # pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
         self.tuck = 0.0  # 0 = pattes du milieu au sol, 1 = repliées
@@ -140,7 +158,7 @@ class Hexapod:
         if not (self.command.is_zero and self.at_rest):
             raise ValueError("arrêter le robot d'abord")
         self.legs = n
-        self.gait = self.quad if n == 4 else self.tripod
+        self.gait = self.quad if n == 4 else self.six
         # Les pieds restent où ils sont (posés, à moins de STOP_TOL de leur place).
         self.gait.reset()
         self.current = GaitCommand()
@@ -294,17 +312,40 @@ class Hexapod:
         self.tuck = min(goal, self.tuck + step) if goal > self.tuck else max(goal, self.tuck - step)
         # Pas de marche tant que les pattes du milieu bougent.
         target = self.command if self.tuck_settled else GaitCommand()
+        want = self._wanted_gait() if self.legs == 6 else self.gait
+        top = 0.0
+        if want is self.wave and self.gait is not want:
+            # Tripode -> vague : la vague ne va pas aussi vite. Le robot
+            # ralentit d'abord à ce qu'elle sait faire, puis change.
+            top = WAVE_ENTER * want.max_stride / want.stance_time
+            v = self._foot_speed(target)
+            if v > top:
+                k = top / v
+                target = GaitCommand(target.vx * k, target.vy * k, target.yaw_rate * k)
         c = self.current
-        self.current = GaitCommand(_approach(c.vx, target.vx, _rate(c.vx, target.vx, ACCEL, DECEL) * dt),
-                                   _approach(c.vy, target.vy, _rate(c.vy, target.vy, ACCEL, DECEL) * dt),
+        # En vague, le point de pose d'un pied en l'air dépend 3 fois plus de
+        # la consigne (appui 3 fois plus long) : elle change 3 fois moins vite.
+        adt = dt * WAVE_ACCEL if self.gait is self.wave else dt
+        self.current = GaitCommand(_approach(c.vx, target.vx, _rate(c.vx, target.vx, ACCEL, DECEL) * adt),
+                                   _approach(c.vy, target.vy, _rate(c.vy, target.vy, ACCEL, DECEL) * adt),
                                    _approach(c.yaw_rate, target.yaw_rate,
-                                             _rate(c.yaw_rate, target.yaw_rate, YAW_ACCEL, YAW_DECEL) * dt))
+                                             _rate(c.yaw_rate, target.yaw_rate, YAW_ACCEL, YAW_DECEL) * adt))
         self._home_wait -= dt
         if self._home_wait <= 0.0 and self._refresh_home():
             self._home_wait = HOME_PERIOD
         # Démarche ralentie si le corps bascule trop vite (gyroscope).
         gdt = dt * self.time_scale
-        self.gait.advance(gdt, not (self.current.is_zero and self._feet_settled()))
+        moving = not (self.current.is_zero and self._feet_settled())
+        if want is not self.gait and (top == 0.0 or self._foot_speed(self.current) <= 1.05 * top):
+            # Tripode <-> vague : seulement à un instant où les 6 pieds sont
+            # posés. En marche, la démarche s'arrête à cet instant (comme
+            # pour un arrêt), puis l'autre repart de là au tick suivant :
+            # aucun pied ne saute ni ne glisse.
+            if self.gait.at_rest:
+                self._switch_gait(want)
+            else:
+                moving = False
+        self.gait.advance(gdt, moving)
         self._move_feet(gdt)
         angles = self.solve_limited(dt)
         if angles is not self._written:  # mêmes angles qu'au tick d'avant : déjà envoyés
@@ -394,6 +435,64 @@ class Hexapod:
         except UnreachableError:
             return None
         return angles if angles is not None and neighbours_ok(angles) else None
+
+    # --- tripode ou vague ---------------------------------------------------
+
+    def _wanted_gait(self):
+        """Démarche à 6 pattes voulue maintenant (réglage WAVE)."""
+        if self.wave_mode == WAVE_OFF:
+            return self.tripod
+        if self.wave_mode == WAVE_ON:
+            return self.wave
+        # Automatique, d'après la consigne demandée (pas celle suivie, qui
+        # accélère doucement : on part tout de suite dans la bonne démarche).
+        c = self.command
+        if c.is_zero:
+            return self.six  # arrêt : on finit dans la démarche en cours
+        key = self._wave_key
+        if key is None or key[0] != c.vx or key[1] != c.vy or key[2] != c.yaw_rate:
+            key = self._wave_key = (c.vx, c.vy, c.yaw_rate, self._foot_speed(c))
+        if self.six is self.wave:
+            return self.tripod if key[3] > self.wave_speed else self.wave
+        return self.wave if key[3] < WAVE_BACK * self.wave_speed else self.tripod
+
+    def _foot_speed(self, c):
+        """Vitesse (mm/s) du pied posé le plus rapide pour la consigne `c`
+        (en tournant, ceux de l'extérieur)."""
+        speed = 0.0
+        for p in self.neutral.values():
+            vx, vy = ground_velocity(p, c)
+            v = math.sqrt(vx * vx + vy * vy)
+            if v > speed:
+                speed = v
+        return speed
+
+    def _switch_gait(self, new):
+        """Change de démarche à 6 pattes, les 6 pieds posés. Les pieds restent
+        où ils sont ; la nouvelle démarche commence par lever le pied (ou le
+        trépied) qui a le plus reculé, celui qui a le moins de place devant lui."""
+        # Le corps garde sa vitesse : la consigne suivie repart de celle que
+        # l'ancienne démarche tenait vraiment (réduite à la longueur de ses pas).
+        cmd = self.current = self._command_in_reach()
+        first, most = None, 1e-9
+        for n, p in self.neutral.items():
+            vx, vy = ground_velocity(p, cmd)
+            o, h = self.offsets[n], self.home[n]
+            d = (o[0] - h[0]) * vx + (o[1] - h[1]) * vy
+            if d > most:
+                first, most = n, d
+        if new is self.wave:
+            new.phase = WAVE_ORDER.index(first) / 6.0 if first else 0.0
+        else:
+            new.phase = 0.0 if first is None or first in TRIPOD_A else 0.5
+        new.shift = self.gait.shift
+        self.gait = self.six = new
+        # Pieds « en l'air » à 0 % de leur pas (pas encore levés) : oubliés.
+        self._lift = {}
+        self._ground_lift = {}
+        self._placed = set()
+        self._touched = set()
+        self._rest_key = None
 
     # --- interne ----------------------------------------------------------
 
@@ -539,7 +638,7 @@ class Hexapod:
     def half_stride(self, name, vx, vy):
         """Demi-pas possible pour le pied `name` qui recule à (vx, vy)."""
         g = self.gait
-        if g is not self.tripod:
+        if g is self.quad:
             return g.max_stride / 2  # à 4 pattes : le balancement du corps prend de la place
         speed = math.sqrt(vx * vx + vy * vy)
         if speed < 1e-6:
@@ -610,7 +709,9 @@ class Hexapod:
             dx, dy, _ = offsets[n]
             p = neutral[n]
             s = swings[n] = g.swing(n)
-            if s is None:
+            # À 0 % de son pas (démarche arrêtée, tous les pieds posés, par
+            # exemple en attendant de changer de démarche) : encore au sol.
+            if s is None or s == 0.0:
                 self._placed.discard(n)
                 if self._lift.pop(n, None) is not None:
                     self._ground_lift.pop(n, None)

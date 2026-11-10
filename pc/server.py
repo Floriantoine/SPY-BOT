@@ -187,6 +187,7 @@ class App:
             self.send("GETCAL")
             self.send("SENSOR")
             self.send("IMU")
+            self.send("WALK")  # réglages de la marche
         except RuntimeError:
             pass
 

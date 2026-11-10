@@ -3,7 +3,7 @@
 from .config import HexapodConfig, LegConfig, default_config
 from .leg_ik import LegAngles, UnreachableError, leg_fk, leg_ik
 from .body_ik import BodyPose, body_to_leg_frame
-from .gait import GaitCommand, QuadGait, TripodGait
+from .gait import GaitCommand, QuadGait, TripodGait, WaveGait
 from .robot import Hexapod
 
 __all__ = [
@@ -19,5 +19,6 @@ __all__ = [
     "GaitCommand",
     "TripodGait",
     "QuadGait",
+    "WaveGait",
     "Hexapod",
 ]

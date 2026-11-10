@@ -15,6 +15,8 @@ Scénarios :
   - base : sans capteurs (marche dans toutes les directions, poses fortes,
     réglages de la démarche, calibration, test des servos, chien de garde...) ;
   - 4 pattes : LEGS 4 / 6, marche et virages à 4 pattes, poses, assis/debout ;
+  - vague : WAVE 0|1|AUTO, tripode <-> vague en marchant, avec LEGS 4, des
+    poses fortes (LIMIT) ; puis la même chose avec LEVEL, FEEL et le capteur ;
   - capteurs : faux MPU6050 et VL53L1X sur un faux bus I²C (même modèle des
     puces des deux côtés). Un petit monde simulé (ici seulement) leur donne
     leurs mesures, tick par tick, d'après l'état du robot Python : pente du
@@ -656,10 +658,194 @@ def scenario_imu_saved():
     return sc.steps
 
 
+def scenario_wave():
+    """Marche « vague » (5 pieds au sol) : WAVE 0|1|AUTO, changements de
+    démarche en marchant, avec LEGS 4, des poses fortes et des réglages."""
+    sc = Script()
+    cmd, ticks, walk = sc.cmd, sc.ticks, sc.walk
+    for line in ("WALK", "WALK 1", "WAVE", "WAVE 2", "WAVE x", "WAVE AUTO x", "WAVE auto", "WAVE AUTO 1", "WAVE AUTO 1e9",
+                 "WAVE AUTO nan", "WAVE AUTO 25 extra", "WAVE 1", "WAVE 0 1", "wave 0", "WAVE AUTO 20", "WAVE 1"):
+        cmd(line)
+    cmd("STAND")
+    ticks(300)
+    # Vague seule : toutes les directions (consigne réduite à ce que permet le pas).
+    for line, sec in (("MOVE 15 0 0", 6), ("MOVE 100 0 0", 6), ("MOVE 0 60 0", 5), ("MOVE 0 0 30", 5),
+                      ("MOVE -40 30 -10", 5), ("MOVE 20 -20 15", 4), ("MOVE 0 0 0", 4)):
+        walk(line, sec)
+    # Changement en pleine marche : vague -> tripode -> vague.
+    walk("MOVE 25 0 0", 3)
+    cmd("WAVE 0")
+    walk("MOVE 25 0 0", 3)
+    cmd("WAVE 1")
+    walk("MOVE 25 0 0", 4)
+    cmd("WAVE 0")
+    walk("MOVE 120 0 20", 3)
+    cmd("WAVE 1")
+    walk("MOVE 120 0 20", 5)
+    # Automatique : la vitesse monte et descend autour du seuil.
+    cmd("WAVE AUTO")
+    for v in (10, 15, 19, 21, 30, 80, 150, 60, 21, 19, 17, 15, 5, 0, 12, 100, 0):
+        walk("MOVE %d 0 0" % v, 2.5)
+    for line in ("MOVE 0 0 3", "MOVE 0 0 8", "MOVE 0 0 40", "MOVE 5 5 2", "MOVE -10 8 -4", "MOVE -90 60 -30", "MOVE 0 0 0"):
+        walk(line, 3)
+    cmd("WAVE AUTO 40")
+    for v in (30, 45, 35, 31, 100, 20):
+        walk("MOVE 0 %d 0" % v, 3)
+    cmd("WALK")
+    # Réglages de la démarche et poses fortes (LIMIT) en vague et en automatique.
+    cmd("GAIT 0.8 12")
+    walk("MOVE 25 10 5", 4)
+    cmd("GAIT 2.4 18.9")
+    walk("MOVE 12 0 0", 6)
+    cmd("GAIT 1.4 18.9")
+    for pose in ("POSE 0 10 5 3 -2 5", "POSE 20 20 -15 8 8 20", "POSE -20 -20 15 -8 -8 -20", "POSE 0 0 -15 0 8 0"):
+        cmd(pose)
+        ticks(60)
+        cmd("WAVE 1")
+        walk("MOVE 30 10 5", 4)
+        cmd("WAVE AUTO 20")
+        walk("MOVE 60 20 10", 2)
+        walk("MOVE 10 0 0", 3)
+        walk("MOVE 0 0 0", 1.5)
+    cmd("POSE 0 0 0 0 0 0")
+    # Avec la marche à 4 pattes : le réglage est gardé, repris en revenant à 6.
+    cmd("WAVE 1")
+    walk("MOVE 20 0 0", 3)
+    cmd("LEGS 4")  # en marche : refusé
+    walk("MOVE 0 0 0", 4)
+    cmd("LEGS 4")
+    ticks(80)
+    cmd("WAVE 0")
+    walk("MOVE 60 0 10", 4)
+    cmd("WAVE AUTO 20")
+    walk("MOVE 10 0 0", 4)
+    walk("MOVE 0 0 0", 3)
+    cmd("LEGS 6")
+    cmd("WALK")
+    ticks(80)
+    walk("MOVE 10 0 0", 4)
+    cmd("WALK")
+    walk("MOVE 90 0 0", 2)
+    # Chien de garde, s'asseoir en marchant, relâché en marchant.
+    cmd("MOVE 15 0 0")
+    ticks(120)
+    cmd("WAVE 1")
+    walk("MOVE 30 0 0", 2)
+    cmd("SIT")
+    ticks(300)
+    cmd("STAND")
+    ticks(150)
+    walk("MOVE 30 0 10", 2)
+    cmd("POWER 0")
+    ticks(10)
+    cmd("STAND")
+    ticks(250)
+    # Au hasard.
+    rnd = random.Random(2468)
+    for _ in range(90):
+        r = rnd.random()
+        if r < 0.45:
+            top = rnd.choice((15, 30, 60, 200))
+            walk("MOVE %d %d %d" % (rnd.randint(-top, top), rnd.randint(-top, top), rnd.randint(-top // 3, top // 3)),
+                 rnd.choice((0.3, 0.6, 1.0, 2.0, 3.0)))
+        elif r < 0.65:
+            cmd(rnd.choice(("WAVE 0", "WAVE 1", "WAVE AUTO", "WAVE AUTO %d" % rnd.randint(1, 70))))
+            ticks(rnd.randint(1, 30))
+        elif r < 0.75:
+            cmd("POSE %.1f %.1f %.1f %.1f %.1f %.1f" % tuple(rnd.uniform(-22, 22) for _ in range(6)))
+            ticks(rnd.randint(1, 30))
+        elif r < 0.82:
+            cmd("GAIT %.2f %.1f" % (rnd.uniform(0.3, 3.2), rnd.uniform(3, 25)))
+            ticks(rnd.randint(1, 20))
+        elif r < 0.88:
+            cmd("SIT")
+            ticks(rnd.randint(10, 150))
+            cmd("STAND")
+            ticks(rnd.randint(10, 150))
+        elif r < 0.94:
+            walk("MOVE 0 0 0", 3)
+            cmd(rnd.choice(("LEGS 6", "LEGS 4")))
+            ticks(rnd.randint(10, 80))
+        else:
+            ticks(rnd.randint(20, 80))  # chien de garde
+    walk("MOVE 0 0 0", 4)
+    cmd("WALK")
+    cmd("SIT")
+    ticks(300)
+    return sc.steps
+
+
+def scenario_wave_devices():
+    """Vague et automatique avec le gyroscope (LEVEL, FEEL, chocs, pente,
+    arrêt de sécurité) et le capteur avant (obstacle, GOTO)."""
+    sc = Script()
+    cmd, ticks, walk, world = sc.cmd, sc.ticks, sc.walk, sc.world
+
+    def setw(**kw):
+        def fn(w, ctrl):
+            for k, v in kw.items():
+                setattr(w, k, v)
+        return fn
+
+    ticks(70)
+    cmd("STAND")
+    ticks(300)
+    world(setw(slope=(4 * math.pi / 180, -3 * math.pi / 180)))
+    cmd("LEVEL 1")
+    cmd("FEEL 1")
+    cmd("SENSOR 1")
+    cmd("WAVE 1")
+    walk("MOVE 0 0 0", 3)
+    walk("MOVE 25 0 0", 5)
+    for spike in ((0.9, -0.4, 0.0), (-0.7, 0.6, 0.1), (0.3, 1.2, -0.2), (-1.5, -0.2, 0.0)):
+        world(setw(spike=spike, spike_ticks=4))
+        walk("MOVE 25 -10 5", 2)
+    cmd("WAVE AUTO")
+    for v in (10, 30, 90, 15, 10, 60, 12):
+        world(setw(spike=(0.6, -0.8, 0.0), spike_ticks=3))
+        walk("MOVE %d 0 %d" % (v, v // 10), 3)
+    world(lambda w, c: w.obstacles.append(ahead(c, 300, 0) + (60.0,)))
+    walk("MOVE 15 0 0", 8)
+    walk("MOVE 0 0 6", 4)
+    world(lambda w, c: w.obstacles.clear())
+    world(setw(slope=(30 * math.pi / 180, 0.0)))  # arrêt de sécurité en vague
+    walk("MOVE 15 0 0", 2)
+    world(setw(slope=(0.0, 0.0)))
+    walk("MOVE 15 0 0", 4)
+    cmd(lambda c: "GOTO %.1f %.1f 15" % ahead(c, 120, 60))
+    ticks(900)
+    cmd(lambda c: "GOTO %.1f %.1f" % ahead(c, 300, -100))
+    ticks(600)
+    cmd("NAV STOP")
+    rnd = random.Random(1357)
+    for _ in range(40):
+        r = rnd.random()
+        if r < 0.5:
+            top = rnd.choice((15, 30, 120))
+            walk("MOVE %d %d %d" % (rnd.randint(-top, top), rnd.randint(-top, top), rnd.randint(-top // 3, top // 3)),
+                 rnd.choice((0.5, 1.0, 2.0, 3.0)))
+        elif r < 0.7:
+            cmd(rnd.choice(("WAVE 0", "WAVE 1", "WAVE AUTO", "LEVEL 0", "LEVEL 1", "FEEL 0", "FEEL 1")))
+            ticks(rnd.randint(1, 10))
+        elif r < 0.85:
+            world(setw(spike=(rnd.uniform(-1.5, 1.5), rnd.uniform(-1.5, 1.5), 0.0), spike_ticks=rnd.randint(1, 6)))
+            ticks(rnd.randint(1, 20))
+        else:
+            cmd("POSE %.1f %.1f %.1f %.1f %.1f %.1f" % tuple(rnd.uniform(-15, 15) for _ in range(6)))
+            ticks(rnd.randint(1, 20))
+    walk("MOVE 0 0 0", 4)
+    cmd("WALK")
+    cmd("SIT")
+    ticks(250)
+    return sc.steps
+
+
 SCENARIOS = (
     ("base", scenario_base, {}),
     ("4 pattes", scenario_quad, {}),
+    ("vague", scenario_wave, {}),
     ("capteurs", scenario_devices, {"imu": "ok", "rng": "ok"}),
+    ("vague et capteurs", scenario_wave_devices, {"imu": "ok", "rng": "ok"}),
     ("gyroscope seul", scenario_imu_only, {"imu": "ok", "rng": "badid"}),
     ("gyroscope en panne", scenario_imu_broken, {"imu": "badinit"}),
     ("gyroscope : réglages", scenario_imu_setup, {"imu": "ok", "rng": "ok"}),

@@ -18,6 +18,16 @@ Commandes (une par ligne, PC -> robot) :
     GAIT period step_height       durée du cycle (s) et hauteur de pas (mm)
     LEGS 6|4                      marche à 6 pattes, ou à 4 (pattes du milieu
                                   repliées) ; seulement à l'arrêt
+    WAVE 0|1|AUTO [mm/s]          démarche à 6 pattes : tripode (0, au départ),
+                                  vague (1 : une patte en l'air à la fois, 5 pieds
+                                  au sol, lente), ou automatique : vague tant que
+                                  le pied le plus rapide reste sous le seuil
+                                  (20 mm/s au départ, 5 à 60), tripode au-dessus.
+                                  En marche, le changement attend que les 6 pieds
+                                  soient posés. -> WALK ...
+    WALK                          -> WALK wave 0|1|auto <seuil> gait tripod|wave :
+                                  réglages de la marche et démarche à 6 pattes en
+                                  cours (ligne envoyée aussi quand elle change)
     CAL                           pose de calibration : fémur à plat, tibia vertical (+ trim)
     TEST leg joint                fait osciller un seul servo pendant 3 s (vérif. câblage),
                                   les autres en pose de calibration ; refusé debout
@@ -106,7 +116,7 @@ import os
 from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
-from .robot import Hexapod, leg_margin
+from .robot import WAVE_AUTO, WAVE_SPEED_RANGE, Hexapod, leg_margin
 
 try:  # MicroPython
     from time import ticks_diff, ticks_us
@@ -162,6 +172,7 @@ JOINTS = ("coxa", "femur", "tibia")
 class Controller:
     def __init__(self, config, driver, calib_path="calib.json", ranger=None, imu=None):
         self.robot = Hexapod(config, driver)
+        self._walk_gait = self.robot.six  # démarche à 6 pattes de la dernière ligne WALK
         # Capteur avant : `ranger` = VL53L1X, SimRanger (simulation) ou None (absent).
         self.scanner = Scanner(ranger, driver)
         self.wanted = GaitCommand()  # consigne MOVE, avant le filtre d'obstacle
@@ -259,6 +270,8 @@ class Controller:
             except UnreachableError:
                 # On garde la dernière position atteignable.
                 r.command = GaitCommand()
+            if r.six is not self._walk_gait:
+                lines.append(self.walk_status())  # tripode <-> vague (WAVE AUTO) : prévenir l'appli
             self._integrate(r.travel)
             self._went += math.sqrt(r.travel[0] ** 2 + r.travel[1] ** 2)
             # Pose réduite par le robot (servos en butée sinon) : prévenir l'appli.
@@ -424,7 +437,8 @@ class Controller:
         top = self.robot.config.step_height
         r.tripod.step_height = r.quad.step_height = max(5.0, min(top, float(step_height)))
         # À 4 pattes, chaque patte fait son pas à tour de rôle : cycle deux fois plus long.
-        r.quad.period = 2 * r.tripod.period
+        r.quad.period = r.wave.period = 2 * r.tripod.period
+        r.wave.step_height = r.tripod.step_height
         return "OK GAIT %.2f %.0f" % (r.tripod.period, r.tripod.step_height)
 
     def cmd_legs(self, n):
@@ -438,6 +452,31 @@ class Controller:
                 raise
             return "ERR LEGS : attendre que les pieds soient posés"
         return "OK LEGS %d" % r.legs
+
+    def cmd_wave(self, *args):
+        r = self.robot
+        if args:
+            what = args[0].upper()
+            if what == "AUTO":
+                if len(args) > 1:
+                    lo, hi = WAVE_SPEED_RANGE
+                    r.wave_speed = max(lo, min(hi, float(args[1])))
+                r.wave_mode = WAVE_AUTO
+            elif what in ("0", "1"):
+                r.wave_mode = int(what)
+            else:
+                raise ValueError("0, 1 ou AUTO [mm/s]")
+        return self.walk_status()
+
+    def cmd_walk(self):
+        return self.walk_status()
+
+    def walk_status(self):
+        """Ligne WALK : réglages de la marche et démarche à 6 pattes en cours."""
+        r = self.robot
+        self._walk_gait = r.six
+        return "WALK wave %s %.0f gait %s" % (("0", "1", "auto")[r.wave_mode], r.wave_speed,
+                                               "wave" if r.six is r.wave else "tripod")
 
     def cmd_cal(self):
         """Pose de calibration, choisie pour être facile à vérifier à l'œil :

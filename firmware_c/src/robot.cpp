@@ -217,6 +217,33 @@ double TripodGait::time_to_lift(int leg) const {
     return (1.0 - p) * period;
 }
 
+bool WaveGait::at_rest() const {
+    double q = phase * 6;
+    return fabs(q - (double)pyround(q)) < 1e-9;
+}
+
+void WaveGait::advance(double dt, bool moving) {
+    if (!moving && at_rest()) return;
+    double new_phase = phase + dt / period;
+    if (!moving) {
+        // Arrêt au prochain sixième : tous les pieds au sol.
+        new_phase = pymin(new_phase, (double)((long long)(phase * 6 + 1e-9) + 1) / 6.0);
+    }
+    phase = pymod(new_phase, 1.0);
+    if (fabs(phase - 1.0) < 1e-9) phase = 0.0;
+}
+
+double WaveGait::swing(int leg) const {
+    double w = swing_part();
+    double u = pymod(phase - (double)CFG_LEGS[leg].wave_rank / 6, 1.0);
+    return u < w - 1e-9 ? u / w : -1.0;
+}
+
+double WaveGait::time_to_lift(int leg) const {
+    double u = pymod(phase - (double)CFG_LEGS[leg].wave_rank / 6, 1.0);
+    return (1.0 - u) * period;
+}
+
 double QuadGait::swing_part() const { return (1.0 - QUAD_SHIFT) / 4; }
 
 bool QuadGait::at_rest() const {
@@ -347,6 +374,16 @@ Hexapod::Hexapod(ServoDriver* d, AnglePool* p) : driver(d), pool(p) {
     gait4.planner = this;
     gait4.target_x = gait4.target_y = 0.0;
     gait4.reset();
+    // Vague : chaque patte fait son pas à tour de rôle, cycle deux fois plus long.
+    wave.period = WAVE_PERIOD;
+    wave.step_height = TRIPOD_STEP_HEIGHT;
+    wave.max_stride = TRIPOD_MAX_STRIDE;
+    wave.phase = 0.0;
+    wave.shift_x = wave.shift_y = 0.0;
+    wave_mode = WAVE_OFF;
+    wave_speed = WAVE_SPEED;
+    wave_key_valid_ = false;
+    six = &tripod;
     gait = &tripod;
     legs = 6;
     tuck = 0.0;
@@ -398,7 +435,7 @@ int Hexapod::set_legs(int n) {
     if (n == legs) return 0;
     if (!(command.is_zero() && at_rest())) return 2;
     legs = n;
-    gait = n == 4 ? (Gait*)&gait4 : (Gait*)&tripod;
+    gait = n == 4 ? (Gait*)&gait4 : six;
     // Les pieds restent où ils sont (posés, à moins de STOP_TOL de leur place).
     gait->reset();
     current = gait_command();
@@ -534,11 +571,25 @@ bool Hexapod::update(double dt, AngleSet** out) {
     tuck = goal > tuck ? pymin(goal, tuck + step) : pymax(goal, tuck - step);
     // Pas de marche tant que les pattes du milieu bougent.
     GaitCommand target = tuck_settled() ? command : gait_command();
+    Gait* want = legs == 6 ? wanted_gait() : gait;
+    double top = 0.0;
+    if (want == &wave && gait != want) {
+        // Tripode -> vague : la vague ne va pas aussi vite. Le robot ralentit
+        // d'abord à ce qu'elle sait faire, puis change.
+        top = WAVE_ENTER * want->max_stride / want->stance_time();
+        double v = foot_speed(target);
+        if (v > top) {
+            double k = top / v;
+            target = gait_command(target.vx * k, target.vy * k, target.yaw_rate * k);
+        }
+    }
     GaitCommand c = current;
-    current = gait_command(approach(c.vx, target.vx, rate(c.vx, target.vx, ACCEL, DECEL) * dt),
-                           approach(c.vy, target.vy, rate(c.vy, target.vy, ACCEL, DECEL) * dt),
+    // En vague, la consigne change 3 fois moins vite (appui 3 fois plus long).
+    double adt = gait == &wave ? dt * WAVE_ACCEL : dt;
+    current = gait_command(approach(c.vx, target.vx, rate(c.vx, target.vx, ACCEL, DECEL) * adt),
+                           approach(c.vy, target.vy, rate(c.vy, target.vy, ACCEL, DECEL) * adt),
                            approach(c.yaw_rate, target.yaw_rate,
-                                    rate(c.yaw_rate, target.yaw_rate, YAW_ACCEL, YAW_DECEL) * dt));
+                                    rate(c.yaw_rate, target.yaw_rate, YAW_ACCEL, YAW_DECEL) * adt));
     home_wait_ -= dt;
     if (home_wait_ <= 0.0) {
         bool changed;
@@ -550,7 +601,16 @@ bool Hexapod::update(double dt, AngleSet** out) {
     }
     // Démarche ralentie si le corps bascule trop vite (gyroscope).
     double gdt = dt * time_scale;
-    gait->advance(gdt, !(current.is_zero() && feet_settled()));
+    bool moving = !(current.is_zero() && feet_settled());
+    if (want != gait && (top == 0.0 || foot_speed(current) <= 1.05 * top)) {
+        // Tripode <-> vague : seulement à un instant où les 6 pieds sont posés.
+        // En marche, la démarche s'arrête à cet instant, puis l'autre repart de là.
+        if (gait->at_rest())
+            switch_gait(want);
+        else
+            moving = false;
+    }
+    gait->advance(gdt, moving);
     {
         ProfScope pp(PROF_PIEDS);
         move_feet(gdt);
@@ -681,6 +741,69 @@ bool Hexapod::search(double top_s, double top_l, double* s_out, double* l_out, A
     return true;
 }
 
+// --- tripode ou vague ----------------------------------------------------------
+
+Gait* Hexapod::wanted_gait() {
+    if (wave_mode == WAVE_OFF) return &tripod;
+    if (wave_mode == WAVE_ON) return &wave;
+    // Automatique, d'après la consigne demandée (pas celle suivie).
+    const GaitCommand& c = command;
+    if (c.is_zero()) return six;  // arrêt : on finit dans la démarche en cours
+    if (!wave_key_valid_ || wave_key_[0] != c.vx || wave_key_[1] != c.vy || wave_key_[2] != c.yaw_rate) {
+        wave_key_[0] = c.vx;
+        wave_key_[1] = c.vy;
+        wave_key_[2] = c.yaw_rate;
+        wave_key_[3] = foot_speed(c);
+        wave_key_valid_ = true;
+    }
+    if (six == &wave) return wave_key_[3] > wave_speed ? (Gait*)&tripod : (Gait*)&wave;
+    return wave_key_[3] < WAVE_BACK * wave_speed ? (Gait*)&wave : (Gait*)&tripod;
+}
+
+double Hexapod::foot_speed(const GaitCommand& c) const {
+    // Vitesse du pied posé le plus rapide (en tournant, ceux de l'extérieur).
+    double speed = 0.0;
+    for (int n = 0; n < NLEGS; n++) {
+        double vx = -(c.vx - c.yaw_rate * neutral[n][1]);
+        double vy = -(c.vy + c.yaw_rate * neutral[n][0]);
+        double v = sqrt(vx * vx + vy * vy);
+        if (v > speed) speed = v;
+    }
+    return speed;
+}
+
+void Hexapod::switch_gait(Gait* next) {
+    // Les 6 pieds posés restent où ils sont ; la nouvelle démarche commence par
+    // lever le pied (ou le trépied) qui a le plus reculé. Le corps garde sa
+    // vitesse : la consigne suivie repart de celle que l'ancienne démarche tenait.
+    current = command_in_reach();
+    const GaitCommand& cmd = current;
+    int first = -1;
+    double most = 1e-9;
+    for (int n = 0; n < NLEGS; n++) {
+        double vx = -(cmd.vx - cmd.yaw_rate * neutral[n][1]);
+        double vy = -(cmd.vy + cmd.yaw_rate * neutral[n][0]);
+        double d = (offsets[n][0] - home[n][0]) * vx + (offsets[n][1] - home[n][1]) * vy;
+        if (d > most) {
+            first = n;
+            most = d;
+        }
+    }
+    if (next == &wave)
+        next->phase = first >= 0 ? CFG_LEGS[first].wave_rank / 6.0 : 0.0;
+    else
+        next->phase = (first < 0 || CFG_LEGS[first].tripod_a) ? 0.0 : 0.5;
+    next->shift_x = gait->shift_x;
+    next->shift_y = gait->shift_y;
+    gait = six = next;
+    // Pieds « en l'air » à 0 % de leur pas (pas encore levés) : oubliés.
+    memset(has_lift_, 0, sizeof(has_lift_));
+    memset(has_ground_lift_, 0, sizeof(has_ground_lift_));
+    memset(placed_, 0, sizeof(placed_));
+    memset(touched_, 0, sizeof(touched_));
+    rest_key_valid_ = false;
+}
+
 bool Hexapod::feet_settled() const {
     for (int n = 0; n < NLEGS; n++) {
         if (!walking(n)) continue;  // 4 pattes : celles du milieu sont repliées
@@ -805,7 +928,7 @@ void Hexapod::reach_table(int leg) {
 
 double Hexapod::half_stride(int leg, double vx, double vy) const {
     const Gait& g = *gait;
-    if (gait != &tripod) return g.max_stride / 2;  // à 4 pattes : le balancement prend de la place
+    if (gait == &gait4) return g.max_stride / 2;  // à 4 pattes : le balancement prend de la place
     double speed = sqrt(vx * vx + vy * vy);
     if (speed < 1e-6) return g.max_stride / 2;
     double a = pymod(atan2(vy, vx) - CFG_LEGS[leg].mount_angle, 2 * PY_PI) * REACH_DIRS / (2 * PY_PI);
@@ -922,7 +1045,7 @@ void Hexapod::move_feet(double dt) {
         double dx = offsets[n][0], dy = offsets[n][1];
         const double* p = neutral[n];
         double s = swings[n] = g.swing(n);
-        if (s < 0.0) {  // au sol
+        if (s <= 0.0) {  // au sol (ou à 0 % de son pas, pas encore levé)
             placed_[n] = false;
             if (has_lift_[n]) {
                 has_lift_[n] = false;
