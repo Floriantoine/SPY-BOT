@@ -643,7 +643,10 @@ class Hexapod:
                 # Il redescend vers le sol prévu (le plan des pieds).
                 g0 = self._ground_lift.setdefault(n, self.ground[n])
                 self.ground[n] = g0 * (1.0 - k)
-                z = g.step_height * math.sin(math.pi * s)
+                # Levée : vitesse verticale nulle au décollage et au poser (le
+                # pied ne tape plus le sol), même hauteur au milieu du pas.
+                u = 4.0 * s * (1.0 - s)
+                z = g.step_height * u * u
                 offsets[n] = (lx + (tx - lx) * k, ly + (ty - ly) * k, z)
         # Au sol, les pieds reculent à la vitesse du corps. Si l'un d'eux
         # arrive au bout de sa course (accélération en plein pas), le corps

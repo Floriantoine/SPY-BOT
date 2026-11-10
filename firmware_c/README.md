@@ -16,7 +16,8 @@ Tout ce que fait `main.py` sur le vrai robot :
   la mémoire NVS de l'ESP32 au lieu de `calib.json`).
 - Pilotage : `POWER`, démarrage en douceur (pattes une à une), `STAND`,
   `SIT`, `MOVE` (marche tripode à 6 pattes, démarrages et arrêts doux,
-  longueur de pas selon la place de chaque patte), `POSE` (réduite
+  longueur de pas selon la place de chaque patte, pied posé sans vitesse
+  verticale), `POSE` (réduite
   automatiquement près des butées, ligne `LIMIT pose`), `GAIT`, chien de
   garde de 1 s, `PING`, `GEOM`, `PROF`.
 - Marche à 4 pattes : `LEGS 4` / `LEGS 6` (à l'arrêt, pieds posés), pattes

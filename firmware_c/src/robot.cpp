@@ -977,7 +977,9 @@ void Hexapod::move_feet(double dt) {
                 ground_lift_[n] = ground[n];
             }
             ground[n] = ground_lift_[n] * (1.0 - k);
-            double z = g.step_height * sin(PY_PI * s);
+            // Levée : vitesse verticale nulle au décollage et au poser.
+            double u = 4.0 * s * (1.0 - s);
+            double z = g.step_height * u * u;
             offsets[n][0] = lx + (tx - lx) * k;
             offsets[n][1] = ly + (ty - ly) * k;
             offsets[n][2] = z;
