@@ -181,6 +181,10 @@ public:
     double wave_speed;  // seuil de WAVE AUTO (mm/s)
     Gait* six;          // démarche à 6 pattes en cours (tripode ou vague)
     double wave_shift;  // décalage du corps en vague (mm), 0 = aucun
+    double sag;         // appoint des pattes qui portent (degrés de fémur), 0 = aucun
+    double sag_k;       // part appliquée : 0 quand le robot est assis
+    double sag_rad;     // _sag : réglage suivi (rad)
+    double load[NLEGS];  // _load : 1 = la patte porte, 0 = en l'air
     Gait* gait;
     int legs;     // pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
     double tuck;  // 0 = pattes du milieu au sol, 1 = repliées
@@ -216,7 +220,8 @@ public:
     void plan_sway(int slot, double* x, double* y);
 
 private:
-    enum { KEY_LEN = 4 * NLEGS + 20 };
+    enum { KEY_LEN = 5 * NLEGS + 22 };
+    bool load_settled_;
     double lift_[NLEGS][2];
     bool has_lift_[NLEGS];
     double ground_lift_[NLEGS];

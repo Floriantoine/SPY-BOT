@@ -43,6 +43,18 @@ WAVE_ENTER = 0.9  # tripode -> vague : à 90 % au plus du pas de la config
 WAVE_SHIFT = 6.0  # mm
 WAVE_SHIFT_MAX = 15.0
 SHIFT_TIME = 1.0  # s
+# Une patte qui porte fléchit (jeu et souplesse du servo du fémur) : le corps
+# descend de quelques mm, et il tombe d'autant à chaque changement d'appui.
+# Les pattes qui portent poussent donc un peu plus : fémur baissé de SAG
+# degrés (0 = rien). L'appoint s'efface au début du pas d'une patte
+# (SAG_FADE = part du pas) et revient avant son poser, jamais plus vite que
+# SAG_RATE (1/s). Il compte dans les butées (filet de sécurité).
+SAG_DEG = 1.5
+SAG_MAX = 5.0
+SAG_FADE = 0.2
+SAG_RATE = 10.0
+SAG_SLEW = 5.0  # °/s : un réglage changé est suivi en douceur
+_DEG = math.pi / 180.0
 TUCK_TIME = 1.0  # s pour replier ou déplier les pattes du milieu
 # Patte repliée : fémur relevé de 55°, tibia replié de 15° vers le corps (pied
 # ~4 cm au-dessus du sol debout, ~2 cm assis), dans la course des servos et
@@ -141,6 +153,11 @@ class Hexapod:
         self._ground_lift = {}  # hauteur du sol quand le pied s'est levé
         self._touched = set()  # pieds en l'air qui ont déjà touché quelque chose
         self.feel_rate = (0.0, 0.0)
+        self.sag = SAG_DEG  # appoint des pattes qui portent (degrés de fémur), 0 = aucun
+        self._sag = SAG_DEG * _DEG  # réglage suivi (rad)
+        self.sag_k = 1.0  # part appliquée : 0 quand le robot est assis (les pattes ne portent pas)
+        self._load = {n: 1.0 for n in self.neutral}  # 1 = la patte porte, 0 = en l'air
+        self._load_settled = True
         self._last_angles = None  # derniers angles valides (filet de sécurité)
         self._solve_key = None
         self._written = None  # derniers angles envoyés aux servos
@@ -190,6 +207,8 @@ class Hexapod:
         self.gait.reset()
         self.gait.shift = (0.0, 0.0)
         self._shift_amp = 0.0
+        self._load = {n: 1.0 for n in self.neutral}
+        self._load_settled = True
         self.current = GaitCommand()
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}
         self._lift = {}
@@ -305,6 +324,7 @@ class Hexapod:
         cl, fl, tl = c.coxa_length, c.femur_length, c.tibia_length
         neutral, offsets, ground = self.neutral, self.offsets, self.ground
         tuck = self.tuck
+        sag, load = self._sag * self.sag_k, self._load
         angles = {}
         for leg in c.legs:
             n = leg.name
@@ -315,13 +335,17 @@ class Hexapod:
             fx = r00 * dx + r10 * dy + r20 * dz
             fy = r01 * dx + r11 * dy + r21 * dz
             fz = r02 * dx + r12 * dy + r22 * dz
+            w = load[n]
             if tuck > 0.0 and n in QUAD_TUCKED:
                 t = self.tucked_foot(leg)
                 k = tuck * tuck * (3 - 2 * tuck)
                 fx, fy, fz = fx + (t[0] - fx) * k, fy + (t[1] - fy) * k, fz + (t[2] - fz) * k
+                w = w * (1.0 - k)  # repliée : elle ne porte pas
             ca, sa = _trig(leg)
             ex, ey = fx - leg.mount_x, fy - leg.mount_y
             a = leg_ik(ca * ex + sa * ey, ca * ey - sa * ex, fz, cl, fl, tl)
+            if sag != 0.0:
+                a.femur -= sag * w  # la patte qui porte pousse un peu plus (voir SAG_DEG)
             if check is not None and not check(leg, a):
                 return None
             angles[n] = a
@@ -352,6 +376,7 @@ class Hexapod:
                                    _approach(c.vy, target.vy, _rate(c.vy, target.vy, ACCEL, DECEL) * adt),
                                    _approach(c.yaw_rate, target.yaw_rate,
                                              _rate(c.yaw_rate, target.yaw_rate, YAW_ACCEL, YAW_DECEL) * adt))
+        self._sag = _approach(self._sag, self.sag * _DEG, SAG_SLEW * _DEG * dt)
         self._home_wait -= dt
         if self._home_wait <= 0.0 and self._refresh_home():
             self._home_wait = HOME_PERIOD
@@ -388,7 +413,7 @@ class Hexapod:
         p, b = self.pose, self.base_pose
         key = (tuple(self.offsets.values()), tuple(self.ground.values()), self.gait.shift, self.tuck,
                self.legs, p.x, p.y, p.z, p.roll, p.pitch, p.yaw, b.x, b.y, b.z, b.roll, b.pitch, b.yaw,
-               s, l, rs, rl)
+               s, l, rs, rl, tuple(self._load.values()), self._sag, self.sag_k)
         if key == self._solve_key and self._last_angles is not None:
             return self._last_angles
         found = None
@@ -745,7 +770,7 @@ class Hexapod:
     def _move_feet(self, dt):
         g = self.gait
         cmd = self._command_in_reach()
-        rest = (g, self.legs, g.phase) if cmd.is_zero and g.at_rest else None
+        rest = (g, self.legs, g.phase) if cmd.is_zero and g.at_rest and self._load_settled else None
         if rest is not None and rest == self._rest_key:
             # Immobile, tous les pieds posés, et déjà calculé une fois ainsi :
             # rien ne bouge (calcul évité).
@@ -804,6 +829,28 @@ class Hexapod:
                 u = 4.0 * s * (1.0 - s)
                 z = g.step_height * u * u
                 offsets[n] = (lx + (tx - lx) * k, ly + (ty - ly) * k, z)
+        # Ce que chaque patte porte (appoint SAG) : tout au sol, rien au milieu
+        # de son pas, fondu au début et à la fin du pas.
+        load = self._load
+        settled = True
+        step = SAG_RATE * dt
+        for n in swings:
+            if n in stance:
+                w = 1.0
+            else:
+                s = swings[n]
+                if s < SAG_FADE:
+                    u = s / SAG_FADE
+                    w = 1.0 - u * u * (3 - 2 * u)
+                elif s > 1.0 - SAG_FADE:
+                    u = (s - (1.0 - SAG_FADE)) / SAG_FADE
+                    w = u * u * (3 - 2 * u)
+                else:
+                    w = 0.0
+            w = load[n] = _approach(load[n], w, step)
+            if w != 1.0:
+                settled = False
+        self._load_settled = settled
         # Au sol, les pieds reculent à la vitesse du corps. Si l'un d'eux
         # arrive au bout de sa course (accélération en plein pas), le corps
         # ralentit un instant : même réduction pour tous, aucun pied ne glisse.

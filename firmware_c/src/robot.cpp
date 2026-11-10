@@ -386,6 +386,11 @@ Hexapod::Hexapod(ServoDriver* d, AnglePool* p) : driver(d), pool(p) {
     wave_shift = shift_mm_ = WAVE_SHIFT;
     shift_amp_ = 0.0;
     shift_dir_[0] = shift_dir_[1] = 0.0;
+    sag = SAG_DEG;
+    sag_rad = SAG_DEG * DEG;
+    sag_k = 1.0;
+    for (int i = 0; i < NLEGS; i++) load[i] = 1.0;
+    load_settled_ = true;
     six = &tripod;
     gait = &tripod;
     legs = 6;
@@ -454,6 +459,8 @@ void Hexapod::reset_gait() {
     gait->reset();
     gait->shift_x = gait->shift_y = 0.0;
     shift_amp_ = 0.0;
+    for (int i = 0; i < NLEGS; i++) load[i] = 1.0;
+    load_settled_ = true;
     current = gait_command();
     memset(offsets, 0, sizeof(offsets));
     memset(has_lift_, 0, sizeof(has_lift_));
@@ -537,6 +544,7 @@ static int solve_impl(const Hexapod& h, const BodyPose& pose, double lift, bool 
     double sx = h.gait->shift_x, sy = h.gait->shift_y;
     double bx = sx + pose.x, by = sy + pose.y, bz = pose.z;
     double tuck = h.tuck;
+    double sag = h.sag_rad * h.sag_k;
     for (int i = 0; i < NLEGS; i++) {
         const double* p = h.neutral[i];
         const double* o = h.offsets[i];
@@ -547,15 +555,18 @@ static int solve_impl(const Hexapod& h, const BodyPose& pose, double lift, bool 
         double fy = R.m[0][1] * dx + R.m[1][1] * dy + R.m[2][1] * dz;
         double fz = R.m[0][2] * dx + R.m[1][2] * dy + R.m[2][2] * dz;
         const LegDef& d = CFG_LEGS[i];
+        double w = h.load[i];
         if (tuck > 0.0 && d.tucked) {
             double k = tuck * tuck * (3 - 2 * tuck);
             fx = fx + (d.tuck_x - fx) * k;
             fy = fy + (d.tuck_y - fy) * k;
             fz = fz + (d.tuck_z - fz) * k;
+            w = w * (1.0 - k);  // repliée : elle ne porte pas
         }
         double ca = d.cos_a, sa = d.sin_a;
         double ex = fx - d.mount_x, ey = fy - d.mount_y;
         if (!leg_ik(ca * ex + sa * ey, ca * ey - sa * ex, fz, &out->leg[i])) return -1;
+        if (sag != 0.0) out->leg[i].femur -= sag * w;  // la patte qui porte pousse un peu plus
         if (checked && !leg_ok(g_legs[i], out->leg[i])) return 0;
     }
     return 1;
@@ -597,6 +608,7 @@ bool Hexapod::update(double dt, AngleSet** out) {
                            approach(c.vy, target.vy, rate(c.vy, target.vy, ACCEL, DECEL) * adt),
                            approach(c.yaw_rate, target.yaw_rate,
                                     rate(c.yaw_rate, target.yaw_rate, YAW_ACCEL, YAW_DECEL) * adt));
+    sag_rad = approach(sag_rad, sag * DEG, SAG_SLEW * DEG * dt);
     home_wait_ -= dt;
     if (home_wait_ <= 0.0) {
         bool changed;
@@ -652,8 +664,10 @@ AngleSet* Hexapod::solve_limited(double dt, bool* unreachable) {
     key[k++] = gait->shift_y;
     key[k++] = tuck;
     key[k++] = legs;
-    const double rest[] = {p.x, p.y, p.z, p.roll, p.pitch, p.yaw, b.x, b.y, b.z, b.roll, b.pitch, b.yaw, s, l, rs, rl};
-    for (int i = 0; i < 16; i++) key[k++] = rest[i];
+    const double rest[] = {p.x, p.y, p.z, p.roll, p.pitch, p.yaw, b.x, b.y, b.z, b.roll, b.pitch, b.yaw, s, l, rs, rl,
+                           sag_rad, sag_k};
+    for (int i = 0; i < 18; i++) key[k++] = rest[i];
+    for (int i = 0; i < NLEGS; i++) key[k++] = load[i];
     if (solve_key_valid && last_angles != NULL) {
         bool same = true;
         for (int i = 0; i < KEY_LEN && same; i++) same = key[i] == solve_key_[i];
@@ -1068,7 +1082,7 @@ void Hexapod::plan_sway(int slot, double* out_x, double* out_y) {
 void Hexapod::move_feet(double dt) {
     Gait& g = *gait;
     GaitCommand cmd = command_in_reach();
-    bool rest = cmd.is_zero() && g.at_rest();
+    bool rest = cmd.is_zero() && g.at_rest() && load_settled_;
     if (rest && rest_key_valid_ && rest_key_gait_ == gait && rest_key_legs_ == legs && rest_key_phase_ == g.phase) {
         // Immobile, tous les pieds posés, et déjà calculé une fois ainsi : rien ne bouge.
         travel[0] = travel[1] = travel[2] = 0.0;
@@ -1080,6 +1094,7 @@ void Hexapod::move_feet(double dt) {
     double st2 = g.stance_time() / 2;
     int stance[NLEGS];
     double swings[NLEGS];
+    bool down[NLEGS];
     int nstance = 0;
     for (int n = 0; n < NLEGS; n++) {
         if (!walking(n)) continue;
@@ -1149,6 +1164,33 @@ void Hexapod::move_feet(double dt) {
             offsets[n][2] = z;
         }
     }
+    // Ce que chaque patte porte (appoint SAG) : tout au sol, rien au milieu de
+    // son pas, fondu au début et à la fin du pas.
+    for (int n = 0; n < NLEGS; n++) down[n] = false;
+    for (int i = 0; i < nstance; i++) down[stance[i]] = true;
+    bool settled = true;
+    double lstep = SAG_RATE * dt;
+    for (int n = 0; n < NLEGS; n++) {
+        if (!walking(n)) continue;
+        double w;
+        if (down[n]) {
+            w = 1.0;
+        } else {
+            double s = swings[n];
+            if (s < SAG_FADE) {
+                double u = s / SAG_FADE;
+                w = 1.0 - u * u * (3 - 2 * u);
+            } else if (s > 1.0 - SAG_FADE) {
+                double u = (s - (1.0 - SAG_FADE)) / SAG_FADE;
+                w = u * u * (3 - 2 * u);
+            } else {
+                w = 0.0;
+            }
+        }
+        w = load[n] = approach(load[n], w, lstep);
+        if (w != 1.0) settled = false;
+    }
+    load_settled_ = settled;
     // Au sol, les pieds reculent à la vitesse du corps (même réduction pour tous).
     double moves[NLEGS][2];
     double k = 1.0;

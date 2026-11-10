@@ -28,8 +28,13 @@ Commandes (une par ligne, PC -> robot) :
     SHIFT mm                      en vague, le corps se décale de tant de mm à
                                   l'opposé de la patte en l'air (6 au départ, 0 à
                                   15, 0 = aucun) ; nul à l'arrêt -> WALK ...
+    SAG deg                       les pattes qui portent poussent un peu plus,
+                                  pour compenser la flexion sous le poids : fémur
+                                  baissé de tant de degrés (1.5 au départ, 0 à 5,
+                                  0 = rien), fondu au lever et au poser du pied
+                                  -> WALK ...
     WALK                          -> WALK wave 0|1|auto <seuil> gait tripod|wave
-                                  shift <mm> : réglages de la marche et démarche à
+                                  shift <mm> sag <deg> : réglages de la marche et démarche à
                                   6 pattes en cours (ligne envoyée aussi quand
                                   elle change)
     CAL                           pose de calibration : fémur à plat, tibia vertical (+ trim)
@@ -120,7 +125,7 @@ import os
 from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
-from .robot import WAVE_AUTO, WAVE_SHIFT_MAX, WAVE_SPEED_RANGE, Hexapod, leg_margin
+from .robot import SAG_MAX, WAVE_AUTO, WAVE_SHIFT_MAX, WAVE_SPEED_RANGE, Hexapod, leg_margin
 
 try:  # MicroPython
     from time import ticks_diff, ticks_us
@@ -476,6 +481,10 @@ class Controller:
         self.robot.wave_shift = max(0.0, min(WAVE_SHIFT_MAX, float(mm)))
         return self.walk_status()
 
+    def cmd_sag(self, deg):
+        self.robot.sag = max(0.0, min(SAG_MAX, float(deg)))
+        return self.walk_status()
+
     def cmd_walk(self):
         return self.walk_status()
 
@@ -483,8 +492,9 @@ class Controller:
         """Ligne WALK : réglages de la marche et démarche à 6 pattes en cours."""
         r = self.robot
         self._walk_gait = r.six
-        return "WALK wave %s %.0f gait %s shift %.1f" % (
-            ("0", "1", "auto")[r.wave_mode], r.wave_speed, "wave" if r.six is r.wave else "tripod", r.wave_shift)
+        return "WALK wave %s %.0f gait %s shift %.1f sag %.1f" % (
+            ("0", "1", "auto")[r.wave_mode], r.wave_speed, "wave" if r.six is r.wave else "tripod", r.wave_shift,
+            r.sag)
 
     def cmd_cal(self):
         """Pose de calibration, choisie pour être facile à vérifier à l'œil :
@@ -885,6 +895,8 @@ class Controller:
         self.robot.pose = BodyPose(p.x, p.y, self.height + p.z, _clamp(p.roll + lv.roll, limit),
                                    _clamp(p.pitch + lv.pitch, limit), p.yaw)
         self.robot.base_pose = BodyPose(0.0, 0.0, self.height)
+        # Assis, le corps est posé : pas d'appoint des pattes (SAG) ; il vient en se levant.
+        self.robot.sag_k = 1.0 + self.height / self.sit_drop if self.sit_drop > 0.0 else 1.0
 
     def _send_angles(self):
         for leg in self.robot.config.legs:

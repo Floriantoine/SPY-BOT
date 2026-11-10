@@ -28,6 +28,7 @@ class HexapodTest(unittest.TestCase):
 
     def test_feet_reach_their_targets(self):
         c = self.robot.config
+        self.robot.sag = self.robot._sag = 0.0  # géométrie seule, sans l'appoint des pattes qui portent
         self.robot.command = GaitCommand(vx=60.0)
         self.robot.gait.phase = 0.3
         angles = self.robot.solve()
@@ -42,6 +43,7 @@ class HexapodTest(unittest.TestCase):
     def test_standby_pose_matches_reference_robot(self):
         # Posture debout de la V1.5 : fémur relevé de 28,5° (corps à 50 mm du
         # sol) et tibia vertical, donc replié de 28,5° vers le corps.
+        self.robot.sag = self.robot._sag = 0.0  # sans l'appoint des pattes qui portent (SAG)
         self.robot.update(0.0)
         for leg in self.robot.config.legs:
             servos = self.robot.driver.angles

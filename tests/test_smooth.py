@@ -5,7 +5,10 @@ import unittest
 
 from hexapod import BodyPose, GaitCommand, default_config
 from hexapod.config import MIDDLE_LEGS, tibia_fold_limit
-from hexapod.robot import WAVE_AUTO, WAVE_OFF, WAVE_ON, Hexapod, angles_ok
+from hexapod.controller import Controller
+from hexapod.gait import QUAD_TUCKED
+from hexapod.robot import SAG_DEG, SAG_RATE, WAVE_AUTO, WAVE_OFF, WAVE_ON, Hexapod, angles_ok
+from hexapod.servo import DryRunDriver
 from hexapod.servo import ik_to_servo_deg
 
 DT = 0.02
@@ -260,6 +263,123 @@ class WaveShiftTest(unittest.TestCase):
             r.wave_shift = mm
             w.where = ("réglage", mm)
             walk(r, GaitCommand(25.0, 0, 0), 3, w)
+
+
+def plain(r):
+    """Angles de la géométrie seule (sans l'appoint SAG), même état."""
+    keep = r._sag
+    r._sag = 0.0
+    try:
+        return r.solve(r.effective_pose(r.pose_scale), r.lift_scale)
+    finally:
+        r._sag = keep
+
+
+class SagTest(unittest.TestCase):
+    """Les pattes qui portent poussent un peu plus (fémur baissé de SAG degrés)."""
+
+    def test_standing_every_leg_pushes(self):
+        r = Hexapod(default_config())
+        self.assertEqual(r.sag, SAG_DEG)
+        a = r.update(DT)
+        ref = plain(r)
+        for n in r.neutral:
+            self.assertAlmostEqual(math.degrees(ref[n].femur - a[n].femur), SAG_DEG, places=9)
+            self.assertEqual((a[n].coxa, a[n].tibia), (ref[n].coxa, ref[n].tibia))
+
+    def check_walk(self, r, sag, command=(60.0, 20.0, 0.2), seconds=10):
+        r.sag = sag
+        w = Watch(self, r, ("sag", sag))
+        seen = {"free": 0, "step": 0.0, "max": 0.0}
+        last = {}
+
+        def watch():
+            w()
+            a, ref = r._written, plain(r)
+            for n in r.walking_legs():
+                extra = math.degrees(ref[n].femur - a[n].femur)
+                self.assertGreaterEqual(extra, -1e-9)
+                self.assertLessEqual(extra, sag + 1e-9)
+                z = r.offsets[n][2]
+                if z == 0.0 and n not in r._touched:
+                    self.assertGreater(extra, 0.75 * math.degrees(r._sag) - 1e-9)  # au sol : l'appoint (fini en 1 ou 2 ticks)
+                if z > 0.9 * r.gait.step_height * r.lift_scale:
+                    self.assertAlmostEqual(extra, 0.0, places=9)  # en l'air : rien
+                    seen["free"] += 1
+                seen["step"] = max(seen["step"], abs(extra - last.get(n, extra)))
+                seen["max"] = max(seen["max"], extra)
+                last[n] = extra
+
+        walk(r, GaitCommand(), 1.5, watch)  # le réglage est rejoint en douceur
+        walk(r, GaitCommand(*command), seconds, watch)
+        walk(r, GaitCommand(), 4, watch)
+        self.assertGreater(seen["free"], 50)
+        self.assertAlmostEqual(seen["max"], sag, places=9)
+        # Jamais d'à-coup : au plus SAG_RATE par seconde (plus le suivi du réglage).
+        self.assertLessEqual(seen["step"], sag * SAG_RATE * DT + 5.0 * DT + 1e-9)
+        self.assertTrue(r.at_rest)
+        return seen
+
+    def test_fades_around_each_step_tripod(self):
+        r = Hexapod(default_config())
+        self.check_walk(r, SAG_DEG)
+        self.assertEqual((r.pose_scale, r.lift_scale), (1.0, 1.0))  # sans le filet de sécurité
+
+    def test_fades_around_each_step_wave_and_four_legs(self):
+        r = Hexapod(default_config())
+        r.wave_mode = WAVE_ON
+        self.check_walk(r, 3.0, (20.0, 5.0, 0.05), 14)
+        r = Hexapod(default_config())
+        r.set_legs(4)
+        walk(r, GaitCommand(), 1.5)
+        a, ref = r.update(DT), plain(r)
+        for n in QUAD_TUCKED:
+            self.assertEqual(a[n].femur, ref[n].femur)  # repliée : elle ne porte pas
+        self.check_walk(r, 3.0, (40.0, 0.0, 0.1), 14)
+
+    def test_strongest_setting_stays_inside_the_limits(self):
+        for pose in (BodyPose(), BodyPose(z=-15.0, roll=0.15), BodyPose(z=20.0, pitch=-0.15, yaw=0.2)):
+            r = Hexapod(default_config())
+            r.pose = pose
+            r.sag = 5.0
+            w = Watch(self, r, ("sag fort", pose.z))  # vérifie butées et pliage à chaque tick
+            for c in COMMANDS:
+                walk(r, GaitCommand(*c), 3, w)
+
+    def test_zero_turns_it_off(self):
+        r = Hexapod(default_config())
+        r.sag = 0.0
+        walk(r, GaitCommand(), 1)
+
+        def watch():
+            a, ref = r._written, plain(r)
+            for n in r.neutral:
+                self.assertEqual(a[n].femur, ref[n].femur)
+
+        walk(r, GaitCommand(60.0, 0, 0), 4, watch)
+
+    def test_command_and_not_while_sitting(self):
+        ctrl = Controller(default_config(), DryRunDriver(), "/nonexistent/calib.json")
+        r = ctrl.robot
+        self.assertTrue(ctrl.handle("WALK").endswith(" sag 1.5"))
+        self.assertTrue(ctrl.handle("SAG 2").endswith(" sag 2.0"))
+        self.assertTrue(ctrl.handle("SAG 99").endswith(" sag 5.0"))
+        self.assertTrue(ctrl.handle("SAG -1").endswith(" sag 0.0"))
+        self.assertTrue(ctrl.handle("SAG x").startswith("ERR"))
+        ctrl.handle("SAG 2")
+        ctrl.handle("POWER 1")
+        for _ in range(100):
+            ctrl.tick(DT)
+        self.assertEqual(ctrl.mode, "sit")
+        self.assertEqual(r.sag_k, 0.0)  # assis : le corps est posé, pas d'appoint
+        femur = ctrl.angles["LF"].femur
+        self.assertEqual(femur, plain(r)["LF"].femur)
+        ctrl.handle("STAND")
+        for _ in range(300):
+            ctrl.tick(DT)
+        self.assertEqual(ctrl.mode, "stand")
+        self.assertEqual(r.sag_k, 1.0)
+        self.assertAlmostEqual(math.degrees(plain(r)["LF"].femur - r._written["LF"].femur), 2.0, places=9)
 
 
 class SoftTouchdownTest(unittest.TestCase):

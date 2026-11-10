@@ -142,7 +142,8 @@ def main():
                  "HOME_POSE_MM", "REACH_MARGIN", "REACH_COXA", "REACH_MAX", "REACH_POSE", "LIFT_MIN", "LIFT_STEP",
                  "TOUCH_FROM", "TOUCH_RATE", "FEEL_SMOOTH", "SINK_WINDOW", "EXTEND_SPEED", "GROUND_MAX"):
         w("static const double %s = %s;" % (name, f(getattr(rob, name))))
-    for name in ("WAVE_SPEED", "WAVE_BACK", "WAVE_ACCEL", "WAVE_ENTER", "WAVE_SHIFT", "WAVE_SHIFT_MAX", "SHIFT_TIME"):
+    for name in ("WAVE_SPEED", "WAVE_BACK", "WAVE_ACCEL", "WAVE_ENTER", "WAVE_SHIFT", "WAVE_SHIFT_MAX", "SHIFT_TIME",
+                 "SAG_DEG", "SAG_MAX", "SAG_FADE", "SAG_RATE", "SAG_SLEW"):
         w("static const double %s = %s;" % (name, f(getattr(rob, name))))
     w("static const double WAVE_SPEED_LO = %s;" % f(rob.WAVE_SPEED_RANGE[0]))
     w("static const double WAVE_SPEED_HI = %s;" % f(rob.WAVE_SPEED_RANGE[1]))

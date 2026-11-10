@@ -447,6 +447,8 @@ void Controller::apply_pose() {
     robot.pose = body_pose(p.x, p.y, height_ + p.z, clampv(p.roll + lv.roll, limit), clampv(p.pitch + lv.pitch, limit),
                            p.yaw);
     robot.base_pose = body_pose(0.0, 0.0, height_);
+    // Assis, le corps est posé : pas d'appoint des pattes (SAG) ; il vient en se levant.
+    robot.sag_k = sit_drop_ > 0.0 ? 1.0 + height_ / sit_drop_ : 1.0;
 }
 
 void Controller::send_leg(int leg, const LegAngles& a) {
@@ -548,8 +550,8 @@ const char* Controller::walk_status() {
     static const char* const WAVE_NAMES[3] = {"0", "1", "auto"};
     const Hexapod& r = robot;
     walk_gait_ = r.six;
-    snprintf(status_, sizeof(status_), "WALK wave %s %.0f gait %s shift %.1f", WAVE_NAMES[r.wave_mode], r.wave_speed,
-             r.six == &r.wave ? "wave" : "tripod", r.wave_shift);
+    snprintf(status_, sizeof(status_), "WALK wave %s %.0f gait %s shift %.1f sag %.1f", WAVE_NAMES[r.wave_mode],
+             r.wave_speed, r.six == &r.wave ? "wave" : "tripod", r.wave_shift, r.sag);
     return status_;
 }
 
@@ -590,6 +592,7 @@ static const CmdSpec COMMANDS[] = {
     {"gait", 2, 2, {"period", "step_height"}},
     {"legs", 1, 1, {"n"}},
     {"wave", 0, -1, {0}},
+    {"sag", 1, 1, {"deg"}},
     {"shift", 1, 1, {"mm"}},
     {"walk", 0, 0, {0}},
     {"cal", 0, 0, {0}},
@@ -821,6 +824,11 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
     if (!strcmp(name, "SHIFT")) {
         if (!pyfloat(a[0], &v[0])) return err_float(name, a[0]);
         r.wave_shift = pymax(0.0, pymin(WAVE_SHIFT_MAX, v[0]));
+        return walk_status();
+    }
+    if (!strcmp(name, "SAG")) {
+        if (!pyfloat(a[0], &v[0])) return err_float(name, a[0]);
+        r.sag = pymax(0.0, pymin(SAG_MAX, v[0]));
         return walk_status();
     }
     if (!strcmp(name, "WALK")) return walk_status();

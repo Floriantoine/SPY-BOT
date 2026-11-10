@@ -129,6 +129,8 @@
             <input id="period" type="range" min="0.4" max="3" step="0.1" value="1.4"></div>
           <div class="field"><span>Levée du pied</span><output></output>
             <input id="step" type="range" min="5" max="19" step="1" value="19"></div>
+          <div class="field" title="Une patte qui porte fléchit un peu (jeu du servo) : le corps descend. Les pattes au sol poussent donc un peu plus (fémur baissé de tant de degrés), fondu au lever et au poser du pied. 0 = rien. À régler pour que le corps ne tombe plus à chaque pas."><span>Appoint des pattes qui portent</span><output></output>
+            <input id="sag" type="range" min="0" max="5" step="0.5" value="1.5"></div>
           <p class="hint" id="walk-state">Démarche à 6 pattes : tripode</p>
         </div>
         <div class="card sensor-card" id="sensor-card">
