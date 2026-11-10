@@ -35,6 +35,14 @@ WAVE_SPEED_RANGE = (5.0, 60.0)
 WAVE_BACK = 0.8
 WAVE_ACCEL = 0.3  # part de ACCEL, DECEL... gardée en vague
 WAVE_ENTER = 0.9  # tripode -> vague : à 90 % au plus du pas de la config
+# En vague, le corps se décale à l'opposé de la patte en l'air (SHIFT, en mm
+# quand elle est au milieu de son pas) : les 5 pattes posées se partagent
+# mieux le poids. Il glisse d'une patte à la suivante sans à-coup, et le
+# décalage vient et s'en va en SHIFT_TIME (nul à l'arrêt). En tripode, le
+# centre des 3 pieds posés est déjà sous le corps : pas de décalage.
+WAVE_SHIFT = 6.0  # mm
+WAVE_SHIFT_MAX = 15.0
+SHIFT_TIME = 1.0  # s
 TUCK_TIME = 1.0  # s pour replier ou déplier les pattes du milieu
 # Patte repliée : fémur relevé de 55°, tibia replié de 15° vers le corps (pied
 # ~4 cm au-dessus du sol debout, ~2 cm assis), dans la course des servos et
@@ -103,6 +111,16 @@ class Hexapod:
         self.wave_mode = WAVE_OFF
         self.wave_speed = WAVE_SPEED
         self._wave_key = None  # _wanted_gait : dernière consigne et sa vitesse
+        self.wave_shift = WAVE_SHIFT  # décalage du corps en vague (mm), 0 = aucun
+        self._shift_amp = 0.0  # 0 = corps au centre, 1 = décalage complet
+        self._shift_mm = WAVE_SHIFT  # réglage suivi (rejoint wave_shift en douceur)
+        self._shift_dir = (0.0, 0.0)  # vers où (à l'opposé de la patte en l'air)
+        # Direction de chaque pied vue du centre du corps, dans l'ordre de WAVE_ORDER.
+        self._wave_dirs = []
+        for n in WAVE_ORDER:
+            p = self.neutral[n]
+            d = math.sqrt(p[0] * p[0] + p[1] * p[1])
+            self._wave_dirs.append((p[0] / d, p[1] / d))
         self.six = self.tripod  # démarche à 6 pattes en cours (tripode ou vague)
         self.gait = self.tripod
         self.legs = 6  # pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
@@ -161,6 +179,8 @@ class Hexapod:
         self.gait = self.quad if n == 4 else self.six
         # Les pieds restent où ils sont (posés, à moins de STOP_TOL de leur place).
         self.gait.reset()
+        self.gait.shift = (0.0, 0.0)
+        self._shift_amp = 0.0
         self.current = GaitCommand()
         self._lift = {}
         self._placed = set()
@@ -168,6 +188,8 @@ class Hexapod:
 
     def reset_gait(self):
         self.gait.reset()
+        self.gait.shift = (0.0, 0.0)
+        self._shift_amp = 0.0
         self.current = GaitCommand()
         self.offsets = {n: (0.0, 0.0, 0.0) for n in self.neutral}
         self._lift = {}
@@ -346,6 +368,8 @@ class Hexapod:
             else:
                 moving = False
         self.gait.advance(gdt, moving)
+        if self.gait is not self.quad:
+            self._wave_sway(dt, moving)
         self._move_feet(gdt)
         angles = self.solve_limited(dt)
         if angles is not self._written:  # mêmes angles qu'au tick d'avant : déjà envoyés
@@ -455,6 +479,37 @@ class Hexapod:
         if self.six is self.wave:
             return self.tripod if key[3] > self.wave_speed else self.wave
         return self.wave if key[3] < WAVE_BACK * self.wave_speed else self.tripod
+
+    def _wave_sway(self, dt, moving):
+        """Décalage du corps à 6 pattes : en vague et en marche, à l'opposé
+        de la patte en l'air ; sinon il revient au centre."""
+        g = self.gait
+        amp = self._shift_amp
+        on = g is self.wave and moving
+        if not on and amp == 0.0:
+            return  # corps au centre : rien à faire (tripode, arrêt)
+        amp = self._shift_amp = _approach(amp, 1.0 if on else 0.0, dt / SHIFT_TIME)
+        # Réglage changé en marche : suivi à 15 mm/s au plus.
+        self._shift_mm = _approach(self._shift_mm, self.wave_shift, WAVE_SHIFT_MAX * dt / SHIFT_TIME)
+        if g is self.wave:
+            # Chaque patte « attire » le décalage autour du milieu de son pas,
+            # de 1/6 de cycle avant à 1/6 après : deux pattes à la fois, la
+            # somme des deux parts vaut toujours 1.
+            x = y = 0.0
+            phase = g.phase
+            dirs = self._wave_dirs
+            for i in range(6):
+                d = (phase - (i + 0.5) / 6 + 0.5) % 1.0 - 0.5
+                if d < 0.0:
+                    d = -d
+                if d < 1.0 / 6:
+                    u = d * 6.0
+                    a = 1.0 - u * u * (3 - 2 * u)
+                    x -= a * dirs[i][0]
+                    y -= a * dirs[i][1]
+            self._shift_dir = (x, y)
+        k = self._shift_mm * amp * amp * (3 - 2 * amp)
+        g.shift = (self._shift_dir[0] * k, self._shift_dir[1] * k)
 
     def _foot_speed(self, c):
         """Vitesse (mm/s) du pied posé le plus rapide pour la consigne `c`

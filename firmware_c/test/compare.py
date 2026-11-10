@@ -664,7 +664,8 @@ def scenario_wave():
     sc = Script()
     cmd, ticks, walk = sc.cmd, sc.ticks, sc.walk
     for line in ("WALK", "WALK 1", "WAVE", "WAVE 2", "WAVE x", "WAVE AUTO x", "WAVE auto", "WAVE AUTO 1", "WAVE AUTO 1e9",
-                 "WAVE AUTO nan", "WAVE AUTO 25 extra", "WAVE 1", "WAVE 0 1", "wave 0", "WAVE AUTO 20", "WAVE 1"):
+                 "WAVE AUTO nan", "WAVE AUTO 25 extra", "WAVE 1", "WAVE 0 1", "wave 0", "WAVE AUTO 20", "WAVE 1",
+                 "SHIFT", "SHIFT x", "SHIFT 1 2", "SHIFT -3", "SHIFT 99", "SHIFT nan", "shift 6"):
         cmd(line)
     cmd("STAND")
     ticks(300)
@@ -672,6 +673,15 @@ def scenario_wave():
     for line, sec in (("MOVE 15 0 0", 6), ("MOVE 100 0 0", 6), ("MOVE 0 60 0", 5), ("MOVE 0 0 30", 5),
                       ("MOVE -40 30 -10", 5), ("MOVE 20 -20 15", 4), ("MOVE 0 0 0", 4)):
         walk(line, sec)
+    # Décalage du corps en vague : réglé en marche, coupé, remis.
+    for mm in ("12", "0", "15", "2.5", "6"):
+        cmd("SHIFT " + mm)
+        walk("MOVE 20 5 3", 3)
+    walk("MOVE 0 0 0", 0.4)  # arrêt et redémarrage pendant que le corps revient au centre
+    walk("MOVE 20 0 0", 0.6)
+    walk("MOVE 0 0 0", 0.3)
+    cmd("LEGS 4")  # refusé : le corps n'est pas revenu au centre
+    walk("MOVE -20 0 0", 2)
     # Changement en pleine marche : vague -> tripode -> vague.
     walk("MOVE 25 0 0", 3)
     cmd("WAVE 0")
@@ -749,7 +759,8 @@ def scenario_wave():
             walk("MOVE %d %d %d" % (rnd.randint(-top, top), rnd.randint(-top, top), rnd.randint(-top // 3, top // 3)),
                  rnd.choice((0.3, 0.6, 1.0, 2.0, 3.0)))
         elif r < 0.65:
-            cmd(rnd.choice(("WAVE 0", "WAVE 1", "WAVE AUTO", "WAVE AUTO %d" % rnd.randint(1, 70))))
+            cmd(rnd.choice(("WAVE 0", "WAVE 1", "WAVE AUTO", "WAVE AUTO %d" % rnd.randint(1, 70),
+                            "SHIFT %d" % rnd.randint(-2, 17), "SHIFT 6")))
             ticks(rnd.randint(1, 30))
         elif r < 0.75:
             cmd("POSE %.1f %.1f %.1f %.1f %.1f %.1f" % tuple(rnd.uniform(-22, 22) for _ in range(6)))
@@ -825,7 +836,8 @@ def scenario_wave_devices():
             walk("MOVE %d %d %d" % (rnd.randint(-top, top), rnd.randint(-top, top), rnd.randint(-top // 3, top // 3)),
                  rnd.choice((0.5, 1.0, 2.0, 3.0)))
         elif r < 0.7:
-            cmd(rnd.choice(("WAVE 0", "WAVE 1", "WAVE AUTO", "LEVEL 0", "LEVEL 1", "FEEL 0", "FEEL 1")))
+            cmd(rnd.choice(("WAVE 0", "WAVE 1", "WAVE AUTO", "LEVEL 0", "LEVEL 1", "FEEL 0", "FEEL 1",
+                            "SHIFT 0", "SHIFT 12", "SHIFT 6")))
             ticks(rnd.randint(1, 10))
         elif r < 0.85:
             world(setw(spike=(rnd.uniform(-1.5, 1.5), rnd.uniform(-1.5, 1.5), 0.0), spike_ticks=rnd.randint(1, 6)))

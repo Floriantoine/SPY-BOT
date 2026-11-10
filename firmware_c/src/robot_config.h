@@ -86,6 +86,9 @@ static const double WAVE_SPEED = 20.0;
 static const double WAVE_BACK = 0.8;
 static const double WAVE_ACCEL = 0.3;
 static const double WAVE_ENTER = 0.9;
+static const double WAVE_SHIFT = 6.0;
+static const double WAVE_SHIFT_MAX = 15.0;
+static const double SHIFT_TIME = 1.0;
 static const double WAVE_SPEED_LO = 5.0;
 static const double WAVE_SPEED_HI = 60.0;
 enum { WAVE_OFF = 0, WAVE_ON = 1, WAVE_AUTO = 2 };
@@ -107,6 +110,8 @@ static const double QUAD_SWAY = 28.349999999999998;
 // Rang dans WAVE_ORDER -> indice de CFG_LEGS.
 static const int CFG_WAVE_ORDER[NLEGS] = {5, 4, 3, 0, 1, 2};
 static const double WAVE_PERIOD = 2.8;  // WaveGait de Hexapod
+// Direction de chaque pied vue du centre du corps, dans l'ordre de WAVE_ORDER (Hexapod._wave_dirs).
+static const double CFG_WAVE_DIRS[NLEGS][2] = {{-0.8660254333715605, 0.49999994875359804}, {3.068639823769696e-17, 1.0}, {0.8660254333715605, 0.49999994875359804}, {0.8660254333715605, -0.49999994875359804}, {3.068639823769696e-17, -1.0}, {-0.8660254333715605, -0.49999994875359804}};
 static const double TRIPOD_STEP_HEIGHT = 18.900000000000002;
 static const double TRIPOD_MAX_STRIDE = 51.975;
 

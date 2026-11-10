@@ -142,7 +142,7 @@ def main():
                  "HOME_POSE_MM", "REACH_MARGIN", "REACH_COXA", "REACH_MAX", "REACH_POSE", "LIFT_MIN", "LIFT_STEP",
                  "TOUCH_FROM", "TOUCH_RATE", "FEEL_SMOOTH", "SINK_WINDOW", "EXTEND_SPEED", "GROUND_MAX"):
         w("static const double %s = %s;" % (name, f(getattr(rob, name))))
-    for name in ("WAVE_SPEED", "WAVE_BACK", "WAVE_ACCEL", "WAVE_ENTER"):
+    for name in ("WAVE_SPEED", "WAVE_BACK", "WAVE_ACCEL", "WAVE_ENTER", "WAVE_SHIFT", "WAVE_SHIFT_MAX", "SHIFT_TIME"):
         w("static const double %s = %s;" % (name, f(getattr(rob, name))))
     w("static const double WAVE_SPEED_LO = %s;" % f(rob.WAVE_SPEED_RANGE[0]))
     w("static const double WAVE_SPEED_HI = %s;" % f(rob.WAVE_SPEED_RANGE[1]))
@@ -167,6 +167,8 @@ def main():
     w("// Rang dans WAVE_ORDER -> indice de CFG_LEGS.")
     w("static const int CFG_WAVE_ORDER[NLEGS] = {%s};" % ", ".join(str(names.index(n)) for n in gait_mod.WAVE_ORDER))
     w("static const double WAVE_PERIOD = %s;  // WaveGait de Hexapod" % f(trig.wave.period))
+    w("// Direction de chaque pied vue du centre du corps, dans l'ordre de WAVE_ORDER (Hexapod._wave_dirs).")
+    w("static const double CFG_WAVE_DIRS[NLEGS][2] = {%s};" % ", ".join("{%s, %s}" % (f(x), f(y)) for x, y in trig._wave_dirs))
     w("static const double TRIPOD_STEP_HEIGHT = %s;" % f(trig.tripod.step_height))
     w("static const double TRIPOD_MAX_STRIDE = %s;" % f(trig.tripod.max_stride))
     w("")

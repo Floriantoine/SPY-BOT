@@ -383,6 +383,9 @@ Hexapod::Hexapod(ServoDriver* d, AnglePool* p) : driver(d), pool(p) {
     wave_mode = WAVE_OFF;
     wave_speed = WAVE_SPEED;
     wave_key_valid_ = false;
+    wave_shift = shift_mm_ = WAVE_SHIFT;
+    shift_amp_ = 0.0;
+    shift_dir_[0] = shift_dir_[1] = 0.0;
     six = &tripod;
     gait = &tripod;
     legs = 6;
@@ -438,6 +441,8 @@ int Hexapod::set_legs(int n) {
     gait = n == 4 ? (Gait*)&gait4 : six;
     // Les pieds restent où ils sont (posés, à moins de STOP_TOL de leur place).
     gait->reset();
+    gait->shift_x = gait->shift_y = 0.0;
+    shift_amp_ = 0.0;
     current = gait_command();
     memset(has_lift_, 0, sizeof(has_lift_));
     memset(placed_, 0, sizeof(placed_));
@@ -447,6 +452,8 @@ int Hexapod::set_legs(int n) {
 
 void Hexapod::reset_gait() {
     gait->reset();
+    gait->shift_x = gait->shift_y = 0.0;
+    shift_amp_ = 0.0;
     current = gait_command();
     memset(offsets, 0, sizeof(offsets));
     memset(has_lift_, 0, sizeof(has_lift_));
@@ -611,6 +618,7 @@ bool Hexapod::update(double dt, AngleSet** out) {
             moving = false;
     }
     gait->advance(gdt, moving);
+    if (gait != &gait4) wave_sway(dt, moving);
     {
         ProfScope pp(PROF_PIEDS);
         move_feet(gdt);
@@ -758,6 +766,39 @@ Gait* Hexapod::wanted_gait() {
     }
     if (six == &wave) return wave_key_[3] > wave_speed ? (Gait*)&tripod : (Gait*)&wave;
     return wave_key_[3] < WAVE_BACK * wave_speed ? (Gait*)&wave : (Gait*)&tripod;
+}
+
+void Hexapod::wave_sway(double dt, bool moving) {
+    // Décalage du corps à 6 pattes : en vague et en marche, à l'opposé de la
+    // patte en l'air ; sinon il revient au centre.
+    Gait* g = gait;
+    double amp = shift_amp_;
+    bool on = g == &wave && moving;
+    if (!on && amp == 0.0) return;  // corps au centre : rien à faire (tripode, arrêt)
+    amp = shift_amp_ = approach(amp, on ? 1.0 : 0.0, dt / SHIFT_TIME);
+    // Réglage changé en marche : suivi à 15 mm/s au plus.
+    shift_mm_ = approach(shift_mm_, wave_shift, WAVE_SHIFT_MAX * dt / SHIFT_TIME);
+    if (g == &wave) {
+        // Chaque patte « attire » le décalage autour du milieu de son pas, de 1/6
+        // de cycle avant à 1/6 après : deux pattes à la fois, somme des parts = 1.
+        double x = 0.0, y = 0.0;
+        double phase = g->phase;
+        for (int i = 0; i < 6; i++) {
+            double d = pymod(phase - (i + 0.5) / 6 + 0.5, 1.0) - 0.5;
+            if (d < 0.0) d = -d;
+            if (d < 1.0 / 6) {
+                double u = d * 6.0;
+                double a = 1.0 - u * u * (3 - 2 * u);
+                x -= a * CFG_WAVE_DIRS[i][0];
+                y -= a * CFG_WAVE_DIRS[i][1];
+            }
+        }
+        shift_dir_[0] = x;
+        shift_dir_[1] = y;
+    }
+    double k = shift_mm_ * amp * amp * (3 - 2 * amp);
+    g->shift_x = shift_dir_[0] * k;
+    g->shift_y = shift_dir_[1] * k;
 }
 
 double Hexapod::foot_speed(const GaitCommand& c) const {

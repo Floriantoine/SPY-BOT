@@ -180,6 +180,7 @@ public:
     int wave_mode;      // WAVE_OFF, WAVE_ON ou WAVE_AUTO
     double wave_speed;  // seuil de WAVE AUTO (mm/s)
     Gait* six;          // démarche à 6 pattes en cours (tripode ou vague)
+    double wave_shift;  // décalage du corps en vague (mm), 0 = aucun
     Gait* gait;
     int legs;     // pattes qui marchent : 6, ou 4 (pattes du milieu repliées)
     double tuck;  // 0 = pattes du milieu au sol, 1 = repliées
@@ -243,7 +244,10 @@ private:
     bool wave_key_valid_;
     double wave_key_[4];  // dernière consigne vue par wanted_gait() et sa vitesse
 
+    double shift_amp_, shift_mm_, shift_dir_[2];
+
     Gait* wanted_gait();
+    void wave_sway(double dt, bool moving);
     double foot_speed(const GaitCommand& c) const;
     void switch_gait(Gait* next);
     void forget_ground();

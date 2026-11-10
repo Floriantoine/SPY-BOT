@@ -25,9 +25,13 @@ Commandes (une par ligne, PC -> robot) :
                                   (20 mm/s au départ, 5 à 60), tripode au-dessus.
                                   En marche, le changement attend que les 6 pieds
                                   soient posés. -> WALK ...
-    WALK                          -> WALK wave 0|1|auto <seuil> gait tripod|wave :
-                                  réglages de la marche et démarche à 6 pattes en
-                                  cours (ligne envoyée aussi quand elle change)
+    SHIFT mm                      en vague, le corps se décale de tant de mm à
+                                  l'opposé de la patte en l'air (6 au départ, 0 à
+                                  15, 0 = aucun) ; nul à l'arrêt -> WALK ...
+    WALK                          -> WALK wave 0|1|auto <seuil> gait tripod|wave
+                                  shift <mm> : réglages de la marche et démarche à
+                                  6 pattes en cours (ligne envoyée aussi quand
+                                  elle change)
     CAL                           pose de calibration : fémur à plat, tibia vertical (+ trim)
     TEST leg joint                fait osciller un seul servo pendant 3 s (vérif. câblage),
                                   les autres en pose de calibration ; refusé debout
@@ -116,7 +120,7 @@ import os
 from .body_ik import BodyPose
 from .gait import GaitCommand
 from .leg_ik import LegAngles, UnreachableError
-from .robot import WAVE_AUTO, WAVE_SPEED_RANGE, Hexapod, leg_margin
+from .robot import WAVE_AUTO, WAVE_SHIFT_MAX, WAVE_SPEED_RANGE, Hexapod, leg_margin
 
 try:  # MicroPython
     from time import ticks_diff, ticks_us
@@ -468,6 +472,10 @@ class Controller:
                 raise ValueError("0, 1 ou AUTO [mm/s]")
         return self.walk_status()
 
+    def cmd_shift(self, mm):
+        self.robot.wave_shift = max(0.0, min(WAVE_SHIFT_MAX, float(mm)))
+        return self.walk_status()
+
     def cmd_walk(self):
         return self.walk_status()
 
@@ -475,8 +483,8 @@ class Controller:
         """Ligne WALK : réglages de la marche et démarche à 6 pattes en cours."""
         r = self.robot
         self._walk_gait = r.six
-        return "WALK wave %s %.0f gait %s" % (("0", "1", "auto")[r.wave_mode], r.wave_speed,
-                                               "wave" if r.six is r.wave else "tripod")
+        return "WALK wave %s %.0f gait %s shift %.1f" % (
+            ("0", "1", "auto")[r.wave_mode], r.wave_speed, "wave" if r.six is r.wave else "tripod", r.wave_shift)
 
     def cmd_cal(self):
         """Pose de calibration, choisie pour être facile à vérifier à l'œil :

@@ -548,8 +548,8 @@ const char* Controller::walk_status() {
     static const char* const WAVE_NAMES[3] = {"0", "1", "auto"};
     const Hexapod& r = robot;
     walk_gait_ = r.six;
-    snprintf(status_, sizeof(status_), "WALK wave %s %.0f gait %s", WAVE_NAMES[r.wave_mode], r.wave_speed,
-             r.six == &r.wave ? "wave" : "tripod");
+    snprintf(status_, sizeof(status_), "WALK wave %s %.0f gait %s shift %.1f", WAVE_NAMES[r.wave_mode], r.wave_speed,
+             r.six == &r.wave ? "wave" : "tripod", r.wave_shift);
     return status_;
 }
 
@@ -590,6 +590,7 @@ static const CmdSpec COMMANDS[] = {
     {"gait", 2, 2, {"period", "step_height"}},
     {"legs", 1, 1, {"n"}},
     {"wave", 0, -1, {0}},
+    {"shift", 1, 1, {"mm"}},
     {"walk", 0, 0, {0}},
     {"cal", 0, 0, {0}},
     {"test", 2, 2, {"leg_name", "joint_name"}},
@@ -815,6 +816,11 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
                 return err(name, "0, 1 ou AUTO [mm/s]");
             }
         }
+        return walk_status();
+    }
+    if (!strcmp(name, "SHIFT")) {
+        if (!pyfloat(a[0], &v[0])) return err_float(name, a[0]);
+        r.wave_shift = pymax(0.0, pymin(WAVE_SHIFT_MAX, v[0]));
         return walk_status();
     }
     if (!strcmp(name, "WALK")) return walk_status();

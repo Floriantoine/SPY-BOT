@@ -26,7 +26,8 @@ Tout ce que fait `main.py` sur le vrai robot :
 - Marche « vague » à 6 pattes : `WAVE 0|1|AUTO [mm/s]` (une patte en l'air à
   la fois, 5 pieds au sol ; automatique : vague à petite vitesse, tripode
   au-dessus du seuil ; changement en marche à l'instant où les 6 pieds sont
-  posés), `WALK` (réglages de la marche, ligne `WALK ...` envoyée aussi quand
+  posés), `SHIFT mm` (en vague, le corps se décale à l'opposé de la patte en
+  l'air ; 6 mm au départ, 0 = aucun), `WALK` (réglages de la marche, ligne `WALK ...` envoyée aussi quand
   la démarche change).
 - Gyroscope MPU6050 (0x68, même bus I²C que les PCA9685), cherché au
   démarrage : biais mesuré pendant la première seconde (robot immobile ; la

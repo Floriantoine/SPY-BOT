@@ -187,6 +187,81 @@ class WaveWalkTest(unittest.TestCase):
             self.assertLess(kept[0], 1.0)
 
 
+class WaveShiftTest(unittest.TestCase):
+    """En vague, le corps se décale à l'opposé de la patte en l'air."""
+
+    def test_away_from_the_lifted_leg_and_smooth(self):
+        r = Hexapod(default_config())
+        r.wave_mode = WAVE_ON
+        w = Watch(self, r, "décalage")
+        seen = {"max": 0.0, "step": 0.0, "dot": 0.0, "n": 0}
+        last = [(0.0, 0.0)]
+
+        def watch():
+            w()
+            sx, sy = r.gait.shift
+            seen["max"] = max(seen["max"], math.hypot(sx, sy))
+            seen["step"] = max(seen["step"], math.hypot(sx - last[0][0], sy - last[0][1]))
+            last[0] = (sx, sy)
+            for n in r.walking_legs():
+                if r.offsets[n][2] > 0.5 * r.gait.step_height:  # patte au milieu de son pas
+                    p = r.neutral[n]
+                    seen["dot"] = max(seen["dot"], (sx * p[0] + sy * p[1]) / math.hypot(p[0], p[1]))
+                    seen["n"] += 1
+
+        walk(r, GaitCommand(20.0, 5.0, 0.05), 3, watch)
+        seen["dot"], seen["n"] = -99.0, 0  # décalage établi : on regarde sa direction
+        walk(r, GaitCommand(20.0, 5.0, 0.05), 12, watch)
+        self.assertGreater(seen["n"], 100)
+        self.assertLess(seen["dot"], -0.6 * r.wave_shift)  # toujours à l'opposé de la patte levée
+        self.assertLessEqual(seen["max"], r.wave_shift + 1e-9)
+        self.assertGreater(seen["max"], 0.95 * r.wave_shift)
+        self.assertLess(seen["step"], 0.6)  # mm par tick : 30 mm/s au plus
+        self.assertEqual((r.pose_scale, r.lift_scale), (1.0, 1.0))
+        walk(r, GaitCommand(), 4, watch)
+        self.assertTrue(r.at_rest)
+        self.assertEqual(r.gait.shift, (0.0, 0.0))  # à l'arrêt : corps au centre
+        self.assertLess(seen["step"], 0.6)
+
+    def test_none_in_tripod_and_standing(self):
+        r = Hexapod(default_config())
+        walk(r, GaitCommand(), 1)
+        self.assertEqual(r.gait.shift, (0.0, 0.0))
+        walk(r, GaitCommand(60.0, 0, 0), 5, lambda: self.assertEqual(r.gait.shift, (0.0, 0.0)))
+        r.wave_mode = WAVE_ON  # à l'arrêt en vague : toujours rien
+        walk(r, GaitCommand(), 3, lambda: self.assertEqual(r.gait.shift, (0.0, 0.0)))
+
+    def test_zero_turns_it_off(self):
+        r = Hexapod(default_config())
+        r.wave_mode = WAVE_ON
+        r.wave_shift = 0.0
+        walk(r, GaitCommand(20.0, 0, 0), 2)  # le réglage suivi part de la valeur de départ : il descend
+        walk(r, GaitCommand(20.0, 0, 0), 6, lambda: self.assertEqual(r.gait.shift, (0.0, 0.0)))
+
+    def test_fades_out_after_a_switch_to_tripod(self):
+        r = Hexapod(default_config())
+        r.wave_mode = WAVE_ON
+        r.wave_shift = 15.0
+        w = Watch(self, r, "décalage fort")
+        for c in COMMANDS[:6]:
+            w.where = ("décalage fort", c)
+            walk(r, GaitCommand(*c), 5, w)
+        self.assertGreater(math.hypot(*r.gait.shift), 5.0)
+        r.wave_mode = WAVE_OFF
+        walk(r, GaitCommand(30.0, 0, 0), 4, w)
+        self.assertIs(r.gait, r.tripod)
+        self.assertEqual(r.gait.shift, (0.0, 0.0))
+
+    def test_setting_changed_while_walking(self):
+        r = Hexapod(default_config())
+        r.wave_mode = WAVE_ON
+        w = Watch(self, r, "réglage")
+        for mm in (15.0, 0.0, 10.0, 6.0):
+            r.wave_shift = mm
+            w.where = ("réglage", mm)
+            walk(r, GaitCommand(25.0, 0, 0), 3, w)
+
+
 class SoftTouchdownTest(unittest.TestCase):
     def check(self, legs):
         r = Hexapod(default_config())

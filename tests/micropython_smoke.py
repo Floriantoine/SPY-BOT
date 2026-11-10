@@ -42,6 +42,22 @@ ctrl.handle("MOVE 0 0 0")
 run(3)
 assert ctrl.handle("LEGS 6") == "OK LEGS 6", "LEGS 6"
 run(1.5)
+# Marche en vague, décalage du corps, retour en tripode en marchant.
+assert ctrl.handle("WAVE 1") == "WALK wave 1 20 gait tripod shift 6.0", "WAVE 1"
+assert ctrl.handle("SHIFT 10").endswith("shift 10.0"), "SHIFT"
+for _ in range(40):
+    ctrl.handle("MOVE 20 5 3")
+    run(0.1)
+assert ctrl.handle("WALK") == "WALK wave 1 20 gait wave shift 10.0", ctrl.handle("WALK")
+ctrl.handle("WAVE AUTO")
+for _ in range(40):
+    ctrl.handle("MOVE 80 0 0")
+    run(0.1)
+assert ctrl.handle("WALK") == "WALK wave auto 20 gait tripod shift 10.0", ctrl.handle("WALK")
+ctrl.handle("WAVE 0")
+ctrl.handle("SHIFT 6")
+ctrl.handle("MOVE 0 0 0")
+run(3)
 ctrl.handle("POSE 5 -5 10 5 -5 10")
 run(1)
 ctrl.handle("SIT")
