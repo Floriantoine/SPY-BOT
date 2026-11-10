@@ -3,7 +3,7 @@
 import math
 
 from .body_ik import BodyPose, _trig, body_to_leg_frame, foot_in_body, leg_to_body_frame, rotation_matrix
-from .config import BATTERY_FOLD, MIDDLE_LEGS, STRAP_FOLD, TIBIA_FOLD_LIMITS
+from .config import US_PER_DEG, BATTERY_FOLD, MIDDLE_LEGS, STRAP_FOLD, TIBIA_FOLD_LIMITS
 from .gait import (QUAD_ORDER, QUAD_TUCKED, TRIPOD_A, WAVE_ORDER, GaitCommand, QuadGait, TripodGait, WaveGait,
                    _diagonal, ground_velocity)
 from .leg_ik import LegAngles, UnreachableError, leg_fk, leg_ik
@@ -920,6 +920,8 @@ def write_servos(driver, legs, angles):
             k = _joint(joint)
             d = k[7] + k[8] * v
             d = k[3] if d < k[3] else k[4] if d > k[4] else d
+            if k[9] != 0.0:
+                d = d + (d - k[10]) * k[9]  # course réelle du servo (TRAVEL)
             if batch is None:
                 driver.set_angle(joint.board, joint.channel, d)
             else:
@@ -997,13 +999,14 @@ def _joint(j):
     angle servo = a + b × angle IK (rad), avant les butées."""
     c = getattr(j, "_consts", None)
     if (c is None or c[0] != j.direction or c[1] != j.zero_deg or c[2] != j.trim_deg
-            or c[3] != j.min_deg or c[4] != j.max_deg):
+            or c[3] != j.min_deg or c[4] != j.max_deg or c[11] != j.us_per_deg):
         # d = 90 + direction * (deg - zero) + trim, borné à [min, max] ± marge.
         u = (j.min_deg + SERVO_MARGIN - 90.0 - j.trim_deg) / j.direction + j.zero_deg
         w = (j.max_deg - SERVO_MARGIN - 90.0 - j.trim_deg) / j.direction + j.zero_deg
         c = j._consts = (j.direction, j.zero_deg, j.trim_deg, j.min_deg, j.max_deg,
                          (min(u, w) - 1e-9) / DEG_PER_RAD, (max(u, w) + 1e-9) / DEG_PER_RAD,
-                         90.0 - j.direction * j.zero_deg + j.trim_deg, j.direction * DEG_PER_RAD)
+                         90.0 - j.direction * j.zero_deg + j.trim_deg, j.direction * DEG_PER_RAD,
+                         j.us_per_deg / US_PER_DEG - 1.0, 90.0 + j.trim_deg, j.us_per_deg)
     return c
 
 

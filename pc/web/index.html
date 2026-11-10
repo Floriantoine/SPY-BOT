@@ -276,6 +276,23 @@
           <p class="hint">Touche une articulation sur la 3D pour la choisir. Au clavier : ← → pour régler, ↑ ↓ pour changer d'articulation.</p>
         </div>
 
+        <div class="card" id="travel-card">
+          <h3>Course réelle du servo</h3>
+          <p class="hint">Réglage de ce servo : <b id="sel-travel">10.00</b> µs par degré. S'il tourne plus ou moins que demandé, toutes les poses loin de la pose de calibration sont fausses.</p>
+          <div class="row">
+            <button class="btn ghost" data-hold="-45" data-needs="link" title="En pose de calibration : tient ce servo à −45° de cette pose">Tenir −45°</button>
+            <button class="btn ghost" data-hold="0" data-needs="link">Revenir à 0°</button>
+            <button class="btn ghost" data-hold="45" data-needs="link" title="En pose de calibration : tient ce servo à +45° de cette pose">Tenir +45°</button>
+          </div>
+          <div class="field" title="Angle réel mesuré au rapporteur entre les deux positions tenues"><span id="travel-label">Angle mesuré entre −45° et +45°</span><output></output>
+            <input id="travel-measured" type="range" min="60" max="120" step="0.5" value="90"></div>
+          <div class="row">
+            <button class="btn" id="travel-apply" data-needs="link">Appliquer à ce servo</button>
+            <button class="btn ghost" id="travel-all" data-needs="link" title="Mêmes servos partout : la mesure d'un seul vaut pour les 18">Appliquer à tous</button>
+            <button class="btn ghost" id="travel-reset" data-needs="link">Remettre à 10</button>
+          </div>
+        </div>
+
         <div class="card">
           <h3>Choisir le servo</h3>
           <div class="leg-map" id="legs"></div>
@@ -289,6 +306,7 @@
             <li><b>Pose de calibration</b> : coxa perpendiculaire au corps, fémur à plat, tibia vertical.</li>
             <li><b>Tester ce servo</b> : la vraie patte doit bouger dans le même sens que la 3D. Si elle part dans l'autre sens, clique sur <b>Inverser le sens</b>, puis refixe son palonnier dans la pose de calibration.</li>
             <li>Pour chaque servo, règle le trim jusqu'à ce que la patte réelle ait la pose du modèle 3D.</li>
+            <li>Course réelle (une fois, sur un fémur par exemple) : <b>Tenir −45°</b>, repère la position de la patte ; <b>Tenir +45°</b>, mesure au rapporteur l'angle parcouru ; règle le curseur sur cet angle et clique sur <b>Appliquer</b>. Refais la mesure : elle doit donner 90°.</li>
             <li><b>Enregistrer</b> : les réglages restent dans l'ESP32.</li>
           </ol>
         </div>

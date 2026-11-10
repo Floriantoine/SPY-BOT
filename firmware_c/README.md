@@ -32,6 +32,12 @@ Tout ce que fait `main.py` sur le vrai robot :
   (sauts de consigne des servos adoucis, a °/s² au plus, 1500 au départ,
   0 = aucun ; les consignes de la marche passent telles quelles), `WALK` (réglages de la marche, ligne `WALK ...` envoyée aussi quand
   la démarche change).
+- Course réelle des servos : `HOLD leg joint deg` (en pose de calibration,
+  tient un servo à ±45° pour mesurer au rapporteur), `TRAVEL leg joint us` /
+  `TRAVEL ALL us` (µs d'impulsion par degré, 10 au départ, 8 à 13), `TRAVEL`
+  (lit les 18 valeurs). Gardée par `SAVE` dans la NVS sous une clé à part
+  (`travel`) : une calibration enregistrée avant reste lisible. Impulsions
+  bornées à 600–2200 µs.
 - Gyroscope MPU6050 (0x68, même bus I²C que les PCA9685), cherché au
   démarrage : biais mesuré pendant la première seconde (robot immobile ; la
   mesure recommence tant qu'on le bouge, `IMU CAL` la refait), filtre

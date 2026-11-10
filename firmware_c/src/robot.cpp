@@ -20,6 +20,8 @@ void JointServo::refresh() {
     hi_rad = (pymax(u, w) + 1e-9) / DEG_PER_RAD;
     k7 = 90.0 - direction * zero_deg + trim_deg;
     k8 = direction * DEG_PER_RAD;
+    k9 = us_per_deg / US_PER_DEG - 1.0;
+    k10 = 90.0 + trim_deg;
 }
 
 void legs_init() {
@@ -37,6 +39,7 @@ void legs_init() {
             s.trim_is_int = false;
             s.min_deg = d.min_deg;
             s.max_deg = d.max_deg;
+            s.us_per_deg = US_PER_DEG;
             s.refresh();
         }
     }
@@ -50,7 +53,10 @@ int leg_index(const char* name) {
 
 double ik_to_servo_deg(double angle_rad, const JointServo& j) {
     double deg = 90.0 + j.direction * (angle_rad * SERVO_DEG_PER_RAD - j.zero_deg) + j.trim_deg;
-    return pymax(j.min_deg, pymin(j.max_deg, deg));
+    deg = pymax(j.min_deg, pymin(j.max_deg, deg));
+    // Course réelle du servo : l'écart à la pose de calibration est mis à l'échelle.
+    if (j.us_per_deg != US_PER_DEG) deg = deg + (deg - 90.0 - j.trim_deg) * (j.us_per_deg / US_PER_DEG - 1.0);
+    return deg;
 }
 
 // =============================================================================
@@ -1363,6 +1369,7 @@ void Hexapod::write_servos(const AngleSet& angles) {
             const JointServo& js = leg.joint[j];
             double d = js.k7 + js.k8 * v3[j];
             d = d < js.min_deg ? js.min_deg : d > js.max_deg ? js.max_deg : d;
+            if (js.k9 != 0.0) d = d + (d - js.k10) * js.k9;  // course réelle du servo (TRAVEL)
             if (!batch) {
                 driver->set_angle(js.board, js.channel, d);
                 continue;

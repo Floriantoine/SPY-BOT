@@ -73,16 +73,26 @@ def _fold_table(femur_deg):
     return t0
 
 
+# Course des servos : le pilote envoie US_PER_DEG µs par degré. Un vrai servo
+# en demande un peu plus ou un peu moins (mesuré au rapporteur, commande
+# TRAVEL) : l'écart à la pose de calibration est alors agrandi d'autant.
+US_PER_DEG = 10.0
+US_PER_DEG_RANGE = (8.0, 13.0)
+
+
 class JointServo:
     """Lien entre un angle articulaire (IK) et un canal de servo PCA9685.
 
     angle_servo_deg = 90 + direction * (degrés(angle_ik) - zero_deg) + trim_deg
+    (borné aux butées), puis écart à 90 + trim_deg multiplié par
+    us_per_deg / US_PER_DEG (course réelle du servo).
 
     board : index de la carte PCA9685 (0 = 0x40, 1 = 0x41).
     zero_deg : angle IK (en degrés) qui place le servo au milieu (90°).
     direction : +1 ou -1 selon le sens de montage (inversé si `inverted`).
     trim_deg : réglage fin mesuré sur le robot réel (calibration).
     min_deg / max_deg : butées, en degrés servo.
+    us_per_deg : µs d'impulsion par degré réel de ce servo (US_PER_DEG au départ).
     """
 
     def __init__(self, board, channel, zero_deg=0.0, direction=1, trim_deg=0.0,
@@ -95,6 +105,7 @@ class JointServo:
         self.trim_deg = trim_deg
         self.min_deg = min_deg
         self.max_deg = max_deg
+        self.us_per_deg = US_PER_DEG
 
 
     @property

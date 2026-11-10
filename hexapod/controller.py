@@ -33,6 +33,15 @@ Commandes (une par ligne, PC -> robot) :
                                   baissé de tant de degrés (1.5 au départ, 0 à 5,
                                   0 = rien), fondu au lever et au poser du pied
                                   -> WALK ...
+    HOLD leg joint deg            en pose de calibration, tient ce servo à deg
+                                  degrés de cette pose (±60, borné à ses butées)
+                                  pour mesurer sa course au rapporteur
+                                  -> OK HOLD leg joint <angle tenu>
+    TRAVEL leg joint us           course réelle d'un servo : us µs d'impulsion par
+    TRAVEL ALL us                 degré (10 au départ, 8 à 13). Mesure : HOLD à
+    TRAVEL                        -45 puis +45, angle réel m entre les deux ->
+                                  us = réglage en cours x 90 / m. Gardé par SAVE.
+                                  Sans argument -> TRAVEL {json: 3 valeurs par patte}
     SLEW a                        sauts de consigne adoucis : un servo qui doit
                                   rejoindre une cible éloignée (pose de
                                   calibration, test, pattes repliées, réglage...)
@@ -132,6 +141,7 @@ import os
 
 from .body_ik import BodyPose
 from .gait import GaitCommand
+from .config import US_PER_DEG_RANGE
 from .leg_ik import LegAngles, UnreachableError
 from .robot import SAG_MAX, WAVE_AUTO, WAVE_SHIFT_MAX, WAVE_SPEED_RANGE, Hexapod, _joint, leg_margin
 
@@ -148,7 +158,7 @@ except ImportError:  # PC
 from .imu import IMU_AXES, ZERO_MAX, Leveler, format_axes, parse_axes
 from .nav import Navigator
 from .sensor import STOP_RANGE, Scanner
-from .servo import SLEW_DEG, SLEW_MAX, SmoothDriver, soft_step
+from .servo import DEG_PER_RAD, SLEW_DEG, SLEW_MAX, SmoothDriver, soft_step
 
 DEG = math.pi / 180.0
 
@@ -393,6 +403,8 @@ class Controller:
                     p = lag(joint.board, joint.channel)
                     if p is not None:
                         k = _joint(joint)
+                        if k[9] != 0.0:
+                            p = (p + k[10] * k[9]) / (1.0 + k[9])  # course réelle du servo (TRAVEL)
                         v = (p - k[7]) / k[8]
                 values.append(round(v * 1000))
         return _T_FORMAT % tuple(values)
@@ -584,6 +596,50 @@ class Controller:
             self._send_angles()
         return "OK TRIM %s %s %.1f" % (leg_name.upper(), joint_name.lower(), joint.trim_deg)
 
+    def cmd_hold(self, leg_name, joint_name, deg):
+        """En pose de calibration, tient un servo à `deg` degrés de cette
+        pose : pour mesurer sa course réelle au rapporteur (voir TRAVEL)."""
+        joint = self._joint(leg_name, joint_name)
+        if self.mode != CALIBRATION:
+            return "ERR HOLD : pose de calibration d'abord (CAL)"
+        name = joint_name.lower()
+        base = CALIBRATION_POSE[JOINTS.index(name)]
+        rad = base + _clamp(float(deg), 60) * DEG
+        # Borné aux butées du servo : la réponse donne l'angle vraiment tenu.
+        d = 90.0 + joint.direction * (rad * DEG_PER_RAD - joint.zero_deg) + joint.trim_deg
+        d = max(joint.min_deg, min(joint.max_deg, d))
+        rad = ((d - 90.0 - joint.trim_deg) / joint.direction + joint.zero_deg) / DEG_PER_RAD
+        self.angles = self._calibration_angles()
+        setattr(self.angles[leg_name.upper()], name, rad)
+        self._send_angles()
+        return "OK HOLD %s %s %.1f" % (leg_name.upper(), name, (rad - base) * DEG_PER_RAD)
+
+    def cmd_travel(self, *args):
+        """Course réelle des servos, en µs d'impulsion par degré."""
+        legs = self.robot.config.legs
+        if not args:
+            return "TRAVEL " + json.dumps(self._travel())
+        lo, hi = US_PER_DEG_RANGE
+        if len(args) == 2 and args[0].upper() == "ALL":
+            us = max(lo, min(hi, float(args[1])))
+            for leg in legs:
+                leg.coxa.us_per_deg = leg.femur.us_per_deg = leg.tibia.us_per_deg = us
+            reply = "OK TRAVEL ALL %.2f" % us
+        elif len(args) == 3:
+            joint = self._joint(args[0], args[1])
+            joint.us_per_deg = max(lo, min(hi, float(args[2])))
+            reply = "OK TRAVEL %s %s %.2f" % (args[0].upper(), args[1].lower(), joint.us_per_deg)
+        else:
+            raise ValueError("patte articulation us, ou ALL us")
+        self.robot._written = None  # tout renvoyer aux servos
+        if self.mode in (CALIBRATION, TEST):
+            self._send_angles()
+        return reply
+
+    def _travel(self):
+        return {leg.name: [leg.coxa.us_per_deg, leg.femur.us_per_deg, leg.tibia.us_per_deg]
+                for leg in self.robot.config.legs}
+
     def cmd_invert(self, leg_name, joint_name, on):
         joint = self._joint(leg_name, joint_name)
         joint.inverted = on == "1"
@@ -593,6 +649,7 @@ class Controller:
 
     def cmd_save(self):
         data = self.calibration()
+        data["travel"] = self._travel()  # course réelle des servos (TRAVEL)
         imu = self._stored().get("imu")
         if imu:
             data["imu"] = imu  # réglages du gyroscope (IMU AXES, IMU ZERO) : gardés
@@ -936,6 +993,15 @@ class Controller:
             inv = data.get("invert", {}).get(leg.name)
             if inv and len(inv) == 3:
                 leg.coxa.inverted, leg.femur.inverted, leg.tibia.inverted = [bool(v) for v in inv]
+            # Course réelle des servos ; absente d'une ancienne calibration : valeurs de départ.
+            us = data.get("travel", {}).get(leg.name)
+            if us and len(us) == 3:
+                lo, hi = US_PER_DEG_RANGE
+                try:
+                    us = [max(lo, min(hi, float(v))) for v in us]
+                except (TypeError, ValueError):
+                    continue
+                leg.coxa.us_per_deg, leg.femur.us_per_deg, leg.tibia.us_per_deg = us
 
     # --- interne ----------------------------------------------------------
 

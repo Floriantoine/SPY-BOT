@@ -154,6 +154,10 @@ events.onmessage = (e) => {
     state.calib = trims;
     state.invert = invert;
     renderTrims();
+  } else if (kind === "TRAVEL") {
+    // Course réelle des servos : µs par degré, 3 valeurs par patte.
+    state.travel = JSON.parse(rest);
+    renderSelection();
   } else if (kind === "LINK") {
     const [what, ...name] = rest.split(" ");
     setConnected(what === "connected", name.join(" "));
@@ -174,6 +178,18 @@ events.onmessage = (e) => {
       (state.invert[leg] ||= [0, 0, 0])[JOINTS.indexOf(joint)] = Number(value);
       renderSelection();
       send("GEOM", true); // sens des servos à jour pour l'affichage des butées
+    }
+    if (cmd === "TRAVEL") {
+      if (leg === "ALL") for (const l of Object.keys(LEG_NAMES_FR)) state.travel[l] = [1, 1, 1].map(() => Number(joint));
+      else (state.travel[leg] ||= [10, 10, 10])[JOINTS.indexOf(joint)] = Number(value);
+      renderSelection();
+    }
+    if (cmd === "HOLD") {
+      // Angle vraiment tenu (borné aux butées) : sert au calcul de la course.
+      const held = (state.held[`${leg} ${joint}`] ||= {});
+      if (Number(value) < 0) held.lo = Number(value);
+      if (Number(value) > 0) held.hi = Number(value);
+      renderSelection();
     }
     if (cmd === "LEGS") showLegs(Number(leg));
     if (cmd === "SAVE") toast("Calibration enregistrée dans l'ESP32", "ok");
@@ -1047,6 +1063,37 @@ $("#sel-invert").onclick = () => {
 };
 const invertedOf = (leg, j) => Boolean(state.invert[leg]?.[j]);
 
+// Course réelle du servo : on le tient à −45° puis +45° de la pose de
+// calibration, on mesure l'angle parcouru, et le réglage (µs par degré) est
+// corrigé dans le même rapport.
+state.travel = {};
+state.held = {};
+const travelOf = (leg, j) => state.travel[leg]?.[j] ?? 10;
+const heldSpan = (leg, j) => {
+  const h = state.held[`${leg} ${JOINTS[j]}`] || {};
+  return { lo: h.lo ?? -45, hi: h.hi ?? 45 };
+};
+sliders.travelMeasured = bindSlider($("#travel-measured"), (v) => `${Number(v).toFixed(1)}°`);
+for (const b of $$("#travel-card [data-hold]")) {
+  b.onclick = () => send(`HOLD ${state.selectedLeg} ${JOINTS[state.selectedJoint]} ${b.dataset.hold}`);
+}
+const measuredTravel = () => {
+  const { selectedLeg: leg, selectedJoint: j } = state;
+  const { lo, hi } = heldSpan(leg, j);
+  return Math.min(13, Math.max(8, (travelOf(leg, j) * (hi - lo)) / Number($("#travel-measured").value)));
+};
+$("#travel-apply").onclick = () => {
+  send(`TRAVEL ${state.selectedLeg} ${JOINTS[state.selectedJoint]} ${measuredTravel().toFixed(2)}`);
+  $("#travel-measured").value = 90;
+  sliders.travelMeasured();
+};
+$("#travel-all").onclick = () => {
+  send(`TRAVEL ALL ${measuredTravel().toFixed(2)}`);
+  $("#travel-measured").value = 90;
+  sliders.travelMeasured();
+};
+$("#travel-reset").onclick = () => send(`TRAVEL ${state.selectedLeg} ${JOINTS[state.selectedJoint]} 10`);
+
 document.addEventListener("keydown", (e) => {
   if (activeTab !== "cal" || isTyping(e)) return;
   const steps = { ArrowLeft: -0.5, ArrowRight: 0.5 };
@@ -1070,6 +1117,9 @@ function renderSelection() {
   $("#sel-name").textContent = `${LEG_NAMES_FR[leg]} · ${JOINT_LABELS[JOINTS[j]]}`;
   $("#sel-port").textContent = servoPort(leg, j) + (invertedOf(leg, j) ? " · sens inversé" : "");
   $("#sel-invert").classList.toggle("on", invertedOf(leg, j));
+  $("#sel-travel").textContent = travelOf(leg, j).toFixed(2);
+  const span = heldSpan(leg, j);
+  $("#travel-label").textContent = `Angle mesuré entre ${span.lo.toFixed(0)}° et +${span.hi.toFixed(0)}°`;
   const value = trimOf(leg, j);
   $("#sel-value").textContent = (value > 0 ? "+" : "") + value.toFixed(1);
   if (document.activeElement !== selTrim) {
@@ -1083,7 +1133,7 @@ const renderTrims = renderSelection;
 
 // Sauvegarde des trims dans un fichier, pour les retrouver après un reflash.
 $("#cal-export").onclick = () => {
-  const data = { robot: "SPY-BOT", saved: new Date().toISOString(), trims: state.calib, invert: state.invert };
+  const data = { robot: "SPY-BOT", saved: new Date().toISOString(), trims: state.calib, invert: state.invert, travel: state.travel };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -1096,11 +1146,12 @@ $("#cal-file").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  let trims, invert;
+  let trims, invert, travel;
   try {
     const data = JSON.parse(await file.text());
     trims = data.trims || data;
     invert = data.invert || {};
+    travel = data.travel || {};
     const ok = Object.entries(trims).every(([leg, v]) => LEG_NAMES_FR[leg] && Array.isArray(v) && v.length === 3 && v.every(Number.isFinite));
     if (!ok) throw new Error();
   } catch {
@@ -1111,6 +1162,7 @@ $("#cal-file").onchange = async (e) => {
   for (const [leg, values] of Object.entries(trims)) {
     values.forEach((v, j) => lines.push(`TRIM ${leg} ${JOINTS[j]} ${v}`));
     (invert[leg] || [0, 0, 0]).forEach((v, j) => lines.push(`INVERT ${leg} ${JOINTS[j]} ${v ? 1 : 0}`));
+    (travel[leg] || []).forEach((v, j) => Number.isFinite(v) && lines.push(`TRAVEL ${leg} ${JOINTS[j]} ${v}`));
   }
   await send(lines.join("\n"), true);
   state.calib = trims;

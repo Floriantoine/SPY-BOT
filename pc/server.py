@@ -185,6 +185,7 @@ class App:
         try:
             self.send("GEOM")
             self.send("GETCAL")
+            self.send("TRAVEL")  # course réelle des servos
             self.send("SENSOR")
             self.send("IMU")
             self.send("WALK")  # réglages de la marche

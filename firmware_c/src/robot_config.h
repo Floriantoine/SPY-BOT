@@ -217,13 +217,16 @@ static const double NAV_DEG = 0.017453292519943295;
 static const double NAV_SPEED = 60.0;  // Navigator() par défaut
 static const double NAV_YAW_RATE = 0.6;
 
+static const double US_PER_DEG_LO = 8.0;
+static const double US_PER_DEG_HI = 13.0;
+static const double US_PER_DEG = 10.0;  // config.US_PER_DEG
 // --- servo.py (PCA9685Driver) ---
 static const double SERVO_SDA = 21.0;
 static const double SERVO_SCL = 22.0;
 static const double SERVO_CENTER_US = 1400.0;
 static const double SERVO_US_PER_DEG = 10.0;
-static const double SERVO_MIN_US = 800.0;
-static const double SERVO_MAX_US = 2000.0;
+static const double SERVO_MIN_US = 600.0;
+static const double SERVO_MAX_US = 2200.0;
 static const double PCA_FREQ = 50.0;
 
 // Réponse GEOM de Python, sens des 18 servos en %d (patte, puis coxa fémur tibia).

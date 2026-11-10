@@ -20,6 +20,16 @@ public:
     // load_imu : faux s'il n'y en a pas (ancienne calibration).
     virtual bool load_imu(int axes[3][2], double zero[2]) = 0;
     virtual bool save_imu(const int axes[3][2], const double zero[2]) = 0;
+    // Course réelle des servos (TRAVEL), µs par degré, gardée à part elle aussi.
+    // load_travel : faux s'il n'y en a pas (ancienne calibration).
+    virtual bool load_travel(double us[NJOINTS]) {
+        (void)us;
+        return false;
+    }
+    virtual bool save_travel(const double us[NJOINTS]) {
+        (void)us;
+        return true;
+    }
 };
 
 enum Mode { MODE_OFF, MODE_WAKE, MODE_SIT, MODE_STANDING, MODE_STAND, MODE_SITTING, MODE_CAL, MODE_TEST };

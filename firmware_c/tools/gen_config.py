@@ -235,6 +235,9 @@ def main():
     w("static const double NAV_SPEED = %s;  // Navigator() par défaut" % f(nv.speed))
     w("static const double NAV_YAW_RATE = %s;" % f(nv.yaw_rate))
     w("")
+    w("static const double US_PER_DEG_LO = %s;" % f(cfg.US_PER_DEG_RANGE[0]))
+    w("static const double US_PER_DEG_HI = %s;" % f(cfg.US_PER_DEG_RANGE[1]))
+    w("static const double US_PER_DEG = %s;  // config.US_PER_DEG" % f(cfg.US_PER_DEG))
     w("// --- servo.py (PCA9685Driver) ---")
     sig = inspect.signature(servo_mod.PCA9685Driver.__init__).parameters
     for name in ("sda", "scl", "center_us", "us_per_deg", "min_us", "max_us"):

@@ -6,7 +6,8 @@ flashé avec la version C++ (V2).
 2. Flasher la V2 (voir README.md), puis :
        python restore_calib.py COM6 calib.json
 
-Envoie une ligne TRIM et une ligne INVERT par servo, puis SAVE (la V2 garde
+Envoie une ligne TRIM et une ligne INVERT par servo (et une ligne TRAVEL si
+le fichier contient la course réelle des servos), puis SAVE (la V2 garde
 la calibration dans sa mémoire NVS) et affiche la réponse GETCAL.
 `--dry-run` affiche seulement les commandes, sans port série.
 Il faut pyserial : python -m pip install pyserial
@@ -35,6 +36,10 @@ def commands(data):
         if inv and len(inv) == 3:
             for joint, value in zip(JOINTS, inv):
                 out.append("INVERT %s %s %d" % (leg, joint, 1 if value else 0))
+        us = data.get("travel", {}).get(leg)
+        if us and len(us) == 3:
+            for joint, value in zip(JOINTS, us):
+                out.append("TRAVEL %s %s %r" % (leg, joint, value))
     return out
 
 

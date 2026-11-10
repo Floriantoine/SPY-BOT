@@ -160,8 +160,18 @@ def scenario_base():
                  "INVERT LF femur 1", "INVERT LF femur 0", "GETCAL", "GEOM", "SAVE"):
         cmd(line)
         ticks(2)
+    # Course réelle des servos : mesure (HOLD) et réglage (TRAVEL), gardés par SAVE.
+    for line in ("TRAVEL", "HOLD RF femur 45", "HOLD RF femur -45", "HOLD LM tibia 80", "HOLD rr COXA -70",
+                 "HOLD RF femur x", "HOLD XX femur 1", "HOLD RF knee 1", "HOLD RF femur", "HOLD RF femur nan",
+                 "TRAVEL ALL 10.6", "TRAVEL RF femur 11.25", "TRAVEL lm TIBIA 7", "TRAVEL RR coxa 99",
+                 "TRAVEL x", "TRAVEL RF knee 10", "TRAVEL XX coxa 10", "TRAVEL RF femur zz", "TRAVEL ALL",
+                 "TRAVEL ALL nan", "TRAVEL ALL 9.3", "TRAVEL LF tibia 12.125", "TRAVEL 1 2 3 4", "HOLD LF tibia 30",
+                 "TRIM LF tibia 4", "HOLD LF tibia 0", "TRAVEL", "SAVE", "GETCAL"):
+        cmd(line)
+        ticks(12)
     cmd("TEST RR coxa")
     ticks(50)
+    cmd("HOLD RR coxa 10")  # refusé pendant un test
     cmd("INVERT RR coxa 0")
     ticks(20)
     cmd("POWER 1")  # depuis une pose connue : rejoint la posture assise en douceur
@@ -170,6 +180,11 @@ def scenario_base():
     ticks(150)
     walk("MOVE 90 -60 25", 3)
     cmd("TRIM RF femur -6")  # debout : sans effet immédiat sur les angles
+    cmd("HOLD RF femur 10")  # refusé debout
+    cmd("TRAVEL RM femur 10.9")  # debout : envoyé au tick suivant
+    ticks(10)
+    cmd("TRAVEL ALL 10")
+    cmd("TRAVEL RM coxa 9.5")
     walk("MOVE 90 -60 25", 2)
     # Relâché en marchant, puis redémarrage (position inconnue) et debout tout de suite.
     cmd("POWER 0")
@@ -878,6 +893,8 @@ SCENARIOS = (
     ("gyroscope seul", scenario_imu_only, {"imu": "ok", "rng": "badid"}),
     ("gyroscope en panne", scenario_imu_broken, {"imu": "badinit"}),
     ("gyroscope : réglages", scenario_imu_setup, {"imu": "ok", "rng": "ok"}),
+    ("course des servos gardée", scenario_base,
+     {"travel": [10.4, 9.6, 11.0, 10.0, 10.0, 12.5, 8.0, 13.0, 10.25, 9.9, 10.1, 10.0, 7.0, 14.0, 10.5, 10.5, 10.5, 9.0]}),
     ("gyroscope : réglages gardés", scenario_imu_saved, {"imu": "ok", "imucal": ("-x-y+z", 0.03, -0.02)}),
     ("gyroscope : réglages gardés invalides", scenario_imu_saved, {"imu": "ok", "imucal": ("+x+y-z", 0.5, 0.0)}),
 )
@@ -1088,6 +1105,9 @@ def run_python(steps, calib, devices):
     imucal = devices.pop("imucal", None)
     if imucal:  # réglages du gyroscope déjà enregistrés
         calib = dict(calib, imu={"axes": imucal[0], "zero": [imucal[1], imucal[2]]})
+    travel = devices.pop("travel", None)
+    if travel:  # course réelle des servos déjà enregistrée (TRAVEL)
+        calib = dict(calib, travel={n: list(travel[3 * i:3 * i + 3]) for i, n in enumerate(NAMES)})
     with open(path, "w") as f:
         f.write(json.dumps(calib))
     driver = DryRunDriver()
@@ -1149,6 +1169,10 @@ def run_cpp(exe, steps, calib, devices):
     with open(path, "w") as f:
         f.write(" ".join(repr(float(v)) for n in NAMES for v in calib[n]) + "\n")
         f.write(" ".join(str(int(v)) for n in NAMES for v in calib["invert"][n]) + "\n")
+        devices = dict(devices)
+        travel = devices.pop("travel", None)
+        if travel:
+            f.write(" ".join(repr(float(v)) for v in travel) + "\n")
     script = "".join("K %r\n" % arg if kind == "K" else "%s %s\n" % (kind, arg) for kind, arg in steps)
     args = [exe, path]
     for name, mode in sorted(devices.items()):

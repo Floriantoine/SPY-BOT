@@ -240,6 +240,120 @@ class InvertTest(unittest.TestCase):
         self.assertFalse(again.robot.config.leg("RM").femur.inverted)
 
 
+class TravelTest(unittest.TestCase):
+    """Course réelle des servos : µs d'impulsion par degré (TRAVEL), mesure (HOLD)."""
+
+    def make(self, path=None):
+        path = path or os.path.join(tempfile.mkdtemp(), "calib.json")
+        driver = DryRunDriver()
+        return Controller(default_config(), driver, path), driver, path
+
+    def settle(self, ctrl):
+        for _ in range(60):  # les servos rejoignent leur consigne en douceur (SLEW)
+            ctrl.tick(0.02)
+
+    def test_default_changes_nothing(self):
+        ctrl, driver, _ = self.make()
+        self.assertEqual(json.loads(ctrl.handle("TRAVEL")[7:])["RF"], [10.0, 10.0, 10.0])
+        leg = ctrl.robot.config.leg("RF")
+        before = [ik_to_servo_deg(a, leg.femur) for a in (-0.5, 0.0, 0.3, 0.9)]
+        self.assertEqual(ctrl.handle("TRAVEL RF femur 10"), "OK TRAVEL RF femur 10.00")
+        self.assertEqual([ik_to_servo_deg(a, leg.femur) for a in (-0.5, 0.0, 0.3, 0.9)], before)
+        self.assertNotIn("travel", ctrl.handle("GETCAL"))  # GETCAL garde son format
+
+    def test_scales_around_the_calibration_pose(self):
+        ctrl, driver, _ = self.make()
+        leg = ctrl.robot.config.leg("RF")
+        key = (leg.femur.board, leg.femur.channel)
+        ctrl.handle("CAL")
+        ctrl.handle("TRIM RF femur 5")
+        self.assertEqual(ctrl.handle("TRAVEL RF femur 11"), "OK TRAVEL RF femur 11.00")
+        self.settle(ctrl)
+        self.assertAlmostEqual(driver.angles[key], 95.0)  # pose de calibration et trim : inchangés
+        self.assertEqual(ctrl.handle("HOLD RF femur 40"), "OK HOLD RF femur 40.0")
+        self.settle(ctrl)
+        # 40° réels demandent 40 x 11 µs : le pilote (10 µs par degré) reçoit 44°.
+        self.assertAlmostEqual(abs(driver.angles[key] - 95.0), 44.0)
+        self.assertEqual(ctrl.handle("HOLD RF femur 0"), "OK HOLD RF femur 0.0")
+        self.settle(ctrl)
+        self.assertAlmostEqual(driver.angles[key], 95.0)
+        self.assertEqual(ctrl.telemetry().split()[1], "cal")
+
+    def test_hold_only_in_calibration_pose_and_inside_limits(self):
+        ctrl, driver, _ = self.make()
+        self.assertEqual(ctrl.handle("HOLD RF femur 45"), "ERR HOLD : pose de calibration d'abord (CAL)")
+        ctrl.handle("CAL")
+        self.assertEqual(ctrl.handle("HOLD rf FEMUR -45"), "OK HOLD RF femur -45.0")
+        self.assertEqual(ctrl.handle("HOLD RF coxa 80"), "OK HOLD RF coxa 55.0")  # butée du servo : 35..145
+        self.assertTrue(ctrl.handle("HOLD RF knee 1").startswith("ERR HOLD"))
+        self.assertTrue(ctrl.handle("HOLD RF femur x").startswith("ERR HOLD"))
+        ctrl.handle("STAND")
+        self.assertTrue(ctrl.handle("HOLD RF femur 10").startswith("ERR HOLD"))
+
+    def test_all_and_clamped(self):
+        ctrl, _, _ = self.make()
+        self.assertEqual(ctrl.handle("TRAVEL ALL 10.6"), "OK TRAVEL ALL 10.60")
+        self.assertEqual(ctrl.handle("TRAVEL lm tibia 99"), "OK TRAVEL LM tibia 13.00")
+        self.assertEqual(ctrl.handle("TRAVEL LM coxa 1"), "OK TRAVEL LM coxa 8.00")
+        data = json.loads(ctrl.handle("TRAVEL")[7:])
+        self.assertEqual(data["LM"], [8.0, 10.6, 13.0])
+        self.assertEqual(data["RR"], [10.6, 10.6, 10.6])
+        for bad in ("TRAVEL ALL", "TRAVEL RF femur", "TRAVEL XX femur 10", "TRAVEL RF femur zz", "TRAVEL 1 2 3 4"):
+            self.assertTrue(ctrl.handle(bad).startswith("ERR TRAVEL"), bad)
+
+    def test_saved_with_the_calibration_and_old_files_still_load(self):
+        ctrl, _, path = self.make()
+        ctrl.handle("TRIM RF femur 2.5")
+        ctrl.handle("SAVE")
+        with open(path) as f:
+            old = json.load(f)
+        del old["travel"]  # fichier d'avant : pas de course enregistrée
+        with open(path, "w") as f:
+            json.dump(old, f)
+        again, _, _ = self.make(path)
+        self.assertEqual(again.robot.config.leg("RF").femur.trim_deg, 2.5)
+        self.assertEqual(again.robot.config.leg("RF").femur.us_per_deg, 10.0)
+        again.handle("TRAVEL ALL 9.4")
+        again.handle("TRAVEL LR tibia 11.2")
+        again.handle("SAVE")
+        third, _, _ = self.make(path)
+        self.assertEqual(third.robot.config.leg("LR").tibia.us_per_deg, 11.2)
+        self.assertEqual(third.robot.config.leg("RF").coxa.us_per_deg, 9.4)
+        self.assertEqual(third.robot.config.leg("RF").femur.trim_deg, 2.5)
+        with open(path) as f:
+            data = json.load(f)
+        data["travel"]["RF"] = [50, "x", 10]  # valeurs abîmées : ignorées
+        data["travel"]["RM"] = [1, 10, 99]  # hors plage : bornées
+        with open(path, "w") as f:
+            json.dump(data, f)
+        fourth, _, _ = self.make(path)
+        self.assertEqual(fourth.robot.config.leg("RF").coxa.us_per_deg, 10.0)
+        rm = fourth.robot.config.leg("RM")
+        self.assertEqual([rm.coxa.us_per_deg, rm.femur.us_per_deg, rm.tibia.us_per_deg], [8.0, 10.0, 13.0])
+
+    def test_walking_same_joint_angles_scaled_pulses(self):
+        """La course ne change que l'impulsion : mêmes angles, mêmes butées."""
+        plain, d1, _ = self.make()
+        wide, d2, _ = self.make()
+        wide.handle("TRAVEL ALL 13")
+        wide.handle("TRAVEL RF femur 8")
+        joints = {(j.board, j.channel): j for leg in wide.robot.config.legs for j in (leg.coxa, leg.femur, leg.tibia)}
+        for c in (plain, wide):
+            c.handle("STAND")
+        for i in range(700):
+            if i > 300:
+                for c in (plain, wide):
+                    c.handle("MOVE 60 20 0.2")
+            plain.tick(0.02)
+            wide.tick(0.02)
+            self.assertEqual(plain.telemetry(), wide.telemetry())
+            for k, d in d1.angles.items():
+                s = joints[k].us_per_deg / 10.0
+                self.assertAlmostEqual(d2.angles[k] - 90.0, (d - 90.0) * s, places=9)
+                us = 1400 + (d2.angles[k] - 90.0) * 10
+                self.assertTrue(600 <= us <= 2200, us)  # dans la plage du pilote
+
+
 class LegsCommandTest(unittest.TestCase):
     def test_walk_on_four_legs(self):
         c = Controller(default_config(), DryRunDriver(), os.path.join(tempfile.mkdtemp(), "c.json"))

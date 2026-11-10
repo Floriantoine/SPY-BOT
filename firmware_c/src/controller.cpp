@@ -355,7 +355,10 @@ void Controller::telemetry() {
             for (int j = 0; j < 3; j++) {
                 const JointServo& js = g_legs[i].joint[j];
                 double p;
-                if (smooth.lag(js.board, js.channel, &p)) v[j] = (p - js.k7) / js.k8;
+                if (smooth.lag(js.board, js.channel, &p)) {
+                    if (js.k9 != 0.0) p = (p + js.k10 * js.k9) / (1.0 + js.k9);  // course réelle (TRAVEL)
+                    v[j] = (p - js.k7) / js.k8;
+                }
             }
         }
         n = snprintf(out_ + out_len_, OUT_SIZE - out_len_, " %lld %lld %lld", pyround(v[0] * 1000),
@@ -479,6 +482,16 @@ void Controller::load_calibration() {
             memcpy(imu->axes, axes, sizeof(axes));
             imu->attitude.set_zero(zero[0], zero[1]);
         }
+    }
+    double us[NJOINTS];
+    if (store_ && store_->load_travel(us)) {
+        // Course réelle des servos ; absente d'une ancienne calibration : valeurs de départ.
+        for (int i = 0; i < NLEGS; i++)
+            for (int j = 0; j < 3; j++) {
+                JointServo& s = g_legs[i].joint[j];
+                s.us_per_deg = pymax(US_PER_DEG_LO, pymin(US_PER_DEG_HI, us[3 * i + j]));
+                s.refresh();
+            }
     }
     if (!store_ || !store_->load(trims, inv, is_int)) return;
     for (int i = 0; i < NLEGS; i++)
@@ -653,6 +666,8 @@ static const CmdSpec COMMANDS[] = {
     {"cal", 0, 0, {0}},
     {"test", 2, 2, {"leg_name", "joint_name"}},
     {"trim", 3, 3, {"leg_name", "joint_name", "deg"}},
+    {"hold", 3, 3, {"leg_name", "joint_name", "deg"}},
+    {"travel", 0, -1, {0}},
     {"invert", 3, 3, {"leg_name", "joint_name", "on"}},
     {"save", 0, 0, {0}},
     {"getcal", 0, 0, {0}},
@@ -935,6 +950,74 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
         snprintf(reply_, OUT_SIZE, "OK TRIM %s %s %.1f", l, jn, j->trim_deg);
         return reply_;
     }
+    if (!strcmp(name, "HOLD")) {
+        JointServo* j;
+        if (!parse_joint(name, a[0], a[1], &j, &e)) return e;
+        if (mode != MODE_CAL) return "ERR HOLD : pose de calibration d'abord (CAL)";
+        if (!pyfloat(a[2], &v[0])) return err_float(name, a[2]);
+        char l[32], jn[32];
+        upper_copy(l, sizeof(l), a[0]);
+        lower_copy(jn, sizeof(jn), a[1]);
+        int li = leg_index(l);
+        int ji = (int)(j - g_legs[li].joint);
+        double base = CALIBRATION_POSE[ji];
+        double rad = base + clampv(v[0], 60) * DEG;
+        // Borné aux butées du servo : la réponse donne l'angle vraiment tenu.
+        double d = 90.0 + j->direction * (rad * SERVO_DEG_PER_RAD - j->zero_deg) + j->trim_deg;
+        d = pymax(j->min_deg, pymin(j->max_deg, d));
+        rad = ((d - 90.0 - j->trim_deg) / j->direction + j->zero_deg) / SERVO_DEG_PER_RAD;
+        angles = calibration_angles();
+        LegAngles& la = angles->leg[li];
+        if (ji == 0)
+            la.coxa = rad;
+        else if (ji == 1)
+            la.femur = rad;
+        else
+            la.tibia = rad;
+        send_angles();
+        snprintf(reply_, OUT_SIZE, "OK HOLD %s %s %.1f", l, jn, (rad - base) * SERVO_DEG_PER_RAD);
+        return reply_;
+    }
+    if (!strcmp(name, "TRAVEL")) {
+        if (!n) {
+            size_t k = snprintf(reply_, OUT_SIZE, "TRAVEL {");
+            char num[3][40];
+            for (int i = 0; i < NLEGS; i++) {
+                for (int j = 0; j < 3; j++) pyrepr_double(g_legs[i].joint[j].us_per_deg, num[j], sizeof(num[j]));
+                k += snprintf(reply_ + k, OUT_SIZE - k, "%s\"%s\": [%s, %s, %s]", i ? ", " : "", g_legs[i].name(), num[0],
+                              num[1], num[2]);
+            }
+            snprintf(reply_ + k, OUT_SIZE - k, "}");
+            return reply_;
+        }
+        char a0[16];
+        upper_copy(a0, sizeof(a0), a[0]);
+        if (n == 2 && !strcmp(a0, "ALL")) {
+            if (!pyfloat(a[1], &v[0])) return err_float(name, a[1]);
+            double us = pymax(US_PER_DEG_LO, pymin(US_PER_DEG_HI, v[0]));
+            for (int i = 0; i < NLEGS; i++)
+                for (int j = 0; j < 3; j++) {
+                    g_legs[i].joint[j].us_per_deg = us;
+                    g_legs[i].joint[j].refresh();
+                }
+            snprintf(reply_, OUT_SIZE, "OK TRAVEL ALL %.2f", us);
+        } else if (n == 3) {
+            JointServo* j;
+            if (!parse_joint(name, a[0], a[1], &j, &e)) return e;
+            if (!pyfloat(a[2], &v[0])) return err_float(name, a[2]);
+            j->us_per_deg = pymax(US_PER_DEG_LO, pymin(US_PER_DEG_HI, v[0]));
+            j->refresh();
+            char l[32], jn[32];
+            upper_copy(l, sizeof(l), a[0]);
+            lower_copy(jn, sizeof(jn), a[1]);
+            snprintf(reply_, OUT_SIZE, "OK TRAVEL %s %s %.2f", l, jn, j->us_per_deg);
+        } else {
+            return err(name, "patte articulation us, ou ALL us");
+        }
+        r.written = NULL;  // tout renvoyer aux servos
+        if (mode == MODE_CAL || mode == MODE_TEST) send_angles();
+        return reply_;
+    }
     if (!strcmp(name, "INVERT")) {
         JointServo* j;
         if (!parse_joint(name, a[0], a[1], &j, &e)) return e;
@@ -955,7 +1038,11 @@ const char* Controller::dispatch(const char* name, char** a, int n) {
                 inv[3 * i + j] = g_legs[i].joint[j].inverted();
                 is_int[3 * i + j] = g_legs[i].joint[j].trim_is_int;
             }
-        if (!store_ || !store_->save(trims, inv, is_int)) return "ERR SAVE : écriture impossible dans la mémoire du robot";
+        double us[NJOINTS];
+        for (int i = 0; i < NLEGS; i++)
+            for (int j = 0; j < 3; j++) us[3 * i + j] = g_legs[i].joint[j].us_per_deg;
+        if (!store_ || !store_->save(trims, inv, is_int) || !store_->save_travel(us))
+            return "ERR SAVE : écriture impossible dans la mémoire du robot";
         return "OK SAVE";
     }
     if (!strcmp(name, "GETCAL")) {

@@ -99,6 +99,33 @@ public:
         p.end();
         return n == sizeof(b);
     }
+    // Course réelle des servos (TRAVEL) : autre clé encore, les anciennes
+    // calibrations restent lisibles (et gardent 10 µs par degré).
+    struct TravelBlob {
+        uint32_t version;
+        double us[NJOINTS];
+    };
+    bool load_travel(double us[NJOINTS]) {
+        Preferences p;
+        if (!p.begin("spybot", true)) return false;
+        TravelBlob b;
+        size_t n = p.getBytesLength("travel") == sizeof(b) ? p.getBytes("travel", &b, sizeof(b)) : 0;
+        p.end();
+        if (n != sizeof(b) || b.version != 1) return false;
+        for (int i = 0; i < NJOINTS; i++) us[i] = b.us[i];
+        return true;
+    }
+    bool save_travel(const double us[NJOINTS]) {
+        TravelBlob b;
+        memset(&b, 0, sizeof(b));
+        b.version = 1;
+        for (int i = 0; i < NJOINTS; i++) b.us[i] = us[i];
+        Preferences p;
+        if (!p.begin("spybot", false)) return false;
+        size_t n = p.putBytes("travel", &b, sizeof(b));
+        p.end();
+        return n == sizeof(b);
+    }
 };
 
 static PCA9685Driver driver;

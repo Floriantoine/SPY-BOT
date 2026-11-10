@@ -43,11 +43,14 @@ struct JointServo {
     double zero_deg;
     int default_direction, direction;
     double trim_deg, min_deg, max_deg;
+    double us_per_deg;  // course réelle : µs d'impulsion par degré (TRAVEL)
     // Trim entier en Python (borné à ±45 par _clamp, qui rend alors la borne
     // entière) : GETCAL l'écrit « -45 » et non « -45.0 ».
     bool trim_is_int;
     // Constantes de robot._joint : bornes IK (rad) et angle servo = k7 + k8 × angle.
     double lo_rad, hi_rad, k7, k8;
+    // Course réelle : d = d + (d - k10) × k9 après les butées (k9 = 0 : rien).
+    double k9, k10;
     void refresh();
     bool inverted() const { return direction != default_direction; }
     void set_inverted(bool v) {

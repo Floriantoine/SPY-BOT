@@ -2,7 +2,7 @@
 
 import math
 
-from .config import I2C_ADDRESSES
+from .config import I2C_ADDRESSES, US_PER_DEG
 
 DEG_PER_RAD = 180.0 / math.pi
 
@@ -10,7 +10,11 @@ DEG_PER_RAD = 180.0 / math.pi
 def ik_to_servo_deg(angle_rad, joint):
     """Angle servo (0..180°) pour un angle articulaire IK, borné aux limites."""
     deg = 90.0 + joint.direction * (angle_rad * DEG_PER_RAD - joint.zero_deg) + joint.trim_deg
-    return max(joint.min_deg, min(joint.max_deg, deg))
+    deg = max(joint.min_deg, min(joint.max_deg, deg))
+    if joint.us_per_deg != US_PER_DEG:
+        # Course réelle du servo : l'écart à la pose de calibration est mis à l'échelle.
+        deg = deg + (deg - 90.0 - joint.trim_deg) * (joint.us_per_deg / US_PER_DEG - 1.0)
+    return deg
 
 
 # Sauts de consigne adoucis (SLEW) : un servo qui doit rejoindre une cible
@@ -222,11 +226,13 @@ class PCA9685Driver:
 
     Par défaut : SDA = GPIO21, SCL = GPIO22, cartes en 0x40 et 0x41
     (quelle patte sur quelle carte : WIRING dans config.py). Impulsions de hexapod-v2-7697 pour des MG92B :
-    1400 µs au milieu, 10 µs par degré, bornées à 800-2000 µs.
+    1400 µs au milieu, 10 µs par degré, bornées à 600-2200 µs (les butées de
+    chaque servo, 30° à 150° au plus, donnent 800 à 2000 µs ; le reste sert
+    aux servos dont la course réelle demande plus de 10 µs par degré, TRAVEL).
     """
 
     def __init__(self, i2c=None, addresses=I2C_ADDRESSES, sda=21, scl=22,
-                 center_us=1400, us_per_deg=10.0, min_us=800, max_us=2000):
+                 center_us=1400, us_per_deg=10.0, min_us=600, max_us=2200):
         if i2c is None:
             from machine import I2C, Pin
 

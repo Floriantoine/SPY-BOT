@@ -70,6 +70,11 @@ run(4)
 assert ctrl.mode == "cal", ctrl.mode
 assert ctrl.handle("CAL") == "OK CAL"
 assert ctrl.handle("TRIM RR coxa 2.5").startswith("OK")
+assert ctrl.handle("HOLD RF femur 45") == "OK HOLD RF femur 45.0", "HOLD"
+assert ctrl.handle("TRAVEL RF femur 10.5") == "OK TRAVEL RF femur 10.50", "TRAVEL"
+run(0.5)
+assert ctrl.handle("TRAVEL").startswith("TRAVEL {"), "TRAVEL ?"
+assert ctrl.handle("SLEW 800").endswith("slew 800"), "SLEW"
 assert ctrl.handle("SAVE") == "OK SAVE"
 assert ctrl.handle("GETCAL").startswith("CAL ")
 assert ctrl.handle("GEOM").startswith("GEOM ")

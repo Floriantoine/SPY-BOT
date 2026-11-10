@@ -47,7 +47,19 @@ public:
     bool have_imu;
     int axes[3][2];
     double zero[2];
-    MemStore() : have(false), have_imu(false) { memset(is_int, 0, sizeof(is_int)); }
+    bool have_travel;
+    double travel[NJOINTS];
+    MemStore() : have(false), have_imu(false), have_travel(false) { memset(is_int, 0, sizeof(is_int)); }
+    bool load_travel(double us[NJOINTS]) {
+        if (!have_travel) return false;
+        memcpy(us, travel, sizeof(travel));
+        return true;
+    }
+    bool save_travel(const double us[NJOINTS]) {
+        memcpy(travel, us, sizeof(travel));
+        have_travel = true;
+        return true;
+    }
     bool load_imu(int a[3][2], double z[2]) {
         if (!have_imu) return false;
         memcpy(a, axes, sizeof(axes));
@@ -238,6 +250,10 @@ int main(int argc, char** argv) {
             store.inv[i] = v != 0;
         }
         store.have = true;
+        // Troisième ligne (facultative) : course réelle des servos déjà enregistrée.
+        store.have_travel = true;
+        for (int i = 0; i < NJOINTS; i++)
+            if (fscanf(f, "%lf", &store.travel[i]) != 1) store.have_travel = false;
         fclose(f);
     }
     bool devices = strcmp(imu_mode, "absent") || strcmp(rng_mode, "absent");
